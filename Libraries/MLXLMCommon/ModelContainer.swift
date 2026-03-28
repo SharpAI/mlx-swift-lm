@@ -263,38 +263,13 @@ public final class ModelContainer: Sendable {
 
     /// Recursively search for a `LayerPartitionable` in the module tree.
     private static func findPartitionable(in module: Module) -> (any LayerPartitionable)? {
-        // Check if the module itself conforms
-        if let p = module as? (any LayerPartitionable) {
-            return p
-        }
-        // Check named children — common pattern: model has a `model` property
-        // that is the ModelInner
-        let mirror = Mirror(reflecting: module)
-        for child in mirror.children {
-            if let childModule = child.value as? Module {
-                if let found = findPartitionable(in: childModule) {
-                    return found
-                }
-            }
-        }
-        return nil
+        // Use MLX's native `modules()` traversal which correctly unwraps @ModuleInfo property wrappers
+        return module.modules().lazy.compactMap { $0 as? (any LayerPartitionable) }.first
     }
 
     /// Recursively search for a `StreamableMoE` in the module tree.
     private static func findStreamable(in module: Module) -> (any StreamableMoE)? {
-        // Check if the module itself conforms
-        if let p = module as? (any StreamableMoE) {
-            return p
-        }
-        // Check named children
-        let mirror = Mirror(reflecting: module)
-        for child in mirror.children {
-            if let childModule = child.value as? Module {
-                if let found = findStreamable(in: childModule) {
-                    return found
-                }
-            }
-        }
-        return nil
+        // Use MLX's native `modules()` traversal which correctly unwraps @ModuleInfo property wrappers
+        return module.modules().lazy.compactMap { $0 as? (any StreamableMoE) }.first
     }
 }
