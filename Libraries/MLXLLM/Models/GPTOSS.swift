@@ -339,7 +339,7 @@ class GPTOSSTransformerBlock: Module {
     }
 }
 
-public class GPTOSSModelInner: Module, LayerPartitionable {
+public class GPTOSSModelInner: Module, LayerPartitionable, StreamableMoE {
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
     @ModuleInfo(key: "norm") var norm: RMSNorm
     let layerTypes: [String]
@@ -350,6 +350,7 @@ public class GPTOSSModelInner: Module, LayerPartitionable {
 
     // LayerPartitionable
     public var gpuLayerCount: Int?
+    public var streamExperts: Bool = false
     public var totalLayerCount: Int { layers.count }
 
     public init(_ config: GPTOSSConfiguration) {
@@ -415,7 +416,7 @@ public class GPTOSSModelInner: Module, LayerPartitionable {
                 maskMode = slidingMask!
             }
 
-            x = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount) {
+            x = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount, stream: streamExperts) {
                 layer(x, mask: maskMode, cache: cache[i])
             }
         }

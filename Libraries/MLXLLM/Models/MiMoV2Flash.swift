@@ -340,7 +340,7 @@ class MiMoV2FlashDecoderLayer: Module {
     }
 }
 
-public class MiMoV2FlashModelInner: Module {
+public class MiMoV2FlashModelInner: Module, LayerPartitionable, StreamableMoE {
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
     let layers: [MiMoV2FlashDecoderLayer]
     @ModuleInfo(key: "norm") var norm: RMSNorm
@@ -349,6 +349,10 @@ public class MiMoV2FlashModelInner: Module {
     let gaIdx: Int
     let slidingWindowSize: Int
     let hybridLayerPattern: [Int]
+    
+    public var gpuLayerCount: Int? = nil
+    public var streamExperts: Bool = false
+    public var totalLayerCount: Int { layers.count }
 
     init(_ config: MiMoV2FlashConfiguration) {
         _embedTokens.wrappedValue = Embedding(
@@ -378,7 +382,9 @@ public class MiMoV2FlashModelInner: Module {
 
         for (i, layer) in layers.enumerated() {
             let mask = hybridLayerPattern[i] == 1 ? swaMask : fullMask
-            h = layer(h, mask: mask, cache: cache?[i])
+            h = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount, stream: streamExperts) {
+                layer(h, mask: mask, cache: cache?[i])
+            }
         }
 
         return norm(h)

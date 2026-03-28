@@ -158,11 +158,15 @@ class OlmoETransformerBlock: Module {
 
 // MARK: - Model
 
-public class OlmoEModelInner: Module {
+public class OlmoEModelInner: Module, LayerPartitionable, StreamableMoE {
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
 
     let layers: [OlmoETransformerBlock]
     let norm: RMSNorm
+    
+    public var gpuLayerCount: Int? = nil
+    public var streamExperts: Bool = false
+    public var totalLayerCount: Int { layers.count }
 
     init(_ args: OlmoEConfiguration) {
         precondition(args.vocabularySize > 0)
@@ -174,15 +178,18 @@ public class OlmoEModelInner: Module {
         self.norm = RMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
     }
 
-    func callAsFunction(_ inputs: MLXArray, cache: [KVCache]? = nil) -> MLXArray {
+    func callAsFunction(
+        _ inputs: MLXArray,
+        cache: [KVCache]? = nil
+    ) -> MLXArray {
         var h = embedTokens(inputs)
-
         let mask = createAttentionMask(h: h, cache: cache?.first)
 
         for (i, layer) in layers.enumerated() {
-            h = layer(h, mask: mask, cache: cache?[i])
+            h = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount, stream: streamExperts) {
+                layer(h, mask: mask, cache: cache?[i])
+            }
         }
-
         return norm(h)
     }
 }

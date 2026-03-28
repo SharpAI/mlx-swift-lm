@@ -374,7 +374,7 @@ class DeepseekV3DecoderLayer: Module {
     }
 }
 
-public class DeepseekV3ModelInner: Module {
+public class DeepseekV3ModelInner: Module, LayerPartitionable, StreamableMoE {
     var config: DeepseekV3Configuration
     var vocabSize: Int
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
@@ -385,6 +385,10 @@ public class DeepseekV3ModelInner: Module {
     @ModuleInfo(key: "norm") var norm: RMSNorm
     var pipelineRank: Int
     var pipelineSize: Int
+    
+    public var gpuLayerCount: Int? = nil
+    public var streamExperts: Bool = false
+    public var totalLayerCount: Int { layers.count }
 
     init(config: DeepseekV3Configuration) {
         self.config = config
@@ -408,7 +412,9 @@ public class DeepseekV3ModelInner: Module {
         let attentionMask = createAttentionMask(h: h, cache: cache?.first)
 
         for (i, layer) in layers.enumerated() {
-            h = layer(h, mask: attentionMask, cache: cache?[i])
+            h = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount, stream: streamExperts) {
+                layer(h, mask: attentionMask, cache: cache?[i])
+            }
         }
 
         return norm(h)
