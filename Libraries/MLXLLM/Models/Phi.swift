@@ -123,7 +123,12 @@ class PhiDecoderLayer: Module {
     }
 }
 
-public class PhiModelInner: Module {
+public class PhiModelInner: Module, LayerPartitionable {
+
+
+    // LayerPartitionable
+    public var gpuLayerCount: Int?
+    public var totalLayerCount: Int { layers.count }
 
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
 
@@ -148,7 +153,9 @@ public class PhiModelInner: Module {
         var x = embedTokens(x)
 
         for (i, layer) in layers.enumerated() {
-            x = layer(x, mask: mask, cache: cache?[i])
+            x = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount) {
+                layer(x, mask: mask, cache: cache?[i])
+            }
         }
 
         return finalLayerNorm(x)

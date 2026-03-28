@@ -174,7 +174,12 @@ class Internlm2TransformerBlock: Module {
     }
 }
 
-public class InternLM2ModelInner: Module {
+public class InternLM2ModelInner: Module, LayerPartitionable {
+
+
+    // LayerPartitionable
+    public var gpuLayerCount: Int?
+    public var totalLayerCount: Int { layers.count }
     @ModuleInfo(key: "tok_embeddings") var tokEmbeddings: Embedding
 
     let layers: [Internlm2TransformerBlock]
@@ -196,7 +201,9 @@ public class InternLM2ModelInner: Module {
         let mask = createAttentionMask(h: h, cache: cache?.first)
 
         for (i, layer) in layers.enumerated() {
-            h = layer(h, mask: mask, cache: cache?[i])
+            h = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount) {
+                layer(h, mask: mask, cache: cache?[i])
+            }
         }
 
         return norm(h)

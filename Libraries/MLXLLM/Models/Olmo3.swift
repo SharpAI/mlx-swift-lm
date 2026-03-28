@@ -150,7 +150,12 @@ class Olmo3TransformerBlock: Module {
 
 // MARK: - Model
 
-public class Olmo3ModelInner: Module {
+public class Olmo3ModelInner: Module, LayerPartitionable {
+
+
+    // LayerPartitionable
+    public var gpuLayerCount: Int?
+    public var totalLayerCount: Int { layers.count }
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
 
     let layers: [Olmo3TransformerBlock]
@@ -187,7 +192,9 @@ public class Olmo3ModelInner: Module {
 
         for (i, layer) in layers.enumerated() {
             let mask = layerTypes[i] == "full_attention" ? fullMask : slidingWindowMask
-            h = layer(h, mask: mask, cache: cache?[i])
+            h = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount) {
+                layer(h, mask: mask, cache: cache?[i])
+            }
         }
 
         return norm(h)

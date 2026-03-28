@@ -139,7 +139,12 @@ class Gemma2TransformerBlock: Module {
 }
 
 // Uses Gemma2TransformerBlock, otherwise same as GemmaModelInner
-public class Gemma2ModelInner: Module {
+public class Gemma2ModelInner: Module, LayerPartitionable {
+
+
+    // LayerPartitionable
+    public var gpuLayerCount: Int?
+    public var totalLayerCount: Int { layers.count }
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
 
     fileprivate let layers: [Gemma2TransformerBlock]
@@ -170,7 +175,9 @@ public class Gemma2ModelInner: Module {
         let mask: MLXArray? = createAttentionMask(h: h, cache: cache)
 
         for (i, layer) in layers.enumerated() {
-            h = layer(h, mask: mask, cache: cache?[i])
+            h = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount) {
+                layer(h, mask: mask, cache: cache?[i])
+            }
         }
 
         return norm(h)

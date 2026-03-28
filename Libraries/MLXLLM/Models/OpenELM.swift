@@ -150,7 +150,12 @@ class OpenELMTransformerDecoderLayer: Module {
     }
 }
 
-public class OpenELMModelInner: Module {
+public class OpenELMModelInner: Module, LayerPartitionable {
+
+
+    // LayerPartitionable
+    public var gpuLayerCount: Int?
+    public var totalLayerCount: Int { layers.count }
     @ModuleInfo(key: "token_embeddings") var embedTokens: Embedding
 
     fileprivate let layers: [OpenELMTransformerDecoderLayer]
@@ -175,7 +180,9 @@ public class OpenELMModelInner: Module {
         let mask = createAttentionMask(h: h, cache: cache?.first)
 
         for (i, layer) in layers.enumerated() {
-            h = layer(h, mask: mask, cache: cache?[i])
+            h = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount) {
+                layer(h, mask: mask, cache: cache?[i])
+            }
         }
 
         return norm(h)
