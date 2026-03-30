@@ -183,12 +183,7 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
     override public func callAsFunction(
         _ x: MLXArray, _ indices: MLXArray, sortedIndices: Bool = false
     ) -> MLXArray {
-        if let envPath = ProcessInfo.processInfo.environment["EXPERIMENTAL_SSD_STREAM"],
-           let tensorName = self.tensorName,
-           let filename = ExpertStreamerManager.shared?.getFile(for: tensorName) {
-            
-            let ssdPath = URL(fileURLWithPath: envPath).appendingPathComponent(filename).path
-            
+        if ProcessInfo.processInfo.environment["EXPERIMENTAL_SSD_STREAM"] != nil {
             MLX.eval(indices)
             if indices.size == 0 {
                 var outShape = x.shape
@@ -210,15 +205,15 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
                 let rangeX = x[startIdx ..< endIdx]
                 let expertIndices = MLXArray.zeros([rangeX.dim(0)], type: UInt32.self)
                 
-                // Directly load the SSD blob into MLX Metal allocation WITHOUT mmap,
-                // strictly enforcing the --mem-limit limit because it allocates via `allocator::malloc`
-                let expertWeight = MLXFast.streamedGatherMM(
-                    x: rangeX,
-                    wShape: self.weight,
-                    activeExpert: UInt32(currentExpert),
-                    safetensorsPath: ssdPath,
-                    tensorName: tensorName
-                )
+                // Slice the weight for this expert — correct shape, strides and dtype guaranteed.
+                // Evaluate it first to resolve the lazy slice and get a concrete pointer.
+                let expertWeight = self.weight[currentExpert ..< currentExpert + 1]
+                MLX.eval(expertWeight)
+                
+                // CPU-prefault the expert pages. This pulls the SSD pages into the OS page
+                // cache on the CPU thread BEFORE the GPU command buffer sees them.
+                // Result: no GPU watchdog-triggering page faults during Metal execution.
+                MLXFast.prefault(expertWeight)
                 
                 let expertScales = self.scales[currentExpert ..< currentExpert + 1]
                 var expertBiases: MLXArray? = nil
