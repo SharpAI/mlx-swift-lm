@@ -213,7 +213,10 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
                 // CPU-prefault the expert pages. This pulls the SSD pages into the OS page
                 // cache on the CPU thread BEFORE the GPU command buffer sees them.
                 // Result: no GPU watchdog-triggering page faults during Metal execution.
+                let prefaultStart = DispatchTime.now().uptimeNanoseconds
                 MLXFast.prefault(expertWeight)
+                let prefaultEnd = DispatchTime.now().uptimeNanoseconds
+                SSDStreamMetrics.shared.record(bytes: expertWeight.nbytes, timeNs: prefaultEnd - prefaultStart)
                 
                 let expertScales = self.scales[currentExpert ..< currentExpert + 1]
                 var expertBiases: MLXArray? = nil
