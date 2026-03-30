@@ -364,10 +364,11 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
         
         // TurboQuant: Compress older segments of the cache to reduce KV RAM on
         // high-context (100k+ token) requests. Enabled via --turbo-kv at startup.
-        if turboQuantEnabled, previous > 8192, let fullK = self.keys, let fullV = self.values {
+        if turboQuantEnabled, previous >= 512, let fullK = self.keys, let fullV = self.values {
             // Encode history past the eviction boundary into 3-bit PolarQuant primitives
-            let staleK = fullK[.ellipsis, ..<4096, 0...]
-            let staleV = fullV[.ellipsis, ..<4096, 0...]
+            let compressLimit = previous / 2
+            let staleK = fullK[.ellipsis, ..<compressLimit, 0...]
+            let staleV = fullV[.ellipsis, ..<compressLimit, 0...]
             
             let (qK, qV) = MLXFast.turboQuantEncode(keys: staleK, values: staleV, bits: 3)
             self.polarKeys = qK.0

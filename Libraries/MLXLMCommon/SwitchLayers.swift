@@ -346,10 +346,10 @@ public final class SSDStreamMetrics: @unchecked Sendable {
             self.lastLogTimeNs = now
             
             if count > 0 {
-                let mb = Double(bytes) / (1024.0 * 1024.0)
-                let avgMs = (Double(ns) / 1_000_000.0) / Double(count)
-                print(String(format: "[⚡️ SSD Stream] %.1f MB/s over %d chunks | Avg latency per chunk: %.6f ms", mb, count, avgMs))
-                fflush(stdout)
+                // let mb = Double(bytes) / (1024.0 * 1024.0)
+                // let avgMs = (Double(ns) / 1_000_000.0) / Double(count)
+                // print(String(format: "[⚡️ SSD Stream] %.1f MB/s over %d chunks | Avg latency per chunk: %.6f ms", mb, count, avgMs))
+                // fflush(stdout)
             }
         }
     }
