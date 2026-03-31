@@ -2,17 +2,30 @@ import Foundation
 import MLX
 
 // ── TurboKV Telemetry ────────────────────────────────────────────────────────
-/// Logs once per process when the compressed-history decode path fires in SDPA.
-enum TurboKVTelemetry {
-    nonisolated(unsafe) static var didLogDecode = false
+// Feeds C atomics in moe_stream_op.cpp; stats appear in the 10s SSD Stream log:
+//   [⚡️ SSD Stream] 7330 MB/s | ... | 🗜 TurboKV 4244t 4.3x
+// No per-event prints — zero log spam.
 
-    static func logDecodeOnce(compressedTokens: Int, hotTokens: Int, totalSeqLen: Int) {
-        guard !didLogDecode else { return }
-        didLogDecode = true
-        print(String(format: "[TurboKV] 🔓 Decode path ACTIVE — compressed=%d tokens + hot=%d tokens → SDPA seq_len=%d",
-                     compressedTokens, hotTokens, totalSeqLen))
+// Direct link to the C atomic recorder in moe_stream_op.cpp
+@_silgen_name("mlx_turbo_kv_record")
+func _mlxTurboKVRecord(_ tokens: UInt64, _ origBytes: UInt64, _ packedBytes: UInt64)
+
+enum TurboKVTelemetry {
+    /// Feed the 10s log aggregator from the cache compression path.
+    static func logOnce(compressedOffset: Int, keys: MLXArray, values: MLXArray, headDim: Int) {
+        let packedBytes = UInt64(keys.nbytes + values.nbytes)
+        let origBytes   = UInt64(compressedOffset * headDim * 2 * 2)  // K+V fp16
+        _mlxTurboKVRecord(UInt64(compressedOffset), origBytes, packedBytes)
+    }
+
+    /// Feed the 10s log aggregator from the AttentionUtils decode path.
+    static func record(tokens: Int, origBytes: Int, packedBytes: Int) {
+        _mlxTurboKVRecord(UInt64(tokens), UInt64(origBytes), UInt64(packedBytes))
     }
 }
+
+/// Alias used by KVCache.swift on the compression path.
+typealias TurboKVCacheTelemetry = TurboKVTelemetry
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Attention utilities that match Python mlx-lm's interface
@@ -129,11 +142,11 @@ public func attentionWithCacheUpdate(
             fullKeys   = concatenated([historyK, cachedKeys],   axis: 2)
             fullValues = concatenated([historyV, cachedValues], axis: 2)
 
-            // Log first decode event so operator can confirm the pipeline is live
-            TurboKVTelemetry.logDecodeOnce(
-                compressedTokens: kvCache.compressedOffset,
-                hotTokens: cachedKeys.dim(2),
-                totalSeqLen: fullKeys.dim(2)
+            // Feed the 10s aggregator (no per-event print)
+            TurboKVTelemetry.record(
+                tokens:      kvCache.compressedOffset,
+                origBytes:   historyK.nbytes + historyV.nbytes,
+                packedBytes: pk.nbytes + pv.nbytes
             )
         }
 

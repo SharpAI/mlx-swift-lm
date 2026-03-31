@@ -309,17 +309,20 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
     internal var keys: MLXArray?
     internal var values: MLXArray?
     
-    // TurboQuant Experimental State
-    // Set to true via --turbo-kv flag (Server.swift) to enable 3-bit PolarQuant
-    // compression of KV cache history. Compression starts from the first update.
+    // ── TurboQuant State ───────────────────────────────────────────────────────
+    // When turboQuantEnabled=true (--turbo-kv flag), every incoming KV token is
+    // immediately compressed into 3-bit PolarQuant format. No fp16 buffer is kept.
+    // Design mirrors TurboQuantKVCacheV3.update_and_fetch() in the reference:
+    //   all tokens → polarKeys/polarValues packed buffers from token 1.
+    //   AttentionUtils decodes the full packed buffer before each SDPA call.
     public var turboQuantEnabled: Bool = false
-    public var polarKeys: MLXArray?    // packed uint8 [B, nKVH, T_compressed, 68 or 136]
-    public var polarValues: MLXArray?  // packed uint8 [B, nKVH, T_compressed, 50 or 100]
+    public var polarKeys: MLXArray?    // packed uint8 [B, nKVH, T_total, 68 or 136]
+    public var polarValues: MLXArray?  // packed uint8 [B, nKVH, T_total, 50 or 100]
     public var residualKeys: MLXArray?
     public var residualValues: MLXArray?
-    /// Number of tokens stored in polarKeys/polarValues (history before hot window)
+    /// Total tokens stored in polarKeys/polarValues
     public var compressedOffset: Int = 0
-    
+
     public var step = 256
 
     public override init() {
@@ -333,6 +336,43 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
     public override func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
         let previous = self.offset
 
+        // ── TurboQuant path: compress every incoming token immediately ─────────
+        // Reference: TurboQuantKVCacheV3.update_and_fetch() quantizes all tokens
+        // on every call. No threshold, no hot-window split. The entire KV history
+        // lives in polarKeys/polarValues; fp16 buffers are not maintained.
+        if turboQuantEnabled {
+            if keys.dim(-1) != 128 && keys.dim(-1) != 256 {
+                // Unsupported architecture — fall through to standard fp16 path
+                print("[TurboKV] ⚠️  head_dim \(keys.dim(-1)) unsupported (needs 128 or 256). Falling back to fp16.")
+                turboQuantEnabled = false
+            } else {
+                // Encode new tokens → packed uint8
+                let (qK, qV) = MLXFast.turboQuantEncode(keys: keys, values: values, bits: 3)
+
+                // Append to growing packed buffers
+                if let existingPK = self.polarKeys, let existingPV = self.polarValues {
+                    self.polarKeys   = concatenated([existingPK, qK.0], axis: 2)
+                    self.polarValues = concatenated([existingPV, qV.0], axis: 2)
+                } else {
+                    self.polarKeys   = qK.0
+                    self.polarValues = qV.0
+                }
+                self.residualKeys   = qK.1
+                self.residualValues = qV.1
+                self.compressedOffset += keys.dim(2)
+                self.offset          += keys.dim(2)
+
+                // Telemetry — log once when the pipeline first activates
+                TurboKVCacheTelemetry.logOnce(compressedOffset: self.compressedOffset, keys: qK.0, values: qV.0,
+                                              headDim: keys.dim(-1))
+
+                // Return the raw incoming tokens — AttentionUtils will prepend
+                // the decoded full history before SDPA.
+                return (keys, values)
+            }
+        }
+
+        // ── Standard fp16 path ────────────────────────────────────────────────
         let reset =
             if let currentKeys = self.keys, (previous + keys.dim(2)) > currentKeys.dim(2) {
                 true
@@ -353,96 +393,28 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
 
             if var currentKeys = self.keys, var currentValues = self.values {
                 if previous % step != 0 {
-                    currentKeys = currentKeys[.ellipsis, ..<previous, 0...]
+                    currentKeys  = currentKeys[.ellipsis, ..<previous, 0...]
                     currentValues = currentValues[.ellipsis, ..<previous, 0...]
                 }
-                self.keys = concatenated([currentKeys, newK], axis: 2)
+                self.keys   = concatenated([currentKeys, newK],   axis: 2)
                 self.values = concatenated([currentValues, newV], axis: 2)
             } else {
-                self.keys = newK
+                self.keys   = newK
                 self.values = newV
-            }
-        }
-        
-        // TurboQuant: Compress older half of the cache into 3-bit PolarQuant.
-        // After encoding, the hot window is written back so self.keys only holds
-        // recent tokens — older tokens live in polarKeys/polarValues.
-        if turboQuantEnabled, previous >= 1, let fullK = self.keys, let fullV = self.values {
-            if fullK.dim(-1) != 128 && fullK.dim(-1) != 256 {
-                print("[TurboKV] ⚠️  head_dim \(fullK.dim(-1)) unsupported (needs 128 or 256). Compression disabled.")
-
-                turboQuantEnabled = false
-            } else {
-                let compressLimit = previous / 2
-                if compressLimit > 0 {
-                    let hotStart = compressLimit
-                    let staleK = fullK[.ellipsis, ..<compressLimit, 0...]
-                    let staleV = fullV[.ellipsis, ..<compressLimit, 0...]
-
-                    let (qK, qV) = MLXFast.turboQuantEncode(keys: staleK, values: staleV, bits: 3)
-                    // Accumulate compressed history (concatenate with any existing polarKeys)
-                    if let existingPK = self.polarKeys, let existingPV = self.polarValues {
-                        self.polarKeys = concatenated([existingPK, qK.0], axis: 2)
-                        self.polarValues = concatenated([existingPV, qV.0], axis: 2)
-                    } else {
-                        self.polarKeys = qK.0
-                        self.polarValues = qV.0
-                    }
-                    self.residualKeys = qK.1
-                    self.residualValues = qV.1
-                    self.compressedOffset += compressLimit
-
-                    // ── TurboKV telemetry ─────────────────────────────────
-                    let compressedMB = Double(qK.0.nbytes + qV.0.nbytes) / 1_048_576
-                    let originalMB  = Double(compressLimit * fullK.dim(0) * fullK.dim(1) * fullK.dim(-1) * 2) / 1_048_576 * 2  // K+V fp16
-                    let ratio = originalMB > 0 ? originalMB / compressedMB : 0
-                    print(String(format: "[TurboKV] ✅ Compressed %d tokens → %.1f KB packed (was %.1f MB, %.1fx) | total compressed=%d hot=%d",
-                                 compressLimit, compressedMB * 1024, originalMB, ratio,
-                                 self.compressedOffset, previous - compressLimit))
-                    // ─────────────────────────────────────────────────────
-
-                    // Truncate self.keys/values to the hot window only.
-                    // This is the key step that achieves actual RAM savings.
-                    let hotK = fullK[.ellipsis, hotStart..<previous, 0...]
-                    let hotV = fullV[.ellipsis, hotStart..<previous, 0...]
-                    // Reallocate a fresh hot-window buffer
-                    let B = keys.dim(0)
-                    let nKVH = keys.dim(1)
-                    let kDim = keys.dim(3)
-                    let vDim = values.dim(3)
-                    let hotLen = previous - hotStart
-                    let nSteps = (step + hotLen + keys.dim(2) - 1) / step
-                    let newK = MLXArray.zeros([B, nKVH, nSteps * step, kDim], dtype: keys.dtype)
-                    let newV = MLXArray.zeros([B, nKVH, nSteps * step, vDim], dtype: values.dtype)
-                    var newKeys = newK
-                    var newVals = newV
-                    newKeys[.ellipsis, ..<hotLen, 0...] = hotK
-                    newVals[.ellipsis, ..<hotLen, 0...] = hotV
-                    self.keys = newKeys
-                    self.values = newVals
-                    // Reset offset to hotLen so the slot below lands correctly
-                    self.offset = hotLen
-                    let newOffset = hotLen + keys.dim(2)
-                    self.keys?[.ellipsis, hotLen..<newOffset, 0...] = keys
-                    self.values?[.ellipsis, hotLen..<newOffset, 0...] = values
-                    self.offset = newOffset
-                    let returnedKeys = self.keys![.ellipsis, ..<self.offset, 0...]
-                    let returnedValues = self.values![.ellipsis, ..<self.offset, 0...]
-                    return (returnedKeys, returnedValues)
-                }
             }
         }
 
         self.offset += keys.dim(2)
 
-        self.keys?[.ellipsis, previous..<self.offset, 0...] = keys
+        self.keys?[.ellipsis,   previous..<self.offset, 0...] = keys
         self.values?[.ellipsis, previous..<self.offset, 0...] = values
 
-        let returnedKeys = self.keys![.ellipsis, ..<self.offset, 0...]
+        let returnedKeys   = self.keys![.ellipsis,   ..<self.offset, 0...]
         let returnedValues = self.values![.ellipsis, ..<self.offset, 0...]
 
         return (returnedKeys, returnedValues)
     }
+
 
 
     public override var state: [MLXArray] {
