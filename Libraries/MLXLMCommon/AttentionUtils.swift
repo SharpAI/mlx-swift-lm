@@ -142,15 +142,31 @@ public func attentionWithCacheUpdate(
            let pk = kvCache.polarKeys,
            let pv = kvCache.polarValues,
            kvCache.compressedOffset > 0 {
-            // Decode packed uint8 history → fp32 → model dtype
+            // Decode full packed history → fp32 → model dtype
             let historyK = MLXFast.turboDecodeK(packed: pk).asType(cachedKeys.dtype)
             let historyV = MLXFast.turboDecodeV(packed: pv).asType(cachedValues.dtype)
-            // Concatenate: [compressed_history | hot_window] along seq axis (dim 2)
-            fullKeys   = concatenated([historyK, cachedKeys],   axis: 2)
-            fullValues = concatenated([historyV, cachedValues], axis: 2)
-            // Telemetry is fed from KVCache.update() — no call here to avoid
-            // per-layer × per-decode-step double-counting.
+
+            // IMPORTANT: The current batch (cachedKeys) was JUST added to polarKeys by
+            // KVCache.update(). Decoding all of polarKeys therefore includes those tokens
+            // PLUS we already have them in cachedKeys → they'd appear twice in SDPA.
+            // Fix: only use the history that predates the current batch.
+            let numNew  = cachedKeys.dim(2)    // tokens in the current batch (1 for decode)
+            let histLen = kvCache.compressedOffset - numNew
+
+            if histLen > 0 {
+                // Prior history only (excludes the just-encoded current batch)
+                let priorK = historyK[.ellipsis, ..<histLen, 0...]
+                let priorV = historyV[.ellipsis, ..<histLen, 0...]
+                // SDPA sees: [prior_history | current_raw_tokens] — no duplication
+                fullKeys   = concatenated([priorK, cachedKeys],   axis: 2)
+                fullValues = concatenated([priorV, cachedValues], axis: 2)
+            }
+            // If histLen == 0 this is the first batch → no prior history to prepend,
+            // fullKeys/fullValues remain as cachedKeys/cachedValues (already set above).
+
+            // Telemetry is fed from KVCache.update() on the compression path.
         }
+
 
 
         if isCPU {
