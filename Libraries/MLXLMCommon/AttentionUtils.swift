@@ -141,14 +141,10 @@ public func attentionWithCacheUpdate(
             // Concatenate: [compressed_history | hot_window] along seq axis (dim 2)
             fullKeys   = concatenated([historyK, cachedKeys],   axis: 2)
             fullValues = concatenated([historyV, cachedValues], axis: 2)
-
-            // Feed the 10s aggregator (no per-event print)
-            TurboKVTelemetry.record(
-                tokens:      kvCache.compressedOffset,
-                origBytes:   historyK.nbytes + historyV.nbytes,
-                packedBytes: pk.nbytes + pv.nbytes
-            )
+            // Telemetry is fed from KVCache.update() — no call here to avoid
+            // per-layer × per-decode-step double-counting.
         }
+
 
         if isCPU {
             return fallbackScaledDotProductAttention(
