@@ -384,8 +384,9 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
             if keys.dim(-1) != 128 && keys.dim(-1) != 256 {
                 print("[TurboKV] ⚠️  head_dim \(keys.dim(-1)) unsupported (needs 128 or 256). Falling back to fp16.")
                 turboQuantEnabled = false
-            } else if self.offset > turboHotWindowSize {
-                // Tokens older than the hot window boundary are "cold" and eligible for compression.
+            } else if self.offset > turboMinActivationTokens {
+                // Only compress once we have a genuinely long context.
+                // Below this threshold every token stays at full fp16 quality.
                 let coldEnd      = self.offset - turboHotWindowSize
                 let newColdCount = coldEnd - self.compressedOffset  // not-yet-compressed cold tokens
 
@@ -431,9 +432,15 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
         return (returnedKeys, returnedValues)
     }
 
+    /// Minimum total token count before TurboKV compression activates.
+    /// Requests shorter than this threshold stay at full fp16 — no compression penalty.
+    /// Tool-use (~800-1500t) and short Q&A (~200-600t) are fully protected.
+    /// Only long-context requests (>2048t) pay the 3-bit compression trade-off.
+    public var turboMinActivationTokens: Int = 2048
+
     /// Number of fp16 tokens preserved as a high-quality hot window.
     /// Only tokens older than this boundary are compressed into polarKeys.
-    /// Compression first triggers when offset > turboHotWindowSize + step (i.e. ~512 tokens).
+    /// Compression first triggers when offset > turboMinActivationTokens.
     public var turboHotWindowSize: Int = 256
 
 
