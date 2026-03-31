@@ -1,6 +1,20 @@
 import Foundation
 import MLX
 
+// ── TurboKV Telemetry ────────────────────────────────────────────────────────
+/// Logs once per process when the compressed-history decode path fires in SDPA.
+enum TurboKVTelemetry {
+    nonisolated(unsafe) static var didLogDecode = false
+
+    static func logDecodeOnce(compressedTokens: Int, hotTokens: Int, totalSeqLen: Int) {
+        guard !didLogDecode else { return }
+        didLogDecode = true
+        print(String(format: "[TurboKV] 🔓 Decode path ACTIVE — compressed=%d tokens + hot=%d tokens → SDPA seq_len=%d",
+                     compressedTokens, hotTokens, totalSeqLen))
+    }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Attention utilities that match Python mlx-lm's interface
 ///
 /// This provides a single function that automatically routes to quantized or regular
@@ -114,6 +128,13 @@ public func attentionWithCacheUpdate(
             // Concatenate: [compressed_history | hot_window] along seq axis (dim 2)
             fullKeys   = concatenated([historyK, cachedKeys],   axis: 2)
             fullValues = concatenated([historyV, cachedValues], axis: 2)
+
+            // Log first decode event so operator can confirm the pipeline is live
+            TurboKVTelemetry.logDecodeOnce(
+                compressedTokens: kvCache.compressedOffset,
+                hotTokens: cachedKeys.dim(2),
+                totalSeqLen: fullKeys.dim(2)
+            )
         }
 
         if isCPU {

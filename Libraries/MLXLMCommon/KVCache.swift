@@ -369,7 +369,8 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
         // recent tokens — older tokens live in polarKeys/polarValues.
         if turboQuantEnabled, previous >= 1, let fullK = self.keys, let fullV = self.values {
             if fullK.dim(-1) != 128 && fullK.dim(-1) != 256 {
-                print("[TurboKV] Warning: head_dim \(fullK.dim(-1)) unsupported (needs 128 or 256). Compression disabled.")
+                print("[TurboKV] ⚠️  head_dim \(fullK.dim(-1)) unsupported (needs 128 or 256). Compression disabled.")
+
                 turboQuantEnabled = false
             } else {
                 let compressLimit = previous / 2
@@ -390,6 +391,15 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
                     self.residualKeys = qK.1
                     self.residualValues = qV.1
                     self.compressedOffset += compressLimit
+
+                    // ── TurboKV telemetry ─────────────────────────────────
+                    let compressedMB = Double(qK.0.nbytes + qV.0.nbytes) / 1_048_576
+                    let originalMB  = Double(compressLimit * fullK.dim(0) * fullK.dim(1) * fullK.dim(-1) * 2) / 1_048_576 * 2  // K+V fp16
+                    let ratio = originalMB > 0 ? originalMB / compressedMB : 0
+                    print(String(format: "[TurboKV] ✅ Compressed %d tokens → %.1f KB packed (was %.1f MB, %.1fx) | total compressed=%d hot=%d",
+                                 compressLimit, compressedMB * 1024, originalMB, ratio,
+                                 self.compressedOffset, previous - compressLimit))
+                    // ─────────────────────────────────────────────────────
 
                     // Truncate self.keys/values to the hot window only.
                     // This is the key step that achieves actual RAM savings.
