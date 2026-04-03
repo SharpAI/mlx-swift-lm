@@ -381,8 +381,8 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
         //   • Prompt-cache restore: restored fp16 stays in self.keys → not silently lost ✅
         //   • AttentionUtils: cachedKeys (hot window) and polarKeys (history) are disjoint ✅
         if turboQuantEnabled {
-            if keys.dim(-1) != 128 && keys.dim(-1) != 256 {
-                print("[TurboKV] ⚠️  head_dim \(keys.dim(-1)) unsupported (needs 128 or 256). Falling back to fp16.")
+            if keys.dim(-1) % 32 != 0 || keys.dim(-1) > 1024 || keys.dim(-1) == 0 {
+                print("[TurboKV] ⚠️  head_dim \(keys.dim(-1)) unsupported (needs multiples of 32 up to 1024). Falling back to fp16.")
                 turboQuantEnabled = false
             } else if self.offset > turboMinActivationTokens {
                 // Only compress once we have a genuinely long context.
