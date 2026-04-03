@@ -223,7 +223,9 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
                 let readStart = DispatchTime.now().uptimeNanoseconds
                 let expertWeight: MLXArray
                 if let info = ssdInfo {
-                    // macOS directNVMe: pread() at ~5 GB/s, fresh malloc, freed after use.
+                    // macOS directNVMe: pread() at ~5 GB/s, loads the quantized weight from SSD.
+                    // The result is the raw weight tensor — same role as self.weight[expert..<expert+1]
+                    // in the mmap path. Feed it into gatherQuantizedMM below.
                     expertWeight = MLXFast.streamedGatherMM(
                         x: rangeX,
                         wShape: self.weight,
@@ -233,8 +235,6 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
                     )
                 } else {
                     // iOS mmap / macOS mmapPageCache: page-cache backed slice.
-                    // prefault() hints the OS to bring pages in before Metal needs them,
-                    // trading a brief CPU stall for zero Metal pipeline stall.
                     let w = self.weight[currentExpert ..< currentExpert + 1]
                     MLX.eval(w)
                     MLXFast.prefault(w)
@@ -242,13 +242,13 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
                 }
                 let readEnd = DispatchTime.now().uptimeNanoseconds
                 SSDStreamMetrics.shared.record(bytes: expertWeight.nbytes, timeNs: readEnd - readStart)
-                
+
                 let expertScales = self.scales[currentExpert ..< currentExpert + 1]
                 var expertBiases: MLXArray? = nil
                 if let b = self.biases {
                     expertBiases = b[currentExpert ..< currentExpert + 1]
                 }
-                
+
                 var expertOutput = MLX.gatherQuantizedMM(
                     rangeX,
                     expertWeight,
@@ -261,25 +261,37 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
                     mode: mode,
                     sortedIndices: true
                 )
-                
+
                 if let bias = self.bias {
                     let biasSlice = bias[currentExpert ..< currentExpert + 1]
                     expertOutput = expertOutput + MLX.expandedDimensions(biasSlice[expertIndices], axis: -2)
                 }
-                
+
+                // Normalize to a consistent shape before concatenation.
+                // gatherQuantizedMM can produce extra singleton dims (e.g. (1,1,1,1,D) vs
+                // (T,1,D)) depending on whether the weight came from directNVMe or mmap,
+                // causing the concatenated(expertResults, axis:0) to crash.
+                // Reshape to the canonical (..., 1, outputDims) that the caller expects.
+                let T = rangeX.dim(0)
+                let leadingShape = Array(rangeX.shape.dropLast())  // e.g. [T, 1] or [T]
+                let canonicalShape = leadingShape + [self.outputDims]
+                if expertOutput.shape != canonicalShape {
+                    expertOutput = expertOutput.reshaped(canonicalShape)
+                }
+
                 MLX.eval(expertOutput)
                 Stream.gpu.synchronize()
-                
+
                 expertResults.append(expertOutput)
                 startIdx = endIdx
             }
-            
+
             if expertResults.isEmpty {
                 var outShape = x.shape
                 outShape[outShape.count - 1] = self.outputDims
                 return MLXArray.zeros(outShape).asType(.float16)
             }
-            
+
             return MLX.concatenated(expertResults, axis: 0)
         }
 
