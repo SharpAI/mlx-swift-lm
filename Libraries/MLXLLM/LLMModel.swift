@@ -2,7 +2,6 @@
 
 import MLX
 import MLXLMCommon
-import Tokenizers
 
 // MARK: - Prefill Progress Hook
 //

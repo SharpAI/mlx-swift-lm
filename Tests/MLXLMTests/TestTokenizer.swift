@@ -3,17 +3,23 @@
 import Foundation
 import MLX
 import MLXLMCommon
-import Tokenizers
 
 /// A test tokenizer -- this can be used in place of a real tokenizer for unit/integration tests.
-struct TestTokenizer: Tokenizer {
+struct TestTokenizer: MLXLMCommon.Tokenizer {
 
     let length = 8
+    let maxLength = 50
 
-    var vocabulary: [Int: String]
+    /// a token outside the range that the model will generate, see vocabularySize
+    let _eosTokenId = 101
+    let _unknownTokenId = 102
+
+    let vocabularySize: Int
+    let vocabulary: [Int: String]
 
     init(vocabularySize: Int = 100) {
         let letters = "abcdefghijklmnopqrstuvwxyz"
+        self.vocabularySize = vocabularySize
         self.vocabulary = Dictionary(
             uniqueKeysWithValues: (0 ..< vocabularySize)
                 .map { t in
@@ -28,88 +34,42 @@ struct TestTokenizer: Tokenizer {
         )
     }
 
-    func tokenize(text: String) -> [String] {
-        text.split(separator: " ").map { String($0) }
-    }
-
-    func encode(text: String) -> [Int] {
-        (0 ..< length).map { _ in
-            Int.random(in: 0 ..< 100)
-        }
-    }
-
     func encode(text: String, addSpecialTokens: Bool) -> [Int] {
-        encode(text: text)
+        (0 ..< length).map { _ in
+            Int.random(in: 1 ..< vocabularySize)
+        }
     }
 
-    func decode(tokens: [Int], skipSpecialTokens: Bool) -> String {
-        var tokens = tokens
-        if tokens.count > 50 {
-            tokens.append(19)
+    func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+        var tokenIds = tokenIds
+        if tokenIds.count > maxLength {
+            tokenIds.append(_eosTokenId)
         }
-        return tokens.map { convertIdToToken($0) ?? "" }.joined(separator: " ")
+        return tokenIds.map { convertIdToToken($0) ?? "" }.joined(separator: " ")
     }
 
     func convertTokenToId(_ token: String) -> Int? {
-        Int.random(in: 0 ..< 100)
+        Int.random(in: 1 ..< vocabularySize)
     }
 
     func convertIdToToken(_ id: Int) -> String? {
-        if id == 19 {
+        if id == eosTokenId {
             return "EOS"
         }
         return vocabulary[id]
     }
 
     var bosToken: String? = nil
-
-    var bosTokenId: Int? = 0
-
     var eosToken: String? = nil
-
-    var eosTokenId: Int? = 0
+    var eosTokenId: Int? { _eosTokenId }
 
     var unknownToken: String? = nil
 
-    var unknownTokenId: Int? = 0
-
-    func applyChatTemplate(messages: [Tokenizers.Message]) throws -> [Int] {
-        encode(text: "")
-    }
-
-    func applyChatTemplate(messages: [Tokenizers.Message], tools: [Tokenizers.ToolSpec]?) throws
-        -> [Int]
-    {
-        encode(text: "")
-    }
+    var unknownTokenId: Int? { _unknownTokenId }
 
     func applyChatTemplate(
-        messages: [Tokenizers.Message], tools: [Tokenizers.ToolSpec]?,
-        additionalContext: [String: any Sendable]?
-    ) throws -> [Int] {
-        encode(text: "")
-    }
-
-    func applyChatTemplate(
-        messages: [Tokenizers.Message], chatTemplate: Tokenizers.ChatTemplateArgument
-    ) throws -> [Int] {
-        encode(text: "")
-    }
-
-    func applyChatTemplate(messages: [Tokenizers.Message], chatTemplate: String) throws -> [Int] {
-        encode(text: "")
-    }
-
-    func applyChatTemplate(
-        messages: [Tokenizers.Message], chatTemplate: Tokenizers.ChatTemplateArgument?,
-        addGenerationPrompt: Bool, truncation: Bool, maxLength: Int?, tools: [Tokenizers.ToolSpec]?
-    ) throws -> [Int] {
-        encode(text: "")
-    }
-
-    func applyChatTemplate(
-        messages: [Tokenizers.Message], chatTemplate: Tokenizers.ChatTemplateArgument?,
-        addGenerationPrompt: Bool, truncation: Bool, maxLength: Int?, tools: [Tokenizers.ToolSpec]?,
+        messages: [[String: any Sendable]],
+        tools: [[String: any Sendable]]?,
         additionalContext: [String: any Sendable]?
     ) throws -> [Int] {
         encode(text: "")
