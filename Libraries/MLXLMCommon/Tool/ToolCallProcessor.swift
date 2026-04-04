@@ -172,14 +172,20 @@ public class ToolCallProcessor {
                 toolCallBuffer = ""
 
                 // If the token contains the start character, there may be more tool calls to come
+                let nextOutput: String?
                 if let trailingToken, let startChar = startTagFirstChar,
                     trailingToken.contains(startChar)
                 {
-                    return processChunk(trailingToken)
+                    nextOutput = processChunk(trailingToken)
                 } else {
                     // Otherwise, return the collected token, or nil if it's empty
-                    return trailingToken?.isEmpty ?? true ? nil : trailingToken
+                    nextOutput = trailingToken?.isEmpty ?? true ? nil : trailingToken
                 }
+                
+                if let leading = leadingToken, !leading.isEmpty {
+                    return leading + (nextOutput ?? "")
+                }
+                return nextOutput
             } else {
                 return nil
             }

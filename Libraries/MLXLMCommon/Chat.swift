@@ -14,14 +14,23 @@ public enum Chat {
         /// Array of video data associated with the message.
         public var videos: [UserInput.Video]
 
+        /// Array of tool calls (typically for the assistant role).
+        public var toolCalls: [[String: any Sendable]]?
+
+        /// Optional ID of the tool call this message responds to (typically for the tool role).
+        public var toolCallId: String?
+
         public init(
             role: Role, content: String, images: [UserInput.Image] = [],
-            videos: [UserInput.Video] = []
+            videos: [UserInput.Video] = [], toolCalls: [[String: any Sendable]]? = nil,
+            toolCallId: String? = nil
         ) {
             self.role = role
             self.content = content
             self.images = images
             self.videos = videos
+            self.toolCalls = toolCalls
+            self.toolCallId = toolCallId
         }
 
         public static func system(
@@ -31,9 +40,10 @@ public enum Chat {
         }
 
         public static func assistant(
-            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = []
+            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = [],
+            toolCalls: [[String: any Sendable]]? = nil
         ) -> Self {
-            Self(role: .assistant, content: content, images: images, videos: videos)
+            Self(role: .assistant, content: content, images: images, videos: videos, toolCalls: toolCalls)
         }
 
         public static func user(
@@ -42,8 +52,8 @@ public enum Chat {
             Self(role: .user, content: content, images: images, videos: videos)
         }
 
-        public static func tool(_ content: String) -> Self {
-            Self(role: .tool, content: content)
+        public static func tool(_ content: String, toolCallId: String? = nil) -> Self {
+            Self(role: .tool, content: content, toolCallId: toolCallId)
         }
 
         public enum Role: String, Sendable {
@@ -81,10 +91,17 @@ public protocol MessageGenerator: Sendable {
 extension MessageGenerator {
 
     public func generate(message: Chat.Message) -> Message {
-        [
+        var dict: [String: any Sendable] = [
             "role": message.role.rawValue,
             "content": message.content,
         ]
+        if let toolCalls = message.toolCalls {
+            dict["tool_calls"] = toolCalls
+        }
+        if let toolCallId = message.toolCallId {
+            dict["tool_call_id"] = toolCallId
+        }
+        return dict
     }
 
     public func generate(messages: [Chat.Message]) -> [Message] {
@@ -123,10 +140,17 @@ public struct DefaultMessageGenerator: MessageGenerator {
     public init() {}
 
     public func generate(message: Chat.Message) -> Message {
-        [
+        var dict: [String: any Sendable] = [
             "role": message.role.rawValue,
             "content": message.content,
         ]
+        if let toolCalls = message.toolCalls {
+            dict["tool_calls"] = toolCalls
+        }
+        if let toolCallId = message.toolCallId {
+            dict["tool_call_id"] = toolCallId
+        }
+        return dict
     }
 }
 
