@@ -28,9 +28,9 @@ public func scatterUnsort(x: MLXArray, invOrder: MLXArray, shape: [Int]? = nil) 
 // MARK: - SwitchGLU
 
 public class SwitchGLU: Module {
-    @ModuleInfo(key: "gate_proj") var gateProj: SwitchLinear
-    @ModuleInfo(key: "up_proj") var upProj: SwitchLinear
-    @ModuleInfo(key: "down_proj") var downProj: SwitchLinear
+    @ModuleInfo(key: "gate_proj") public var gateProj: SwitchLinear
+    @ModuleInfo(key: "up_proj") public var upProj: SwitchLinear
+    @ModuleInfo(key: "down_proj") public var downProj: SwitchLinear
 
     let inputDims: Int
     let hiddenDims: Int
@@ -55,7 +55,6 @@ public class SwitchGLU: Module {
             inputDims: inputDims, outputDims: hiddenDims, numExperts: numExperts, bias: bias)
         self._downProj.wrappedValue = SwitchLinear(
             inputDims: hiddenDims, outputDims: inputDims, numExperts: numExperts, bias: bias)
-
         super.init()
     }
 
@@ -91,12 +90,12 @@ public class SwitchGLU: Module {
 }
 
 public class SwitchLinear: Module, Quantizable {
-    @ModuleInfo(key: "weight") var weight: MLXArray
-    @ModuleInfo(key: "bias") var bias: MLXArray?
+    @ModuleInfo(key: "weight") public var weight: MLXArray
+    @ModuleInfo(key: "bias") public var bias: MLXArray?
 
-    let inputDims: Int
-    let outputDims: Int
-    let numExperts: Int
+    public let inputDims: Int
+    public let outputDims: Int
+    public let numExperts: Int
 
     public init(inputDims: Int, outputDims: Int, numExperts: Int, bias: Bool = true) {
         self.inputDims = inputDims

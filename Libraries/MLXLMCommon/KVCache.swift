@@ -440,7 +440,7 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
 
                         TurboKVCacheTelemetry.logOnce(
                             compressedOffset: newColdCount, keys: qK.0, values: qV.0,
-                            headDim: keys.dim(-1))
+                            headDim: turboSplitHeads ? 256 : keys.dim(-1))
                     }
                 }
             }
