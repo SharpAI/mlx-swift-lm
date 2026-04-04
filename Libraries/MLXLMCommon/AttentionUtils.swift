@@ -147,8 +147,16 @@ public func attentionWithCacheUpdate(
             // SDPA sees: [decoded_prior_history | fp16_hot_window]
             let historyK = MLXFast.turboDecodeK(packed: pk).asType(cachedKeys.dtype)
             let historyV = MLXFast.turboDecodeV(packed: pv).asType(cachedValues.dtype)
-            fullKeys   = concatenated([historyK, cachedKeys],   axis: 2)
-            fullValues = concatenated([historyV, cachedValues], axis: 2)
+            // Merge 2×256 virtual heads back if 512-dim split was used
+            var mergedK = historyK
+            var mergedV = historyV
+            if kvCache.turboSplitHeads {
+                let B = historyK.dim(0), H2 = historyK.dim(1), T = historyK.dim(2)
+                mergedK = historyK.reshaped(B, H2 / 2, T, 512)
+                mergedV = historyV.reshaped(B, H2 / 2, T, 512)
+            }
+            fullKeys   = concatenated([mergedK, cachedKeys],   axis: 2)
+            fullValues = concatenated([mergedV, cachedValues], axis: 2)
             // Telemetry fed from KVCache.update() on the compression path.
         }
 

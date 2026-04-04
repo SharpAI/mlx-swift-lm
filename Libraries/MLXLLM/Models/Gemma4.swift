@@ -387,8 +387,14 @@ class Gemma4Attention: Module {
             if let kvCache = cache as? KVCacheSimple,
                let pk = kvCache.polarKeys, let pv = kvCache.polarValues,
                kvCache.compressedOffset > 0 {
-                let histK = MLXFast.turboDecodeK(packed: pk).asType(cachedKeys.dtype)
-                let histV = MLXFast.turboDecodeV(packed: pv).asType(cachedValues.dtype)
+                var histK = MLXFast.turboDecodeK(packed: pk).asType(cachedKeys.dtype)
+                var histV = MLXFast.turboDecodeV(packed: pv).asType(cachedValues.dtype)
+                // Merge 2×256 virtual heads back to original count × 512
+                if kvCache.turboSplitHeads {
+                    let B = histK.dim(0), H2 = histK.dim(1), T = histK.dim(2)
+                    histK = histK.reshaped(B, H2 / 2, T, 512)
+                    histV = histV.reshaped(B, H2 / 2, T, 512)
+                }
                 fullKeys   = concatenated([histK, cachedKeys],   axis: 2)
                 fullValues = concatenated([histV, cachedValues], axis: 2)
             }

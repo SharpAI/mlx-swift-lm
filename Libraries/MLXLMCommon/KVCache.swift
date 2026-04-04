@@ -318,6 +318,9 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
     public var turboQuantEnabled: Bool = false
     /// Tracks head_dim values that have already emitted a TurboKV fallback warning (log once per dim).
     private static var turboWarnedHeadDims: Set<Int> = []
+    /// When true, 512-dim heads were split into 2×256 virtual heads for TurboKV encoding.
+    /// Decode must merge them back: [B, nKVH*2, T, 256] → [B, nKVH, T, 512]
+    public var turboSplitHeads: Bool = false
     public var polarKeys: MLXArray?    // packed uint8 [B, nKVH, T_total, 68 or 136]
     public var polarValues: MLXArray?  // packed uint8 [B, nKVH, T_total, 50 or 100]
     public var residualKeys: MLXArray?
@@ -384,8 +387,9 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
         //   • AttentionUtils: cachedKeys (hot window) and polarKeys (history) are disjoint ✅
         if turboQuantEnabled {
             let headDim = keys.dim(-1)
-            if headDim != 128 && headDim != 256 {
-                // Warn once per unique head_dim to avoid log spam (6 global layers × every prefill)
+            let supportedDim = (headDim == 128 || headDim == 256)
+            let splittableDim = (headDim == 512) // split into 2×256 virtual heads
+            if !supportedDim && !splittableDim {
                 if !Self.turboWarnedHeadDims.contains(headDim) {
                     Self.turboWarnedHeadDims.insert(headDim)
                     print("[TurboKV] ⚠️  head_dim \(headDim) unsupported (turbo_encode_k requires 128 or 256). Falling back to fp16.")
@@ -399,8 +403,16 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
 
                 if newColdCount >= step {  // evict in step-sized chunks to avoid micro-operations
                     if let fullK = self.keys, let fullV = self.values {
-                        let coldK = fullK[.ellipsis, self.compressedOffset..<coldEnd, 0...]
-                        let coldV = fullV[.ellipsis, self.compressedOffset..<coldEnd, 0...]
+                        var coldK = fullK[.ellipsis, self.compressedOffset..<coldEnd, 0...]
+                        var coldV = fullV[.ellipsis, self.compressedOffset..<coldEnd, 0...]
+
+                        // Split 512-dim heads into 2×256 virtual heads for TurboKV encoding
+                        if headDim == 512 {
+                            turboSplitHeads = true
+                            let B = coldK.dim(0), H = coldK.dim(1), T = coldK.dim(2)
+                            coldK = coldK.reshaped(B, H * 2, T, 256)
+                            coldV = coldV.reshaped(B, H * 2, T, 256)
+                        }
 
                         let (qK, qV) = MLXFast.turboQuantEncode(keys: coldK, values: coldV, bits: 3)
 
@@ -464,8 +476,14 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
                let pk = polarKeys, let pv = polarValues,
                compressedOffset > 0,
                let hotK = self.keys, let hotV = self.values {
-                let histK = MLXFast.turboDecodeK(packed: pk)
-                let histV = MLXFast.turboDecodeV(packed: pv)
+                var histK = MLXFast.turboDecodeK(packed: pk)
+                var histV = MLXFast.turboDecodeV(packed: pv)
+                // Merge 2×256 virtual heads back to original head count × 512
+                if turboSplitHeads {
+                    let B = histK.dim(0), H2 = histK.dim(1), T = histK.dim(2)
+                    histK = histK.reshaped(B, H2 / 2, T, 512)
+                    histV = histV.reshaped(B, H2 / 2, T, 512)
+                }
                 let hotKSlice = hotK[.ellipsis, ..<offset, 0...]
                 let hotVSlice = hotV[.ellipsis, ..<offset, 0...]
                 return [
@@ -494,6 +512,7 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
             self.compressedOffset = 0
             self.residualKeys = nil
             self.residualValues = nil
+            self.turboSplitHeads = false
             self.keys = newValue[0]
             self.values = newValue[1]
             self.offset = self.keys!.dim(2)
