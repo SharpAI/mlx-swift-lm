@@ -153,7 +153,7 @@ public struct Gemma4Configuration: Codable {
         numExperts = try container.decodeIfPresent(Int.self, forKey: .numExperts)
         topKExperts = try container.decodeIfPresent(Int.self, forKey: .topKExperts)
         moeIntermediateSize = try container.decodeIfPresent(Int.self, forKey: .moeIntermediateSize)
-        numGlobalKeyValueHeads = try container.decodeIfPresent(Int.self, forKey: .numGlobalKeyValueHeads) ?? 1
+        numGlobalKeyValueHeads = try container.decodeIfPresent(Int.self, forKey: .numGlobalKeyValueHeads) ?? (try container.decodeIfPresent(Int.self, forKey: .kvHeads) ?? 1)
         hiddenSize = try container.decodeIfPresent(Int.self, forKey: .hiddenSize) ?? 1152
         hiddenLayers = try container.decodeIfPresent(Int.self, forKey: .hiddenLayers) ?? 26
 
@@ -835,6 +835,13 @@ public class Gemma4Model: Module, LLMModel {
             }
             let newK = k.replacingOccurrences(of: ".router.", with: ".experts.router.")
             finalWeights[newK] = v
+        }
+
+        // Explicitly map per_layer_projection_norm to ensure it survives flattening
+        if let normWeight = weights["language_model.model.per_layer_projection_norm.weight"] {
+            finalWeights["model.per_layer_projection_norm.weight"] = normWeight
+        } else if let normWeight = weights["model.per_layer_projection_norm.weight"] {
+            finalWeights["model.per_layer_projection_norm.weight"] = normWeight
         }
 
         // Handle mixed-quantization: MLP and MoE experts might be 8-bit while other layers are 4-bit.
