@@ -462,8 +462,8 @@ class Gemma4Router: Module {
         self.eps = eps
         self.scalarRootSize = 1.0 / sqrt(Float(dimensions))
         self._proj.wrappedValue = Linear(dimensions, numExperts, bias: false)
-        self._scale.wrappedValue = MLXArray.zeros([dimensions])
-        self._perExpertScale.wrappedValue = MLXArray.zeros([numExperts])
+        self._scale.wrappedValue = MLXArray.ones([dimensions])
+        self._perExpertScale.wrappedValue = MLXArray.ones([numExperts])
         super.init()
     }
 
