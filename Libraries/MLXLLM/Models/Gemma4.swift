@@ -861,9 +861,15 @@ public class Gemma4Model: Module, LLMModel {
         // 3. Setup dynamic layer updates
         var moduleUpdates: [(String, Module)] = []
         
-        // Dynamically wrap embed_tokens with QuantizedEmbedding if its shape count indicates packed uint32 (shape is 2, normally shape is 2 anyway but we check for matching scale). Since we know it's a 4-bit A4B model, we just check if scales exist.
+        // Dynamically wrap embed_tokens with QuantizedEmbedding if its shape count indicates packed uint32.
+        // We dynamically infer bits from the ratio of the packed weight array's dimension to the target's dimension.
         if let embedScales = processedWeights["model.embed_tokens.scales"], let embedTokens = model.embedTokens as? Embedding {
-            moduleUpdates.append(("model.embed_tokens", QuantizedEmbedding(embedTokens, groupSize: 64, bits: 4)))
+            if let w = processedWeights["model.embed_tokens.weight"], embedTokens.weight.shape.count >= 2 {
+                let bits = 32 * w.shape.last! / embedTokens.weight.shape[1]
+                moduleUpdates.append(("model.embed_tokens", QuantizedEmbedding(embedTokens, groupSize: 64, bits: bits)))
+            } else {
+                moduleUpdates.append(("model.embed_tokens", QuantizedEmbedding(embedTokens, groupSize: 64, bits: 4)))
+            }
         }
 
         // 4. Update the MoE and MLP parameter overrides inside the layers loop.
