@@ -49,7 +49,14 @@ public func loadWeights(
         quantize(model: model) { path, module in
             if weights["\(path).scales"] != nil {
                 if let perLayerQuantization {
-                    return perLayerQuantization.quantization(layer: path)?.asTuple
+                    let dict = perLayerQuantization.perLayerQuantization
+                    if let opt = dict[path] ?? dict["language_model.\(path)"] {
+                        switch opt {
+                        case .skip: return nil
+                        case .quantize(let q): return q.asTuple
+                        }
+                    }
+                    return perLayerQuantization.quantization?.asTuple
                 } else {
                     return quantization?.asTuple
                 }
