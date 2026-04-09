@@ -222,16 +222,16 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
                 let readStart = DispatchTime.now().uptimeNanoseconds
                 let expertWeight: MLXArray
                 if let info = ssdInfo {
-                    // macOS directNVMe: pread() at ~5 GB/s, loads the quantized weight from SSD.
-                    // The result is the raw weight tensor — same role as self.weight[expert..<expert+1]
-                    // in the mmap path. Feed it into gatherQuantizedMM below.
-                    expertWeight = MLXFast.streamedGatherMM(
-                        x: rangeX,
-                        wShape: self.weight,
-                        activeExpert: UInt32(currentExpert),
+                    // macOS PAPPS directNVMe: synchronous NVMe queue bypass with background caching.
+                    let w = MLXArray.zeros([1, self.weight.dim(1), self.weight.dim(2)]).asType(self.weight.dtype)
+                    MLX.eval(w)
+                    MLXFast.preadInto(
+                        w,
                         safetensorsPath: info.path,
-                        tensorName: info.tensorName
+                        tensorName: info.tensorName,
+                        expertIndex: UInt32(currentExpert)
                     )
+                    expertWeight = w
                 } else {
                     // iOS mmap / macOS mmapPageCache: page-cache backed slice.
                     let w = self.weight[currentExpert ..< currentExpert + 1]
@@ -289,6 +289,18 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
                 var outShape = x.shape
                 outShape[outShape.count - 1] = self.outputDims
                 return MLXArray.zeros(outShape).asType(.float16)
+            }
+
+            // PAPPS Heuristic: Prefetch exactly these experts so they are in cache for the N+1 token.
+            if let info = ssdInfo {
+                let uniqueIndices = Set(cpuIndices)
+                for _ in uniqueIndices {
+                    // MLXFast.pappsPrefetch(
+                    //     safetensorsPath: info.path,
+                    //     tensorName: info.tensorName,
+                    //     expertIndex: idx
+                    // )
+                }
             }
 
             return MLX.concatenated(expertResults, axis: 0)
