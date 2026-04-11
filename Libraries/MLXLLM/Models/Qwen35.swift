@@ -411,7 +411,15 @@ final class Qwen35SparseMoeBlock: Module, UnaryLayer {
     init(_ args: Qwen35TextConfiguration) {
         self.normTopkProb = args.normTopkProb
         self.numExperts = args.numExperts
-        self.topK = args.numExpertsPerTok
+        self.topK = {
+            if let override = ProcessInfo.processInfo.environment["SWIFTLM_TOP_K"],
+               let k = Int(override), k > 0 {
+                let effective = min(k, args.numExpertsPerTok)
+                print("[SwiftLM] Top-K override: \(args.numExpertsPerTok) -> \(effective)")
+                return effective
+            }
+            return args.numExpertsPerTok
+        }()
 
         _gate.wrappedValue = Linear(args.hiddenSize, args.numExperts, bias: false)
         _switchMLP.wrappedValue = SwitchGLU(
