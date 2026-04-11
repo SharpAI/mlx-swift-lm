@@ -258,6 +258,22 @@ public class Gemma4RMSNormNoScale: Module {
     }
 }
 
+/// Standard Gemma 4 RMSNorm with (1.0 + weight) shift.
+public class Gemma4RMSNorm: Module {
+    public let weight: MLXArray
+    public let eps: Float
+
+    public init(dimensions: Int, eps: Float = 1e-6) {
+        self.weight = MLXArray.zeros([dimensions])
+        self.eps = eps
+        super.init()
+    }
+
+    public func callAsFunction(_ x: MLXArray) -> MLXArray {
+        return MLXFast.rmsNorm(x, weight: MLXArray(Float(1.0)) + self.weight, eps: self.eps)
+    }
+}
+
 /// Proportional RoPE for Gemma 4 full-attention layers.
 ///
 /// Frequencies are computed relative to the full head dimension, and rotation is
@@ -579,20 +595,20 @@ class Gemma4TransformerBlock: Module {
     @ModuleInfo var mlp: Gemma4MLP
     @ModuleInfo(key: "experts") var expertsBlock: Gemma4SparseMoeBlock?
 
-    @ModuleInfo(key: "input_layernorm") var inputLayerNorm: RMSNorm
-    @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayerNorm: RMSNorm
-    @ModuleInfo(key: "pre_feedforward_layernorm") var preFeedforwardLayerNorm: RMSNorm
-    @ModuleInfo(key: "post_feedforward_layernorm") var postFeedforwardLayerNorm: RMSNorm
+    @ModuleInfo(key: "input_layernorm") var inputLayerNorm: Gemma4RMSNorm
+    @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayerNorm: Gemma4RMSNorm
+    @ModuleInfo(key: "pre_feedforward_layernorm") var preFeedforwardLayerNorm: Gemma4RMSNorm
+    @ModuleInfo(key: "post_feedforward_layernorm") var postFeedforwardLayerNorm: Gemma4RMSNorm
 
     // MoE specific norms
-    @ModuleInfo(key: "post_feedforward_layernorm_1") var postFeedforwardLayerNorm1: RMSNorm?
-    @ModuleInfo(key: "pre_feedforward_layernorm_2") var preFeedforwardLayerNorm2: RMSNorm?
-    @ModuleInfo(key: "post_feedforward_layernorm_2") var postFeedforwardLayerNorm2: RMSNorm?
+    @ModuleInfo(key: "post_feedforward_layernorm_1") var postFeedforwardLayerNorm1: Gemma4RMSNorm?
+    @ModuleInfo(key: "pre_feedforward_layernorm_2") var preFeedforwardLayerNorm2: Gemma4RMSNorm?
+    @ModuleInfo(key: "post_feedforward_layernorm_2") var postFeedforwardLayerNorm2: Gemma4RMSNorm?
 
     // Per-layer conditioning (Gemma 4 architectural novelty)
     @ModuleInfo(key: "per_layer_input_gate") var perLayerInputGate: Linear?
     @ModuleInfo(key: "per_layer_projection") var perLayerProjectionLayer: Linear?
-    @ModuleInfo(key: "post_per_layer_input_norm") var postPerLayerInputNorm: RMSNorm?
+    @ModuleInfo(key: "post_per_layer_input_norm") var postPerLayerInputNorm: Gemma4RMSNorm?
 
     @ModuleInfo(key: "layer_scalar") var layerScalar: MLXArray
 
@@ -628,9 +644,9 @@ class Gemma4TransformerBlock: Module {
                 topK: config.topKExperts ?? 1,
                 moeIntermediateSize: config.moeIntermediateSize ?? config.intermediateSize
             )
-            self._postFeedforwardLayerNorm1.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
-            self._preFeedforwardLayerNorm2.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
-            self._postFeedforwardLayerNorm2.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+            self._postFeedforwardLayerNorm1.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+            self._preFeedforwardLayerNorm2.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+            self._postFeedforwardLayerNorm2.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
         }
 
         if hasPerLayerInput {
@@ -638,14 +654,14 @@ class Gemma4TransformerBlock: Module {
                 config.hiddenSize, config.hiddenSizePerLayerInput, bias: false)
             self._perLayerProjectionLayer.wrappedValue = Linear(
                 config.hiddenSizePerLayerInput, config.hiddenSize, bias: false)
-            self._postPerLayerInputNorm.wrappedValue = RMSNorm(
+            self._postPerLayerInputNorm.wrappedValue = Gemma4RMSNorm(
                 dimensions: config.hiddenSize, eps: config.rmsNormEps)
         }
 
-        self._inputLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
-        self._postAttentionLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
-        self._preFeedforwardLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
-        self._postFeedforwardLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+        self._inputLayerNorm.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+        self._postAttentionLayerNorm.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+        self._preFeedforwardLayerNorm.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+        self._postFeedforwardLayerNorm.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
         self._layerScalar.wrappedValue = MLXArray.ones([1])
 
         super.init()
@@ -712,13 +728,13 @@ class Gemma4TransformerBlock: Module {
 // Reference: https://github.com/SharpAI/mlx-swift-lm/pull/1
 public class Gemma4ModelInternal: Module, LayerPartitionable, StreamableMoE {
     @ModuleInfo(key: "embed_tokens") public var embedTokens: Embedding
-    @ModuleInfo var layers: [Gemma4TransformerBlock]
-    @ModuleInfo var norm: RMSNorm
+    fileprivate let layers: [Gemma4TransformerBlock]
+    fileprivate let norm: Gemma4RMSNorm
 
     // Per-layer conditioning weights (Gemma 4 architectural novelty)
     @ModuleInfo(key: "embed_tokens_per_layer") public var embedTokensPerLayer: Embedding?
     @ModuleInfo(key: "per_layer_model_projection") public var perLayerModelProjection: Linear?
-    @ModuleInfo(key: "per_layer_projection_norm") public var perLayerProjectionNorm: RMSNorm?
+    @ModuleInfo(key: "per_layer_projection_norm") public var perLayerProjectionNorm: Gemma4RMSNorm?
 
     public var loraLayers: [Module] { layers }
 
@@ -739,11 +755,11 @@ public class Gemma4ModelInternal: Module, LayerPartitionable, StreamableMoE {
             dimensions: config.hiddenSize
         )
 
-        self._layers.wrappedValue = (0 ..< config.hiddenLayers).map { layerIdx in
+        self.layers = (0 ..< config.hiddenLayers).map { layerIdx in
             Gemma4TransformerBlock(config, layerIdx: layerIdx)
         }
 
-        self.norm = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+        self.norm = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
 
         if config.hiddenSizePerLayerInput > 0 {
             // embed_tokens_per_layer: [vocabSizePerLayerInput, numLayers × hiddenSizePerLayerInput]
@@ -757,7 +773,7 @@ public class Gemma4ModelInternal: Module, LayerPartitionable, StreamableMoE {
                 config.hiddenLayers * config.hiddenSizePerLayerInput,
                 bias: false
             )
-            self._perLayerProjectionNorm.wrappedValue = RMSNorm(
+            self._perLayerProjectionNorm.wrappedValue = Gemma4RMSNorm(
                 dimensions: config.hiddenSizePerLayerInput, eps: config.rmsNormEps)
         }
 
@@ -808,8 +824,8 @@ public class Gemma4ModelInternal: Module, LayerPartitionable, StreamableMoE {
             let L = inputs?.dim(1) ?? h.dim(1)
             let nL = config.hiddenLayers
             let D = config.hiddenSizePerLayerInput
+            print("DEBUG: B=\(B), L=\(L), h.shape=\(h.shape)")
 
-            var modelProjectedNormed: MLXArray?
             if let inputs = inputs {
                 // Token-based per-layer embeddings, scaled by sqrt(hiddenSizePerLayerInput)
                 let tokenScale = MLXArray(sqrt(Float(D))).asType(h.dtype)
@@ -822,21 +838,17 @@ public class Gemma4ModelInternal: Module, LayerPartitionable, StreamableMoE {
                 let imageMask = (1.0 - isImageToken).expandedDimensions(axes: [-1, -2])
                 tokenEmbeds = tokenEmbeds * imageMask
                 
-                let projScale = MLXArray(1.0 / sqrt(Float(config.hiddenSize))).asType(h.dtype)
-                let modelProjected = (modelProj(h) * projScale).reshaped(B, L, nL, D)
-                let modelProjectedNormedVal = projNorm(modelProjected)
-                
+                // Evaluate model projection directly on `unscaledTokens` if possible.
+                // However, `unscaledTokens` is not in this block! We can just divide `h` manually,
+                // or just remove the combined scaling since `1/sqrt * sqrt = 1`.
+                let unscaledH = embedTokens(inputs)
+                let modelProjected = (modelProj(unscaledH)).reshaped(B, L, nL, D)
+                let modelProjectedNormed = projNorm(modelProjected)
                 let combineScale = MLXArray(Float(1.0 / 2.0.squareRoot())).asType(h.dtype)
-                perLayerInputs = (tokenEmbeds + modelProjectedNormedVal) * combineScale
-            } else {
-                // If inputs is nil (VLM context injecting raw embeddings), fallback to just model representation
-                let projScale = MLXArray(1.0 / sqrt(Float(config.hiddenSize))).asType(h.dtype)
-                let modelProjected = (modelProj(h) * projScale).reshaped(B, L, nL, D)
-                let modelProjectedNormedVal = projNorm(modelProjected)
-                perLayerInputs = modelProjectedNormedVal * MLXArray(Float(1.0 / 2.0.squareRoot())).asType(h.dtype)
+                perLayerInputs = (tokenEmbeds + modelProjectedNormed) * combineScale
             }
         }
-
+        
         for (i, layer) in layers.enumerated() {
             let isGlobal = (i % config.slidingWindowPattern == config.slidingWindowPattern - 1)
             let layerMask = isGlobal ? globalMask : slidingWindowMask
@@ -844,7 +856,7 @@ public class Gemma4ModelInternal: Module, LayerPartitionable, StreamableMoE {
             let pli = perLayerInputs.map { $0[0..., 0..., i, 0...] }
             
             h = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount, stream: streamExperts, cacheToEval: layerCache?[i]) {
-                layer(h, mask: layerMask, cache: layerCache?[i], perLayerInput: pli)
+                layer(h, mask: layerMask, cache: layerCache?[i], perLayerInput: nil) // FORCE DISABLE
             }
         }
         return norm(h)
@@ -966,6 +978,7 @@ public class Gemma4Model: Module, LLMModel {
                 if finalWeights[kBiasesKey] != nil {
                     finalWeights[vBiasesKey] = finalWeights[kBiasesKey]
                 }
+            }
         }
         
         // MLX Swift's QuantizedEmbedding can sometimes cause silent evaluation bugs
@@ -977,6 +990,7 @@ public class Gemma4Model: Module, LLMModel {
              if let packedW = finalWeights[wKey],
                 let scales = finalWeights[sKey],
                 let biases = finalWeights[bKey] {
+                 print("DEBUG: Manually dequantizing \(prefix) with scales \(scales.shape) and packed \(packedW.shape)")
                  let bits = 32 * packedW.shape.last! / (scales.shape.last! * 64)
                  finalWeights[wKey] = MLX.dequantized(
                      packedW, scales: scales, biases: biases, groupSize: 64, bits: bits)
@@ -988,8 +1002,8 @@ public class Gemma4Model: Module, LLMModel {
         return finalWeights
     }
 
-    public func newCache(parameters: GenerateParameters? = nil) -> [KVCache] {
-        var caches = [KVCache]()
+    public func newCache(parameters: GenerateParameters? = nil) -> [any KVCache] {
+        var caches = [any KVCache]()
         let slidingWindow = config.slidingWindow
         let slidingWindowPattern = config.slidingWindowPattern
 
