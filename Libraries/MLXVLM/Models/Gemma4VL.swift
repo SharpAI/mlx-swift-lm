@@ -337,6 +337,12 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         } else {
             h = languageModel.embedTokens.asLinear(h)
         }
+        if config.finalLogitSoftcapping > 0 {
+            let originalType = h.dtype
+            let hF32 = h.asType(.float32)
+            let cap = MLXArray(config.finalLogitSoftcapping).asType(.float32)
+            h = (MLX.tanh(hF32 / cap) * cap).asType(originalType)
+        }
         return h
     }
     
@@ -394,6 +400,12 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
             h = lmHead(h)
         } else {
             h = languageModel.embedTokens.asLinear(h)
+        }
+        if config.finalLogitSoftcapping > 0 {
+            let originalType = h.dtype
+            let hF32 = h.asType(.float32)
+            let cap = MLXArray(config.finalLogitSoftcapping).asType(.float32)
+            h = (MLX.tanh(hF32 / cap) * cap).asType(originalType)
         }
         return .logits(LMOutput(logits: h))
     }
