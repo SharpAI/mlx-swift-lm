@@ -457,15 +457,15 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         
         // Merge the vision tower and projector weights back in, as the LLM sanitize discards them
         for (k, v) in weights {
-            if k.hasPrefix("vision_tower.") || k.hasPrefix("embed_vision.") {
+            if k.hasPrefix("vision_tower.") || k.hasPrefix("embed_vision.") || k.hasPrefix("audio_tower.") {
                 var newK = k
-                if newK.contains(".linear.") {
+                if newK.contains(".linear.") && !newK.hasPrefix("audio_tower.") {
                     newK = newK.replacingOccurrences(of: ".linear.", with: ".")
                 }
                 
-                // Strip unsupported auxiliary quantization keys from Vision Tower
+                // Strip unsupported auxiliary quantization keys from Vision / Audio Tower
                 // (e.g., from AWQ or partial-precision 8bit layers) to satisfy verify: [.all] constraints
-                if newK.hasSuffix(".input_max") || newK.hasSuffix(".input_min") || newK.hasSuffix(".output_max") || newK.hasSuffix(".output_min") {
+                if newK.hasSuffix(".input_max") || newK.hasSuffix(".input_min") || newK.hasSuffix(".output_max") || newK.hasSuffix(".output_min") || newK.hasSuffix(".per_dim_scale") {
                     continue
                 }
                 
@@ -602,7 +602,7 @@ public struct Gemma4Processor: UserInputProcessor {
         // In a real STFT flow this would map float PCM into Mels.
         var processedAudio: LMInput.ProcessedAudio? = nil
         if !input.audio.isEmpty {
-            let melSpec = MLX.zeros([1, 80, 3000]) // Mock 30s Audio for E2E validation
+            let melSpec = MLX.zeros([1, 3000, 128]) // Mock 30s Audio for E2E validation (Gemma 4 uses 128 Mel bins)
             processedAudio = LMInput.ProcessedAudio(features: melSpec, seqLengths: [3000])
             
             // Wait: Does Gemma 4 tokenizer inject the audio tokens?

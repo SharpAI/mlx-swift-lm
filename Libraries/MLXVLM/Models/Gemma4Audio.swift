@@ -66,7 +66,7 @@ private class GLU: Module {
 private class ClippedLinear: Module {
     @ModuleInfo(key: "linear") var linear: Linear
     
-    init(_ inputChannels: Int, _ outputChannels: Int, bias: Bool = true) {
+    init(_ inputChannels: Int, _ outputChannels: Int, bias: Bool = false) {
         self._linear.wrappedValue = Linear(inputChannels, outputChannels, bias: bias)
     }
     
@@ -78,27 +78,26 @@ private class ClippedLinear: Module {
 // MARK: - Subsample Projection
 
 private class SubsampleConvLayer: Module {
-    @ModuleInfo(key: "conv") var conv: Conv1d
-    @ModuleInfo(key: "norm") var norm: LayerNorm
-    @ModuleInfo var glu: GLU
+    @ModuleInfo(key: "conv") var conv: Conv2d
+    @ModuleInfo(key: "norm") var norm: RMSNorm
+    @ModuleInfo var activation: Swish
 
     init(inChannels: Int, outChannels: Int, eps: Float) {
-        // Expand the output channels by 2x to feed into GLU
-        self._conv.wrappedValue = Conv1d(
+        self._conv.wrappedValue = Conv2d(
             inputChannels: inChannels,
-            outputChannels: outChannels * 2, // 2x for GLU
-            kernelSize: 3,
-            stride: 2,
-            padding: 1, // 'SAME' equivalent for stride=2 kernel=3
-            bias: true
+            outputChannels: outChannels,
+            kernelSize: [3, 3],
+            stride: [2, 2],
+            padding: [1, 1], // 'SAME' equivalent for stride=2 kernel=3
+            bias: false
         )
-        self._norm.wrappedValue = LayerNorm(dimensions: outChannels, eps: eps)
-        self.glu = GLU(dim: -1)
+        self._norm.wrappedValue = RMSNorm(dimensions: outChannels, eps: eps)
+        self.activation = Swish()
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         var out = conv(x)
-        out = glu(out)
+        out = activation(out)
         out = norm(out)
         return out
     }
@@ -108,21 +107,25 @@ private class SubsampleConvProjection: Module {
     @ModuleInfo(key: "layer0") var layer0: SubsampleConvLayer
     @ModuleInfo(key: "layer1") var layer1: SubsampleConvLayer
     @ModuleInfo(key: "input_proj_linear") var inputProjLinear: Linear
-
-    init(inputChannels: Int, channels: [Int], hiddenSize: Int, eps: Float) {
-        self._layer0.wrappedValue = SubsampleConvLayer(inChannels: inputChannels, outChannels: channels[0], eps: eps)
+    
+    init(channels: [Int] = [128, 32], hiddenSize: Int, eps: Float) {
+        self._layer0.wrappedValue = SubsampleConvLayer(inChannels: 1, outChannels: channels[0], eps: eps)
         self._layer1.wrappedValue = SubsampleConvLayer(inChannels: channels[0], outChannels: channels[1], eps: eps)
         
-        let flattendDimensions = channels[1] * (80 / 4) // Example flattening
-        self._inputProjLinear.wrappedValue = Linear(flattendDimensions, hiddenSize, bias: true)
+        // Gemma 4 uses 128 Mel Bins, double stranded: 128 / 4 = 32. 32 * channels[1] = 1024
+        let flattendDimensions = channels[1] * (128 / 4)
+        self._inputProjLinear.wrappedValue = Linear(flattendDimensions, hiddenSize, bias: false)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        var hidden = layer0(x)
+        var hidden = x.reshaped(x.dim(0), x.dim(1), x.dim(2), 1) // Shape: [B, L, 128, 1]
+        
+        hidden = layer0(hidden)
         hidden = layer1(hidden)
         
-        let (B, L, _) = (hidden.dim(0), hidden.dim(1), hidden.dim(2))
-        hidden = hidden.reshaped(B, L, -1) // Flatten features
+        // Output from layer 1: [B, L/4, 128/4, outChannels=32]
+        let (B, L_new, F_new, C_new) = (hidden.dim(0), hidden.dim(1), hidden.dim(2), hidden.dim(3))
+        hidden = hidden.reshaped(B, L_new, F_new * C_new) // Flatten features
         
         return inputProjLinear(hidden)
     }
@@ -132,18 +135,18 @@ private class SubsampleConvProjection: Module {
 
 /// Macaron FFN
 private class MacaronFFN: Module {
-    @ModuleInfo(key: "pre_layer_norm") var preLayerNorm: LayerNorm
+    @ModuleInfo(key: "pre_layer_norm") var preLayerNorm: RMSNorm
     @ModuleInfo(key: "ffw_layer_1") var ffwLayer1: ClippedLinear
     @ModuleInfo(key: "ffw_layer_2") var ffwLayer2: ClippedLinear
-    @ModuleInfo(key: "post_layer_norm") var postLayerNorm: LayerNorm
+    @ModuleInfo(key: "post_layer_norm") var postLayerNorm: RMSNorm
     @ModuleInfo var activation: Swish
 
     init(hiddenSize: Int, eps: Float) {
         let expansion = hiddenSize * 4
-        self._preLayerNorm.wrappedValue = LayerNorm(dimensions: hiddenSize, eps: eps)
-        self._ffwLayer1.wrappedValue = ClippedLinear(hiddenSize, expansion, bias: true)
-        self._ffwLayer2.wrappedValue = ClippedLinear(expansion, hiddenSize, bias: true)
-        self._postLayerNorm.wrappedValue = LayerNorm(dimensions: hiddenSize, eps: eps)
+        self._preLayerNorm.wrappedValue = RMSNorm(dimensions: hiddenSize, eps: eps)
+        self._ffwLayer1.wrappedValue = ClippedLinear(hiddenSize, expansion, bias: false)
+        self._ffwLayer2.wrappedValue = ClippedLinear(expansion, hiddenSize, bias: false)
+        self._postLayerNorm.wrappedValue = RMSNorm(dimensions: hiddenSize, eps: eps)
         self.activation = Swish()
     }
 
@@ -158,18 +161,18 @@ private class MacaronFFN: Module {
 
 /// Conformer Convolution Module
 private class ConformerConvModule: Module {
-    @ModuleInfo(key: "pre_layer_norm") var preLayerNorm: LayerNorm
+    @ModuleInfo(key: "pre_layer_norm") var preLayerNorm: RMSNorm
     @ModuleInfo(key: "linear_start") var linearStart: ClippedLinear
     @ModuleInfo(key: "depthwise_conv1d") var depthwiseConv: Conv1d
-    @ModuleInfo(key: "conv_norm") var convNorm: LayerNorm
+    @ModuleInfo(key: "conv_norm") var convNorm: RMSNorm
     @ModuleInfo(key: "linear_end") var linearEnd: ClippedLinear
     
     @ModuleInfo var glu: GLU
     @ModuleInfo var activation: Swish
 
     init(hiddenSize: Int, kernelSize: Int, eps: Float) {
-        self._preLayerNorm.wrappedValue = LayerNorm(dimensions: hiddenSize, eps: eps)
-        self._linearStart.wrappedValue = ClippedLinear(hiddenSize, hiddenSize * 2, bias: true)
+        self._preLayerNorm.wrappedValue = RMSNorm(dimensions: hiddenSize, eps: eps)
+        self._linearStart.wrappedValue = ClippedLinear(hiddenSize, hiddenSize * 2, bias: false)
         self.glu = GLU(dim: -1)
         
         self._depthwiseConv.wrappedValue = Conv1d(
@@ -179,12 +182,12 @@ private class ConformerConvModule: Module {
             stride: 1,
             padding: (kernelSize - 1) / 2,
             groups: hiddenSize,
-            bias: true
+            bias: false
         )
         
-        self._convNorm.wrappedValue = LayerNorm(dimensions: hiddenSize, eps: eps)
+        self._convNorm.wrappedValue = RMSNorm(dimensions: hiddenSize, eps: eps)
         self.activation = Swish()
-        self._linearEnd.wrappedValue = ClippedLinear(hiddenSize, hiddenSize, bias: true)
+        self._linearEnd.wrappedValue = ClippedLinear(hiddenSize, hiddenSize, bias: false)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -209,18 +212,18 @@ private class ConformerAttention: Module {
     @ModuleInfo(key: "v_proj") var vProj: ClippedLinear
     @ModuleInfo(key: "post") var post: ClippedLinear
     @ModuleInfo(key: "relative_k_proj") var relativeKProj: Linear?
-
+    
     let numHeads: Int
     let scale: Float
-
+    
     init(hiddenSize: Int, numHeads: Int, eps: Float) {
         self.numHeads = numHeads
         self.scale = Float(hiddenSize / numHeads).squareRoot()
         
-        self._qProj.wrappedValue = ClippedLinear(hiddenSize, hiddenSize, bias: true)
-        self._kProj.wrappedValue = ClippedLinear(hiddenSize, hiddenSize, bias: true)
-        self._vProj.wrappedValue = ClippedLinear(hiddenSize, hiddenSize, bias: true)
-        self._post.wrappedValue = ClippedLinear(hiddenSize, hiddenSize, bias: true)
+        self._qProj.wrappedValue = ClippedLinear(hiddenSize, hiddenSize, bias: false)
+        self._kProj.wrappedValue = ClippedLinear(hiddenSize, hiddenSize, bias: false)
+        self._vProj.wrappedValue = ClippedLinear(hiddenSize, hiddenSize, bias: false)
+        self._post.wrappedValue = ClippedLinear(hiddenSize, hiddenSize, bias: false)
         self._relativeKProj.wrappedValue = Linear(hiddenSize, hiddenSize, bias: false)
     }
 
@@ -249,9 +252,9 @@ private class ConformerAttention: Module {
 
 /// A complete Conformer block layer
 private class ConformerBlock: Module {
-    @ModuleInfo(key: "norm_pre_attn") var normPreAttn: LayerNorm
-    @ModuleInfo(key: "norm_post_attn") var normPostAttn: LayerNorm
-    @ModuleInfo(key: "norm_out") var normOut: LayerNorm
+    @ModuleInfo(key: "norm_pre_attn") var normPreAttn: RMSNorm
+    @ModuleInfo(key: "norm_post_attn") var normPostAttn: RMSNorm
+    @ModuleInfo(key: "norm_out") var normOut: RMSNorm
 
     @ModuleInfo(key: "feed_forward1") var ffn1: MacaronFFN
     @ModuleInfo(key: "self_attn") var selfAttention: ConformerAttention
@@ -260,9 +263,9 @@ private class ConformerBlock: Module {
 
     init(config: Gemma4AudioConfiguration) {
         let eps = config.rmsNormEps
-        self._normPreAttn.wrappedValue = LayerNorm(dimensions: config.hiddenSize, eps: eps)
-        self._normPostAttn.wrappedValue = LayerNorm(dimensions: config.hiddenSize, eps: eps)
-        self._normOut.wrappedValue = LayerNorm(dimensions: config.hiddenSize, eps: eps)
+        self._normPreAttn.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: eps)
+        self._normPostAttn.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: eps)
+        self._normOut.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: eps)
 
         self._ffn1.wrappedValue = MacaronFFN(hiddenSize: config.hiddenSize, eps: eps)
         self._selfAttention.wrappedValue = ConformerAttention(
@@ -310,9 +313,7 @@ public class Gemma4AudioModel: Module {
 
     public init(config: Gemma4AudioConfiguration) {
         self.config = config
-        
         self._subsampleConvProjection.wrappedValue = SubsampleConvProjection(
-            inputChannels: 80, // Default Mel Spectrogram bins 
             channels: config.subsamplingConvChannels,
             hiddenSize: config.hiddenSize,
             eps: config.rmsNormEps
