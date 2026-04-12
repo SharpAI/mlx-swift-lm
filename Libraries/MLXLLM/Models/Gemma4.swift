@@ -16,14 +16,30 @@ public struct Gemma4VisionConfigurationProxy: Codable, Sendable {
     public let intermediateSize: Int?
     public let attentionHeads: Int?
     public let patchSize: Int?
+    
+    enum CodingKeys: String, CodingKey {
+        case hiddenSize = "hiddenSize"
+        case hiddenLayers = "numHiddenLayers"
+        case intermediateSize = "intermediateSize"
+        case attentionHeads = "numAttentionHeads"
+        case patchSize = "patchSize"
+    }
 }
 
 public struct Gemma4AudioConfigurationProxy: Codable, Sendable {
-    public let modelType: String
-    public let hiddenSize: Int
-    public let numHiddenLayers: Int
-    public let numAttentionHeads: Int
+    public let modelType: String?
+    public let hiddenSize: Int?
+    public let numHiddenLayers: Int?
+    public let numAttentionHeads: Int?
     public let outputProjDims: Int?
+    
+    enum CodingKeys: String, CodingKey {
+        case modelType = "modelType"
+        case hiddenSize = "hiddenSize"
+        case numHiddenLayers = "numHiddenLayers"
+        case numAttentionHeads = "numAttentionHeads"
+        case outputProjDims = "outputProjDims"
+    }
 }
 
 public struct Gemma4Configuration: Codable {
@@ -154,8 +170,8 @@ public struct Gemma4Configuration: Codable {
         case vocabSizePerLayerInput = "vocab_size_per_layer_input"
         // Logit softcapping
         case finalLogitSoftcapping = "final_logit_softcapping"
-        case visionConfig = "vision_config"
-        case audioConfig = "audio_config"
+        case visionConfig
+        case audioConfig
     }
 
     // Top-level keys (outside text_config)
