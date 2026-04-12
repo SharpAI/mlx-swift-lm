@@ -41,7 +41,7 @@ jobs:
         run: swift package resolve
 
       - name: Build (Release)
-        run: swift build -c release
+        run: swift build -c release --build-tests
 
       - name: Install MLX Metal library
         run: |
@@ -52,27 +52,27 @@ jobs:
           find .build -type d -name "MLXLMTests" -exec cp /tmp/mlx_venv/lib/python*/site-packages/mlx/lib/mlx.metallib {}/ \;
 
       - name: Run Library Tests (Metal Accelerated)
-        run: swift test --parallel --skip-build
+        run: swift test -c release --parallel --skip-build
 
       - name: Gemma 4 PLE Stabilization Gate
         run: |
           # Verify PLE signal stability with full kernel support
-          swift test --filter Gemma4StabilizationTests --skip-build
+          swift test -c release --filter Gemma4StabilizationTests --skip-build
 
       - name: Speculative Decoding Protection Gate
         run: |
           # Ensure speculative decoding parity and cache integrity are never regressed
-          swift test --filter SpeculativeDecodingTests --skip-build
+          swift test -c release --filter SpeculativeDecodingTests --skip-build
 
       - name: High-Rigor Architectural Parity (Gemma 4)
         run: |
           # Verify Gemma 4 Gated Residuals and PLE math integrity
-          swift test --filter Gemma4Tests --skip-build
+          swift test -c release --filter Gemma4Tests --skip-build
 
       - name: Performance & Memory Ceiling Audit (8GB Target)
         run: |
           # Enforce 6GB RSS limit and throughput baselines
-          swift test --filter PerformanceRegressionTests --skip-build
+          swift test -c release --filter PerformanceRegressionTests --skip-build
 
       - name: Upload test results on failure
         if: failure()
