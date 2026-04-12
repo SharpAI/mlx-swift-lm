@@ -64,6 +64,16 @@ jobs:
           # Ensure speculative decoding parity and cache integrity are never regressed
           swift test --filter SpeculativeDecodingTests --skip-build
 
+      - name: High-Rigor Architectural Parity (Gemma 4)
+        run: |
+          # Verify Gemma 4 Gated Residuals and PLE math integrity
+          swift test --filter Gemma4Tests --skip-build
+
+      - name: Performance & Memory Ceiling Audit (8GB Target)
+        run: |
+          # Enforce 6GB RSS limit and throughput baselines
+          swift test --filter PerformanceRegressionTests --skip-build
+
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v4

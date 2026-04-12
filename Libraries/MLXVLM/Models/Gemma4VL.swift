@@ -249,7 +249,7 @@ private class Gemma4PatchEmbedder: Module {
         // Add positional embeddings
         // The table is [2, 10240, hiddenSize]. We select index 0, and slice up to sequence length.
         let seqLen = out.dim(1)
-        let posEmbeds = position_embedding_table[0..., 0..<seqLen, 0...]
+        _ = position_embedding_table[0..., 0..<seqLen, 0...]
         // posEmbeds has shape [2, seqLen, hiddenSize]. We want [1, seqLen, hiddenSize] or just [seqLen, hiddenSize]
         // Actually since we don't know why it's 2, let's just pick index 0.
         out = out + position_embedding_table[0, 0..<seqLen, 0...]
@@ -505,14 +505,32 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         // Finalize tied word embeddings copy, overriding the standard fallback.
         // This MUST be done because we explicitly allocated a separate lm_head linear layer!
         if processed["lm_head.weight"] == nil || config.tieWordEmbeddings {
-            if let embedWeights = processed["model.embed_tokens.weight"] {
-                processed["lm_head.weight"] = embedWeights
+            // Check both prefixed and flat keys to be robust against different sanitization outputs
+            let embedKeys = ["model.embed_tokens.weight", "embed_tokens.weight", "model.embedTokens.weight", "embedTokens.weight"]
+            
+            for key in embedKeys {
+                if let embedWeights = processed[key] {
+                    processed["lm_head.weight"] = embedWeights
+                    print("[Gemma4VL] Tied lm_head.weight from \(key)")
+                    break
+                }
             }
-            if let embedScales = processed["model.embed_tokens.scales"] {
-                processed["lm_head.scales"] = embedScales
+            
+            // Repeat for scales/biases if present (quantized models)
+            let scaleKeys = ["model.embed_tokens.scales", "embed_tokens.scales", "model.embedTokens.scales", "embedTokens.scales"]
+            for key in scaleKeys {
+                if let embedScales = processed[key] {
+                    processed["lm_head.scales"] = embedScales
+                    break
+                }
             }
-            if let embedBiases = processed["model.embed_tokens.biases"] {
-                processed["lm_head.biases"] = embedBiases
+            
+            let biasKeys = ["model.embed_tokens.biases", "embed_tokens.biases", "model.embedTokens.biases", "embedTokens.biases"]
+            for key in biasKeys {
+                if let embedBiases = processed[key] {
+                    processed["lm_head.biases"] = embedBiases
+                    break
+                }
             }
         }
         
@@ -678,7 +696,7 @@ public struct Gemma4Processor: UserInputProcessor {
         let decodedPrompt = tokenizer.decode(tokenIds: promptTokens)
         print("[\(type(of: self))] Final Evaluated Prompt Geometry bounds:")
         print("\n----------------------")
-        print(decodedPrompt ?? "Failed to decode")
+        print(decodedPrompt)
         print("----------------------\n")
 
         let promptArray = MLXArray(promptTokens).expandedDimensions(axis: 0)
