@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and Test (macOS 15)
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-v1-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-v1-
+
+      - name: Clear stale module cache
+        run: find .build -type d -name ModuleCache -exec rm -rf {} + 2>/dev/null || true
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build (Release)
+        run: swift build -c release
+
+      - name: Install MLX Metal library
+        run: |
+          python3 -m venv /tmp/mlx_venv
+          /tmp/mlx_venv/bin/pip install --quiet mlx
+          # Inject metallib into both build and test runners
+          cp /tmp/mlx_venv/lib/python*/site-packages/mlx/lib/mlx.metallib .build/release/
+          find .build -type d -name "MLXLMTests" -exec cp /tmp/mlx_venv/lib/python*/site-packages/mlx/lib/mlx.metallib {}/ \;
+
+      - name: Run Library Tests (Metal Accelerated)
+        run: swift test --parallel --skip-build
+
+      - name: Gemma 4 PLE Stabilization Gate
+        run: |
+          # Verify PLE signal stability with full kernel support
+          swift test --filter Gemma4StabilizationTests --skip-build
+
+      - name: Speculative Decoding Protection Gate
+        run: |
+          # Ensure speculative decoding parity and cache integrity are never regressed
+          swift test --filter SpeculativeDecodingTests --skip-build
+
+      - name: High-Rigor Architectural Parity (Gemma 4)
+        run: |
+          # Verify Gemma 4 Gated Residuals and PLE math integrity
+          swift test --filter Gemma4Tests --skip-build
+
+      - name: Performance & Memory Ceiling Audit (8GB Target)
+        run: |
+          # Enforce 6GB RSS limit and throughput baselines
+          swift test --filter PerformanceRegressionTests --skip-build
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: library-test-results
+          path: .build/artifacts/
+          retention-days: 7

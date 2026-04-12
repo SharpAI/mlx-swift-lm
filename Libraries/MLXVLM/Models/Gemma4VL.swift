@@ -249,7 +249,7 @@ private class Gemma4PatchEmbedder: Module {
         // Add positional embeddings
         // The table is [2, 10240, hiddenSize]. We select index 0, and slice up to sequence length.
         let seqLen = out.dim(1)
-        let _ = position_embedding_table[0..., 0..<seqLen, 0...]
+        _ = position_embedding_table[0..., 0..<seqLen, 0...]
         // posEmbeds has shape [2, seqLen, hiddenSize]. We want [1, seqLen, hiddenSize] or just [seqLen, hiddenSize]
         // Actually since we don't know why it's 2, let's just pick index 0.
         out = out + position_embedding_table[0, 0..<seqLen, 0...]
@@ -341,7 +341,6 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider, LayerPartitio
         
         self._visionTower.wrappedValue = Gemma4VisionModel(config: vcfg)
         self._projector.wrappedValue = Gemma4Projector(visionDim: vcfg.hiddenSize, textDim: config.hiddenSize)
-        
         if let acfg = config.audioConfig {
             print("[Gemma4VL] DEBUG: Successfully parsed audio config with hiddenSize: \(acfg.hiddenSize.debugDescription)")
             let audioConfig = Gemma4AudioConfiguration(
@@ -352,7 +351,7 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider, LayerPartitio
                 outputProjDims: acfg.outputProjDims ?? 1536
             )
             self._audioTower.wrappedValue = Gemma4AudioModel(config: audioConfig)
-            self._audioProjector.wrappedValue = Gemma4Projector(visionDim: acfg.outputProjDims ?? 1536, textDim: config.hiddenSize)
+            self._audioProjector.wrappedValue = Gemma4Projector(visionDim: audioConfig.outputProjDims, textDim: config.hiddenSize)
         } else {
             print("[Gemma4VL] DEBUG: config.audioConfig IS NIL!")
         }
@@ -512,6 +511,38 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider, LayerPartitio
         }
         if processed["vision_tower.std_bias"] == nil {
             processed["vision_tower.std_bias"] = zeros([visionConfig.hiddenSize]).asType(activationDtype)
+        }
+        
+        // Finalize tied word embeddings copy, overriding the standard fallback.
+        // This MUST be done because we explicitly allocated a separate lm_head linear layer!
+        if processed["lm_head.weight"] == nil || config.tieWordEmbeddings {
+            // Check both prefixed and flat keys to be robust against different sanitization outputs
+            let embedKeys = ["model.embed_tokens.weight", "embed_tokens.weight", "model.embedTokens.weight", "embedTokens.weight"]
+            
+            for key in embedKeys {
+                if let embedWeights = processed[key] {
+                    processed["lm_head.weight"] = embedWeights
+                    print("[Gemma4VL] Tied lm_head.weight from \(key)")
+                    break
+                }
+            }
+            
+            // Repeat for scales/biases if present (quantized models)
+            let scaleKeys = ["model.embed_tokens.scales", "embed_tokens.scales", "model.embedTokens.scales", "embedTokens.scales"]
+            for key in scaleKeys {
+                if let embedScales = processed[key] {
+                    processed["lm_head.scales"] = embedScales
+                    break
+                }
+            }
+            
+            let biasKeys = ["model.embed_tokens.biases", "embed_tokens.biases", "model.embedTokens.biases", "embedTokens.biases"]
+            for key in biasKeys {
+                if let embedBiases = processed[key] {
+                    processed["lm_head.biases"] = embedBiases
+                    break
+                }
+            }
         }
         
         return processed
@@ -718,5 +749,3 @@ extension Gemma4VL: LoRAModel {
         return []
     }
 }
-
-
