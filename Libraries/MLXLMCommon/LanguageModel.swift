@@ -36,6 +36,7 @@ public struct LMInput {
     public let text: Text
     public let image: ProcessedImage?
     public let video: ProcessedVideo?
+    public let audio: ProcessedAudio?
 
     /// Representation of tokenized input text.
     public struct Text {
@@ -95,17 +96,33 @@ public struct LMInput {
         }
     }
 
+    /// Representation of prepared input audio.
+    public struct ProcessedAudio {
+        public let features: MLXArray
+        public let seqLengths: [Int]?
+
+        public init(
+            features: MLXArray, seqLengths: [Int]? = nil
+        ) {
+            self.features = features
+            self.seqLengths = seqLengths
+        }
+    }
+
     public init(tokens: MLXArray, mask: MLXArray? = nil) {
         self.init(text: .init(tokens: tokens, mask: mask))
     }
 
     public init(
-        text: LMInput.Text, image: LMInput.ProcessedImage? = nil,
-        video: LMInput.ProcessedVideo? = nil
+        text: Text,
+        image: ProcessedImage? = nil,
+        video: ProcessedVideo? = nil,
+        audio: ProcessedAudio? = nil
     ) {
         self.text = text
         self.image = image
         self.video = video
+        self.audio = audio
     }
 }
 

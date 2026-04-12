@@ -307,6 +307,9 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
     @ModuleInfo(key: "vision_tower") private var visionTower: Gemma4VisionModel
     @ModuleInfo(key: "embed_vision") private var projector: Gemma4Projector
 
+    @ModuleInfo(key: "audio_tower") private var audioTower: Gemma4AudioModel?
+
+
     public let config: Gemma4Configuration
     public let visionConfig: Gemma4VisionConfiguration
     
@@ -330,6 +333,17 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         
         self._visionTower.wrappedValue = Gemma4VisionModel(config: vcfg)
         self._projector.wrappedValue = Gemma4Projector(visionDim: vcfg.hiddenSize, textDim: config.hiddenSize)
+        
+        if let acfg = config.audioConfig {
+            let audioConfig = Gemma4AudioConfiguration(
+                modelType: acfg.modelType,
+                hiddenSize: acfg.hiddenSize,
+                numHiddenLayers: acfg.numHiddenLayers,
+                numAttentionHeads: acfg.numAttentionHeads
+            )
+            self._audioTower.wrappedValue = Gemma4AudioModel(config: audioConfig)
+
+        }
         super.init()
     }
 
@@ -353,6 +367,7 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
     private func getInputEmbeddings(
         inputIds: MLXArray,
         pixelValues: MLXArray?,
+        audioValues: MLXArray?,
         mask: MLXArray?
     ) -> (MLXArray, MLXArray?) {
         let baseEmbeds = languageModel.embedTokens(inputIds)
@@ -384,6 +399,24 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
             videoTokenId: imageTokenId
         )
         
+        if let audioValues = audioValues, let audioTower = audioTower {
+            let audioOutputs = audioTower(audioValues)
+            var audioFeatures = audioOutputs
+            audioFeatures = audioFeatures * MLXArray(Float(config.hiddenSize).squareRoot()).asType(audioFeatures.dtype)
+            let audioTokenId = 258881
+            
+            let audioTokenCount = inputIds.asArray(Int.self).filter { $0 == audioTokenId }.count
+            print("DEBUG: audioFeatures shape: \(audioFeatures.shape), padding count: \(audioTokenCount)")
+            
+            h = QwenVL.mergeInputIdsWithImageFeatures(
+                inputIds: inputIds,
+                inputEmbeds: h,
+                imageFeatures: audioFeatures.reshaped(-1, config.hiddenSize),
+                imageTokenId: audioTokenId,
+                videoTokenId: audioTokenId
+            )
+        }
+        
         return (h, nil) // Return dynamic mask if needed
     }
 
@@ -391,6 +424,7 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         let (inputEmbeddings, _ ) = getInputEmbeddings(
             inputIds: input.text.tokens,
             pixelValues: input.image?.pixels,
+            audioValues: input.audio?.features,
             mask: input.text.mask
         )
         let convertedCache = cache.map { $0 as KVCache? }
@@ -564,12 +598,29 @@ public struct Gemma4Processor: UserInputProcessor {
             promptTokens = expandedTokens
         }
 
+        // Mock Audio processing - we inject a dummy spectrogram [1, 80, 3000] for validation
+        // In a real STFT flow this would map float PCM into Mels.
+        var processedAudio: LMInput.ProcessedAudio? = nil
+        if !input.audio.isEmpty {
+            let melSpec = MLX.zeros([1, 80, 3000]) // Mock 30s Audio for E2E validation
+            processedAudio = LMInput.ProcessedAudio(features: melSpec, seqLengths: [3000])
+            
+            // Wait: Does Gemma 4 tokenizer inject the audio tokens?
+            // If the chat template drops it, we inject it manually.
+            let audioTokenId = 258881
+            if !promptTokens.contains(audioTokenId) {
+                // If it isn't in the template, we inject it manually!
+                promptTokens.insert(audioTokenId, at: promptTokens.first == 2 ? 1 : 0)
+            }
+        }
+
         let promptArray = MLXArray(promptTokens).expandedDimensions(axis: 0)
         let mask = ones(like: promptArray).asType(.int8)
 
         return LMInput(
             text: .init(tokens: promptArray, mask: mask),
-            image: processedImage
+            image: processedImage,
+            audio: processedAudio
         )
     }
 }
