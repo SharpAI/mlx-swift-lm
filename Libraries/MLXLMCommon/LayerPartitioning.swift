@@ -152,7 +152,7 @@ public func partitionedLayerCall<T>(
         }
         
         // 2. Clear MLX's internal Metal buffer pool.
-        GPU.clearCache()
+        Memory.clearCache()
     }
     
     return result
