@@ -550,7 +550,7 @@ final class Qwen35DecoderLayer: Module {
         //    (blocking the CPU). Ensuring the previous GPU work is committed and completed
         //    means the expert GEMM executes on an isolated, empty Metal Command Buffer.
         // ─────────────────────────────────────────────────────────────────────
-        if let moeBlock = self.mlp as? Qwen35SparseMoeBlock {
+        if self.mlp is Qwen35SparseMoeBlock {
             if let cacheState = cache {
                 eval([h] + cacheState.innerState())
             } else {
@@ -561,7 +561,7 @@ final class Qwen35DecoderLayer: Module {
         
         let mlpOutput = (self.mlp as! UnaryLayer)(postAttentionLayerNorm(h))
         let finalH = h + mlpOutput
-        if let moeBlock = self.mlp as? Qwen35SparseMoeBlock {
+        if self.mlp is Qwen35SparseMoeBlock {
             eval(finalH)
             Stream.gpu.synchronize()
         }

@@ -1302,7 +1302,7 @@ public class ArraysCache: BaseKVCache {
     public func extend(other: ArraysCache) {
         cache = zip(cache, other.cache).map { (c, o) in
             if let c = c, let o = o {
-                return MLX.concatenated([c, o])
+                return MLX.concatenated([c, o], axis: -2)
             }
             return c ?? o
         }

@@ -249,7 +249,7 @@ private class Gemma4PatchEmbedder: Module {
         // Add positional embeddings
         // The table is [2, 10240, hiddenSize]. We select index 0, and slice up to sequence length.
         let seqLen = out.dim(1)
-        let posEmbeds = position_embedding_table[0..., 0..<seqLen, 0...]
+        let _ = position_embedding_table[0..., 0..<seqLen, 0...]
         // posEmbeds has shape [2, seqLen, hiddenSize]. We want [1, seqLen, hiddenSize] or just [seqLen, hiddenSize]
         // Actually since we don't know why it's 2, let's just pick index 0.
         out = out + position_embedding_table[0, 0..<seqLen, 0...]
@@ -299,9 +299,9 @@ private class Gemma4Projector: Module, UnaryLayer {
 // MARK: - Top-Level VLM
 
 /// Gemma4 VLM (Pixtral / Google Paligemma NextGen equivalent)
-public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
+public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider, LayerPartitionable {
     // `language_model` uses the existing MLXLLM Gemma4ModelInternal
-    @ModuleInfo(key: "model") private var languageModel: Gemma4ModelInternal
+    @ModuleInfo(key: "language_model") private var languageModel: Gemma4ModelInternal
     @ModuleInfo(key: "lm_head") private var lmHead: Linear?
 
     @ModuleInfo(key: "vision_tower") private var visionTower: Gemma4VisionModel
@@ -317,6 +317,13 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
     public var vocabularySize: Int { config.vocabularySize }
     public var kvHeads: [Int] { Array(repeating: config.kvHeads, count: config.hiddenLayers) }
     
+    // LayerPartitionable
+    public var gpuLayerCount: Int? {
+        get { languageModel.gpuLayerCount }
+        set { languageModel.gpuLayerCount = newValue }
+    }
+    public var totalLayerCount: Int { languageModel.totalLayerCount }
+
     public init(_ config: Gemma4Configuration) {
         self.config = config
         
@@ -330,22 +337,24 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         // For tied embeddings, sanitize() will copy embed_tokens weights to lm_head.
         // This ensures logit projection uses QuantizedLinear.quantizedMM rather than
         // QuantizedEmbedding.asLinear, which is critical for numerical accuracy.
-        self._lmHead.wrappedValue = Linear(config.hiddenSize, config.vocabularySize, bias: false)
+        // self._lmHead.wrappedValue = Linear(config.hiddenSize, config.vocabularySize, bias: false)
         
         self._visionTower.wrappedValue = Gemma4VisionModel(config: vcfg)
         self._projector.wrappedValue = Gemma4Projector(visionDim: vcfg.hiddenSize, textDim: config.hiddenSize)
         
         if let acfg = config.audioConfig {
+            print("[Gemma4VL] DEBUG: Successfully parsed audio config with hiddenSize: \(acfg.hiddenSize.debugDescription)")
             let audioConfig = Gemma4AudioConfiguration(
-                modelType: acfg.modelType,
-                hiddenSize: acfg.hiddenSize,
-                numHiddenLayers: acfg.numHiddenLayers,
-                numAttentionHeads: acfg.numAttentionHeads,
+                modelType: acfg.modelType ?? "gemma4_audio",
+                hiddenSize: acfg.hiddenSize ?? 1024,
+                numHiddenLayers: acfg.numHiddenLayers ?? 12,
+                numAttentionHeads: acfg.numAttentionHeads ?? 8,
                 outputProjDims: acfg.outputProjDims ?? 1536
             )
             self._audioTower.wrappedValue = Gemma4AudioModel(config: audioConfig)
             self._audioProjector.wrappedValue = Gemma4Projector(visionDim: acfg.outputProjDims ?? 1536, textDim: config.hiddenSize)
-
+        } else {
+            print("[Gemma4VL] DEBUG: config.audioConfig IS NIL!")
         }
         super.init()
     }
@@ -356,7 +365,7 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         if let lmHead {
             h = lmHead(h)
         } else {
-            h = languageModel.embedTokens.asLinear(h)
+            h = languageModel.model.embedTokens.asLinear(h)
         }
         if config.finalLogitSoftcapping > 0 {
             let originalType = h.dtype
@@ -373,7 +382,7 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         audioValues: MLXArray?,
         mask: MLXArray?
     ) -> (MLXArray, MLXArray?) {
-        let baseEmbeds = languageModel.embedTokens(inputIds)
+        let baseEmbeds = languageModel.model.embedTokens(inputIds)
         var h = baseEmbeds * MLXArray(Float(config.hiddenSize).squareRoot()).asType(baseEmbeds.dtype)
 
         guard let pixelValues = pixelValues else {
@@ -386,9 +395,7 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         // Project to text dimension
         let imageFeaturesOutput = projector(visionOutputs)
         
-        // Gemma mathematically requires the projections to be scaled up by sqrt(hiddenSize) to match text embedding magnitude
-        let imageScale = MLXArray(Float(config.hiddenSize).squareRoot()).asType(imageFeaturesOutput.dtype)
-        let imageFeatures = imageFeaturesOutput * imageScale
+        let imageFeatures = imageFeaturesOutput
         
         let imageTokenId = 258880 // Or config if present
         
@@ -409,10 +416,7 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         
         if let audioValues = audioValues, let audioTower = audioTower, let audioProjector = audioProjector {
             let audioOutputs = audioTower(audioValues)
-            let audioFeaturesOutput = audioProjector(audioOutputs)
-            
-            let audioScale = MLXArray(Float(config.hiddenSize).squareRoot()).asType(audioFeaturesOutput.dtype)
-            let audioFeatures = audioFeaturesOutput * audioScale
+            let audioFeatures = audioProjector(audioOutputs)
             
             let audioTokenId = 258881
             
@@ -452,7 +456,7 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         if let lmHead {
             h = lmHead(h)
         } else {
-            h = languageModel.embedTokens.asLinear(h)
+            h = languageModel.model.embedTokens.asLinear(h)
         }
         if config.finalLogitSoftcapping > 0 {
             let originalType = h.dtype
@@ -467,8 +471,16 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         // Delegate text model sanitization to Gemma4Model natively
         // This handles router mapping, dequantization, gate_up_proj splitting, etc.,
         // and automatically extracts and strips the "language_model." root.
-        let dummyLLM = Gemma4Model(config)
-        var processed = dummyLLM.sanitize(weights: weights, metadata: [:])
+        let dummyLLM = Gemma4ModelInternal(config)
+        let llmWeights = dummyLLM.sanitize(weights: weights, metadata: [:])
+        var processed = [String: MLXArray]()
+        for (k, v) in llmWeights {
+            if k.hasPrefix("lm_head.") {
+                processed[k] = v
+            } else {
+                processed["language_model.\(k)"] = v
+            }
+        }
         
         // Merge the vision tower and projector weights back in, as the LLM sanitize discards them
         for (k, v) in weights {
@@ -617,12 +629,16 @@ public struct Gemma4Processor: UserInputProcessor {
 
         // Mock Audio processing - we inject a dummy spectrogram [1, 80, 3000] for validation
         var processedAudio: LMInput.ProcessedAudio? = nil
+        print("[Gemma4Processor] DEBUG: Audio count is \(input.audio.count)")
         if let audioInput = input.audio.first {
+            print("[Gemma4Processor] DEBUG: Extracting audio samples...")
             // Extract raw PCM
             let samples = try MediaProcessing.extractAudioSamples(from: audioInput)
+            print("[Gemma4Processor] DEBUG: Generating Spectrogram from \(samples.count) samples...")
             // Generate Mel Spectrogram natively (128 Mel Bins)
             let processor = AudioProcessor(nMels: 128)
             var melSpec = try processor.generateMelSpectrogram(samples: samples)
+            print("[Gemma4Processor] DEBUG: Computed Spectrogram shape: \(melSpec.shape.description)")
             
             // AudioProcessor outputs [nMels, validFrames]
             // Gemma 4 implicitly requires [1, validFrames, nMels] for correctly iterating sequence convolutions
@@ -638,18 +654,21 @@ public struct Gemma4Processor: UserInputProcessor {
             
             var expandedTokens = promptTokens
             let audioPadding = Array(repeating: audioTokenId, count: expectedAudioTokens)
-            // The Omni processor injects a bound sequence: [boaToken (255010), -1, -1, ..., eoaToken (255011)]
-            // We find this spatial anchor, eradicate it, and natively map the exact audio dimensionality block to this anchor.
             let gemmaBoa = 256000 // <|audio>
             let gemmaEoa = 258883 // <audio|>
             
-            // The MessageGenerator injected <|audio|> strings which the tokenizer resolves to gemmaBoa (256000).
-            // Find this anchor and replace it with a properly bounded and padded audio feature array.
-            if let targetIdx = expandedTokens.firstIndex(of: gemmaBoa) {
-                expandedTokens.remove(at: targetIdx)
-                expandedTokens.insert(contentsOf: [gemmaBoa] + audioPadding + [gemmaEoa], at: targetIdx)
+            // The MessageGenerator injected <|audio|> strings which tokenizer resolves to audioTokenId (258881)
+            // Determine insertion point before wiping ALL instances.
+            let targetIdx = expandedTokens.firstIndex(of: gemmaBoa) ?? expandedTokens.firstIndex(of: audioTokenId)
+            
+            // Wipe all manual occurrences to prevent broadcast shape errors
+            expandedTokens.removeAll(where: { $0 == gemmaBoa || $0 == gemmaEoa || $0 == audioTokenId })
+            
+            if let idx = targetIdx {
+                // Re-clamp the index in case removeAll shifted it out of bounds
+                let safeIdx = min(idx, expandedTokens.count)
+                expandedTokens.insert(contentsOf: [gemmaBoa] + audioPadding + [gemmaEoa], at: safeIdx)
             } else {
-                // Fallback to BOS + 1 if completely unformatted
                 if expandedTokens.first == 2 {
                     expandedTokens.insert(contentsOf: [gemmaBoa] + audioPadding + [gemmaEoa], at: 1)
                 } else {
@@ -661,10 +680,10 @@ public struct Gemma4Processor: UserInputProcessor {
         }
         
         // DEBUG: Render exactly what strings the LLM sees
-        let decodedPrompt = tokenizer.decode(tokenIds: promptTokens)
+        let decodedPrompt = tokenizer.decode(tokenIds: promptTokens) ?? "Failed to decode"
         print("[\(type(of: self))] Final Evaluated Prompt Geometry bounds:")
         print("\n----------------------")
-        print(decodedPrompt ?? "Failed to decode")
+        print(decodedPrompt)
         print("----------------------\n")
 
         let promptArray = MLXArray(promptTokens).expandedDimensions(axis: 0)
