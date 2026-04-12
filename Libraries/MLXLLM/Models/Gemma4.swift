@@ -15,12 +15,14 @@ public struct Gemma4AudioConfig: Codable {
     public let hiddenSize: Int
     public let numHiddenLayers: Int
     public let numAttentionHeads: Int
+    public let outputProjDims: Int?
 
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type"
         case hiddenSize = "hidden_size"
         case numHiddenLayers = "num_hidden_layers"
         case numAttentionHeads = "num_attention_heads"
+        case outputProjDims = "output_proj_dims"
     }
 }
 

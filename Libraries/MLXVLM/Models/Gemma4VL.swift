@@ -308,6 +308,7 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
     @ModuleInfo(key: "embed_vision") private var projector: Gemma4Projector
 
     @ModuleInfo(key: "audio_tower") private var audioTower: Gemma4AudioModel?
+    @ModuleInfo(key: "embed_audio") private var audioProjector: Gemma4Projector?
 
 
     public let config: Gemma4Configuration
@@ -339,9 +340,11 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
                 modelType: acfg.modelType,
                 hiddenSize: acfg.hiddenSize,
                 numHiddenLayers: acfg.numHiddenLayers,
-                numAttentionHeads: acfg.numAttentionHeads
+                numAttentionHeads: acfg.numAttentionHeads,
+                outputProjDims: acfg.outputProjDims ?? 1536
             )
             self._audioTower.wrappedValue = Gemma4AudioModel(config: audioConfig)
+            self._audioProjector.wrappedValue = Gemma4Projector(visionDim: acfg.outputProjDims ?? 1536, textDim: config.hiddenSize)
 
         }
         super.init()
@@ -381,15 +384,16 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         let visionOutputs = visionTower(pixelValues)
         
         // Project to text dimension
-        var imageFeatures = projector(visionOutputs)
-        
-        // Scale image features equivalently to text embed tokens to prevent activation explosion
-        imageFeatures = imageFeatures * MLXArray(Float(config.hiddenSize).squareRoot()).asType(imageFeatures.dtype)
+        let imageFeatures = projector(visionOutputs)
         
         let imageTokenId = 258880 // Or config if present
         
         let tokenCount = inputIds.asArray(Int.self).filter { $0 == imageTokenId }.count
+        eval(imageFeatures)
         print("DEBUG: imageFeatures shape: \(imageFeatures.shape), padding count: \(tokenCount)")
+        if imageFeatures.size > 0 {
+             print("DEBUG: imageFeatures stats: min=\(imageFeatures.min().item(Float.self)), max=\(imageFeatures.max().item(Float.self)), mean=\(imageFeatures.mean().item(Float.self))")
+        }
         
         h = QwenVL.mergeInputIdsWithImageFeatures(
             inputIds: inputIds,
@@ -399,14 +403,17 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
             videoTokenId: imageTokenId
         )
         
-        if let audioValues = audioValues, let audioTower = audioTower {
+        if let audioValues = audioValues, let audioTower = audioTower, let audioProjector = audioProjector {
             let audioOutputs = audioTower(audioValues)
-            var audioFeatures = audioOutputs
-            audioFeatures = audioFeatures * MLXArray(Float(config.hiddenSize).squareRoot()).asType(audioFeatures.dtype)
+            let audioFeatures = audioProjector(audioOutputs)
             let audioTokenId = 258881
             
             let audioTokenCount = inputIds.asArray(Int.self).filter { $0 == audioTokenId }.count
+            eval(audioFeatures)
             print("DEBUG: audioFeatures shape: \(audioFeatures.shape), padding count: \(audioTokenCount)")
+            if audioFeatures.size > 0 {
+                print("DEBUG: audioFeatures stats: min=\(audioFeatures.min().item(Float.self)), max=\(audioFeatures.max().item(Float.self)), mean=\(audioFeatures.mean().item(Float.self))")
+            }
             
             h = QwenVL.mergeInputIdsWithImageFeatures(
                 inputIds: inputIds,
@@ -457,7 +464,7 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider {
         
         // Merge the vision tower and projector weights back in, as the LLM sanitize discards them
         for (k, v) in weights {
-            if k.hasPrefix("vision_tower.") || k.hasPrefix("embed_vision.") || k.hasPrefix("audio_tower.") {
+            if k.hasPrefix("vision_tower.") || k.hasPrefix("embed_vision.") || k.hasPrefix("audio_tower.") || k.hasPrefix("embed_audio.") {
                 var newK = k
                 if newK.contains(".linear.") && !newK.hasPrefix("audio_tower.") {
                     newK = newK.replacingOccurrences(of: ".linear.", with: ".")
@@ -573,8 +580,10 @@ public struct Gemma4Processor: UserInputProcessor {
                 // Handle different token outputs from the ChatTemplate
                 if token == imageTokenId || token == startTokenId {
                     if !inImageBlock {
-                        // First token of the block: Inject exactly numTokens!
+                        // First token of the block: Inject exactly numTokens wrapped in bounds!
+                        expandedTokens.append(255999) // <|image>
                         expandedTokens.append(contentsOf: Array(repeating: imageTokenId, count: numTokens))
+                        expandedTokens.append(258882) // <image|>
                         inImageBlock = true
                     }
                     // Skip any consecutive image tokens (e.g. if the tokenizer emitted 280 hardcoded image tokens)
@@ -599,20 +608,62 @@ public struct Gemma4Processor: UserInputProcessor {
         }
 
         // Mock Audio processing - we inject a dummy spectrogram [1, 80, 3000] for validation
-        // In a real STFT flow this would map float PCM into Mels.
         var processedAudio: LMInput.ProcessedAudio? = nil
-        if !input.audio.isEmpty {
-            let melSpec = MLX.zeros([1, 3000, 128]) // Mock 30s Audio for E2E validation (Gemma 4 uses 128 Mel bins)
-            processedAudio = LMInput.ProcessedAudio(features: melSpec, seqLengths: [3000])
+        if let audioInput = input.audio.first {
+            // Extract raw PCM
+            let samples = try MediaProcessing.extractAudioSamples(from: audioInput)
+            // Generate Mel Spectrogram natively (128 Mel Bins)
+            let processor = AudioProcessor(nMels: 128)
+            var melSpec = try processor.generateMelSpectrogram(samples: samples)
             
-            // Wait: Does Gemma 4 tokenizer inject the audio tokens?
-            // If the chat template drops it, we inject it manually.
+            // AudioProcessor outputs [nMels, validFrames]
+            // Gemma 4 implicitly requires [1, validFrames, nMels] for correctly iterating sequence convolutions
+            melSpec = melSpec.transposed().expandedDimensions(axis: 0) // Transpose to [validFrames, nMels] then expand B=1
+            
+            let seqLength = melSpec.dim(1)
+            processedAudio = LMInput.ProcessedAudio(features: melSpec, seqLengths: [seqLength])
+            
             let audioTokenId = 258881
-            if !promptTokens.contains(audioTokenId) {
-                // If it isn't in the template, we inject it manually!
-                promptTokens.insert(audioTokenId, at: promptTokens.first == 2 ? 1 : 0)
+            let layer0Length = (seqLength + 2 * 1 - 1 * (3 - 1) - 1) / 2 + 1
+            let layer1Length = (layer0Length + 2 * 1 - 1 * (3 - 1) - 1) / 2 + 1
+            let expectedAudioTokens = layer1Length
+            
+            var expandedTokens = promptTokens
+            let audioPadding = Array(repeating: audioTokenId, count: expectedAudioTokens)
+            // The Omni processor injects a bound sequence: [boaToken (255010), -1, -1, ..., eoaToken (255011)]
+            // We find this spatial anchor, eradicate it, and natively map the exact audio dimensionality block to this anchor.
+            let boaToken = 255010
+            let eoaToken = 255011
+            
+            let gemmaBoa = 256000 // <|audio>
+            let gemmaEoa = 258883 // <audio|>
+            
+            if let targetIdx = expandedTokens.firstIndex(of: boaToken),
+               let endIdx = expandedTokens.firstIndex(of: eoaToken) {
+                expandedTokens.removeSubrange(targetIdx...endIdx)
+                expandedTokens.insert(contentsOf: [gemmaBoa] + audioPadding + [gemmaEoa], at: targetIdx)
+            } 
+            else if let targetIdx = expandedTokens.firstIndex(of: audioTokenId) {
+                expandedTokens.removeAll(where: { $0 == audioTokenId })
+                expandedTokens.insert(contentsOf: [gemmaBoa] + audioPadding + [gemmaEoa], at: targetIdx)
+            } else {
+                // Fallback to BOS + 1 if completely unformatted
+                if expandedTokens.first == 2 {
+                    expandedTokens.insert(contentsOf: [gemmaBoa] + audioPadding + [gemmaEoa], at: 1)
+                } else {
+                    expandedTokens.insert(contentsOf: [gemmaBoa] + audioPadding + [gemmaEoa], at: 0)
+                }
             }
+            
+            promptTokens = expandedTokens
         }
+        
+        // DEBUG: Render exactly what strings the LLM sees
+        let decodedPrompt = tokenizer.decode(tokenIds: promptTokens)
+        print("[\(type(of: self))] Final Evaluated Prompt Geometry bounds:")
+        print("\n----------------------")
+        print(decodedPrompt ?? "Failed to decode")
+        print("----------------------\n")
 
         let promptArray = MLXArray(promptTokens).expandedDimensions(axis: 0)
         let mask = ones(like: promptArray).asType(.int8)
