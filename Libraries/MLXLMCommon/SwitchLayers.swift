@@ -1,5 +1,4 @@
-import Foundation
-import MLX
+@preconcurrency import MLX
 import MLXNN
 
 // Port of https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/models/switch_layers.py
@@ -27,7 +26,7 @@ public func scatterUnsort(x: MLXArray, invOrder: MLXArray, shape: [Int]? = nil) 
 
 
 // Shared struct for expert range tracking across projections
-public struct ExpertRange {
+public struct ExpertRange: Sendable {
     public let id: Int
     public let start: Int
     public let end: Int
@@ -35,7 +34,7 @@ public struct ExpertRange {
 
 // MARK: - SwitchGLU
 
-public class SwitchGLU: Module {
+public class SwitchGLU: Module, @unchecked Sendable {
     @ModuleInfo(key: "gate_proj") public var gateProj: SwitchLinear
     @ModuleInfo(key: "up_proj") public var upProj: SwitchLinear
     @ModuleInfo(key: "down_proj") public var downProj: SwitchLinear
@@ -654,9 +653,8 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
                 outShape[outShape.count - 1] = self.outputDims
                 return MLXArray.zeros(outShape).asType(.float16)
             }
-
             // PAPPS Heuristic: Prefetch exactly these experts so they are in cache for the N+1 token.
-            if let info = ssdInfo {
+            if let _ = ssdInfo {
                 let uniqueIndices = Set(cpuIndices)
                 for _ in uniqueIndices {
                     // MLXFast.pappsPrefetch(
@@ -804,8 +802,8 @@ public final class SSDStreamMetrics: @unchecked Sendable {
         let now = DispatchTime.now().uptimeNanoseconds
         if now - lastLogTimeNs >= 1_000_000_000 {
             let count = readCount
-            let bytes = totalBytes
-            let ns = totalTimeNs
+            _ = totalBytes
+            _ = totalTimeNs
             
             self.readCount = 0
             self.totalBytes = 0

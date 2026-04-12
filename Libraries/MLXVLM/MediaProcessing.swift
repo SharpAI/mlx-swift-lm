@@ -1,7 +1,7 @@
 // Copyright © 2024 Apple Inc.
 
 @preconcurrency import AVFoundation
-import CoreImage.CIFilterBuiltins
+@preconcurrency import CoreImage.CIFilterBuiltins
 import MLX
 import MLXLMCommon
 
