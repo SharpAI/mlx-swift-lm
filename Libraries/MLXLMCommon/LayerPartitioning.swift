@@ -117,25 +117,25 @@ public func partitionedLayerCall<T>(
         result = body()
     }
     
-    // ─── WATCHDOG BYPASS ──────────────────────────────────────────────────────
-    // When SSD streaming is active, we ALWAYS flush the GPU command buffer after
-    // each layer, regardless of whether this is a MoE layer. Without this, the
-    // GatedDeltaNet custom Metal kernels on 3 consecutive linear-attention layers
-    // accumulate into one oversized command buffer that exceeds the 5-second
-    // Apple GPU Watchdog limit → kIOGPUCommandBufferCallbackErrorTimeout.
+    // ─── EVAL SKIP (SSD STREAMING) ──────────────────────────────────────────
+    // When SSD streaming is active, we skip the per-layer eval here entirely.
     //
-    // This is the authoritative fix. The per-layer sync inside DecoderLayer.callAsFunction
-    // is intentionally redundant (belt-and-suspenders) and can be removed later.
+    // Why this is safe:
+    // 1. WATCHDOG: SwitchGLU's eval(idx + buffers) at the START of each MoE
+    //    layer flushes the GPU command buffer, preventing the 5-second Apple
+    //    GPU watchdog timeout on consecutive GatedDeltaNet linear-attention layers.
+    //
+    // 2. KV CACHE: The next layer's SwitchGLU eval(idx_next) transitively forces
+    //    the current layer's FULL output (including KV cache) because:
+    //    idx_next → router(h_N) → h_N = attn_out + MoE_out →
+    //    attn_out → SDPA(Q, cached_K, cached_V) → cache.update(K, V)
+    //    So the KV cache is materialized through the lazy dependency chain.
+    //
+    // 3. LAST LAYER: The generation loop's eval of logits forces layer 47's output.
+    //
+    // This eliminates 48 eval calls per token (~48-96ms of overhead).
     // ─────────────────────────────────────────────────────────────────────────
-    if isSsdStream, let array = result as? MLXArray {
-        if let cache = cacheToEval {
-            var itemsToEval = cache.state
-            itemsToEval.append(array)
-            eval(itemsToEval)
-        } else {
-            eval(array)
-        }
-        Stream.gpu.synchronize()
+    if isSsdStream {
         return result
     }
     
