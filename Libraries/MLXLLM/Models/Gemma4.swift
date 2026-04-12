@@ -942,8 +942,8 @@ public class Gemma4ModelInternal: Module, LayerPartitionable, StreamableMoE {
                 // MASK OUT MULTIMODAL TOKENS: We must zero out their text-space embeddings 
                 // so they don't corrupt the multimodal visual/audio vectors in the per-layer stream
                 let isTextToken = MLX.logicalOr(MLX.less(inputs, MLXArray(258880)), MLX.greater(inputs, MLXArray(258884)))
-                // Expand mask from [B, L] to [B, L, 1, 1] for broadcasting
-                let expandedMask = isTextToken.expandedDimensions(axes: [2, 3]).asType(tokenEmbeds.dtype)
+                // Reshape mask to [B, L, 1, 1] to match tokenEmbeds shape [B, L, nL, D]
+                let expandedMask = isTextToken.reshaped([B, L, 1, 1]).asType(tokenEmbeds.dtype)
                 tokenEmbeds = tokenEmbeds * expandedMask
 
                 // Model projection: scale by 1/sqrt(hidden_size) per reference
