@@ -21,7 +21,9 @@ public class Gemma4RMSNorm: Module, UnaryLayer {
     }
 
     public func callAsFunction(_ x: MLXArray) -> MLXArray {
-        return MLXFast.rmsNorm(x, weight: 1.0 + self.weight, eps: self.eps)
+        // vLLM: standard RMSNorm — weight * x / sqrt(E[x^2] + eps)
+        // Gemma 4 norm weights are trained scale factors (~8-10), NOT zero-init offsets.
+        return MLXFast.rmsNorm(x, weight: self.weight, eps: self.eps)
     }
 }
 
@@ -48,44 +50,69 @@ public class Gemma4RMSNormNoScale: Module {
 /// padded with `inf` for the remainder so the kernel leaves them unchanged.
 public class Gemma4ProportionalRoPE: Module, OffsetLayer {
     let dims: Int
+    let rotatedDims: Int
     let traditional: Bool
-    /// Pre-computed frequencies: real freqs for rotated dims, inf for the rest.
-    private let _freqs: MLXArray
+    let theta: Float
 
-    public init(dims: Int, traditional: Bool = false, theta: Float = 1000000.0,
+    public init(dims: Int, traditional: Bool = false, theta: Float = 10000.0,
                 partialRotaryFactor: Float = 1.0, factor: Float = 1.0) {
         self.dims = dims
+        self.rotatedDims = Int(Float(dims) * partialRotaryFactor)
         self.traditional = traditional
-
-        let rotatedDims = Int(partialRotaryFactor * Float(dims))
-
-        // Compute real frequencies for the rotated portion
-        // Python: exponents = mx.arange(0, rotated_dims, 2) / dims
-        //         freqs = factor * (base ** exponents)
-        let exponents = MLXArray(stride(from: Float(0), to: Float(rotatedDims), by: 2)) / Float(dims)
-        let realFreqs = MLXArray(factor) * (MLXArray(theta) ** exponents)
-
-        // Pad with inf for the non-rotated dimensions
-        // Python: mx.full(((dims - rotated_dims) // 2,), mx.inf)
-        let paddingCount = (dims - rotatedDims) / 2
-        if paddingCount > 0 {
-            let padding = MLXArray.full([paddingCount], values: MLXArray(Float.infinity))
-            self._freqs = concatenated([realFreqs, padding], axis: 0)
-        } else {
-            self._freqs = realFreqs
-        }
-
+        self.theta = theta
         super.init()
-        // Freeze so the module system ignores this class entirely for weight loading
-        self.freeze()
     }
 
     public func callAsFunction(_ x: MLXArray, offset: Int) -> MLXArray {
-        // Pass the full head to RoPE with inf-padded freqs.
-        // The kernel rotates only dims with finite frequencies, leaving the rest unchanged.
-        return MLXFast.RoPE(
-            x, dimensions: dims, traditional: traditional,
-            base: nil, scale: 1.0, offset: offset, freqs: _freqs)
+        if rotatedDims == dims {
+            // Full rotation — standard RoPE with dims as frequency denominator
+            return MLXFast.RoPE(
+                x, dimensions: dims, traditional: traditional,
+                base: theta, scale: 1.0, offset: offset, freqs: nil)
+        }
+        
+        // Partial rotation (proportional RoPE for Gemma4 global attention)
+        // vLLM gemma4_rope.py: freq_exponents use head_size (full dims) as denominator
+        // For Neox-style (traditional = false), x is implicitly split into two halves.
+        // We must rotate the FIRST rope_angles of the first half, and the FIRST rope_angles of the second half.
+        if traditional {
+            // Interleaved style
+            let x1 = x[0..., 0..., 0..., 0..<rotatedDims]
+            let x2 = x[0..., 0..., 0..., rotatedDims...]
+            
+            let rotatedX1 = MLXFast.RoPE(
+                x1, dimensions: dims, traditional: traditional,
+                base: theta, scale: 1.0, offset: offset, freqs: nil)
+                
+            return concatenated([rotatedX1, x2], axis: -1)
+        } else {
+            // Neox style
+            let halfDim = dims / 2
+            let ropeAngles = rotatedDims / 2
+            
+            // Extract the dimensions to be rotated
+            let xRope1 = x[0..., 0..., 0..., 0..<ropeAngles]
+            let xRope2 = x[0..., 0..., 0..., halfDim..<(halfDim + ropeAngles)]
+            let xRope = concatenated([xRope1, xRope2], axis: -1)
+            
+            // Apply RoPE with Neox style. Pass FULL dims as frequency denominator.
+            let rotatedXRope = MLXFast.RoPE(
+                xRope, dimensions: dims, traditional: false,
+                base: theta, scale: 1.0, offset: offset, freqs: nil)
+            
+            let rotatedXRope1 = rotatedXRope[0..., 0..., 0..., 0..<ropeAngles]
+            let rotatedXRope2 = rotatedXRope[0..., 0..., 0..., ropeAngles...]
+            
+            // Extract the untouched dimensions
+            let xNope1 = x[0..., 0..., 0..., ropeAngles..<halfDim]
+            let xNope2 = x[0..., 0..., 0..., (halfDim + ropeAngles)...]
+            
+            // Concatenate everything back
+            let newX1 = concatenated([rotatedXRope1, xNope1], axis: -1)
+            let newX2 = concatenated([rotatedXRope2, xNope2], axis: -1)
+            
+            return concatenated([newX1, newX2], axis: -1)
+        }
     }
 }
 
@@ -364,9 +391,14 @@ public class Gemma4Attention: Module {
 
     @ModuleInfo public var rope: OffsetLayer
 
+    public let numKvSharedLayers: Int
+    public let hiddenLayers: Int
+
     init(_ config: Gemma4Configuration, layerIdx: Int) {
-        let dim = config.hiddenSize
         self.layerIdx = layerIdx
+        self.numKvSharedLayers = config.numKvSharedLayers
+        self.hiddenLayers = config.hiddenLayers
+        let dim = config.hiddenSize
         self.slidingWindow = config.slidingWindow
         self.slidingWindowPattern = config.slidingWindowPattern
         self.isSliding = (layerIdx + 1) % config.slidingWindowPattern != 0
@@ -377,9 +409,9 @@ public class Gemma4Attention: Module {
         self.repeats = nHeads / (nKVHeads > 0 ? nKVHeads : 1)
         self.headDim = self.isSliding ? config.headDim : config.globalHeadDim
 
-        // Python reference: scale uses query_pre_attn_scalar if present, otherwise sqrt(head_dim)
-        let qps = config.queryPreAttnScalar ?? Float(self.headDim)
-        self.scale = 1.0 / sqrt(qps)
+        // vLLM gemma4.py line 295: self.scaling = 1.0
+        // "Gemma4 uses scaling=1.0. Q/K norms with learnable weights handle scaling implicitly."
+        self.scale = 1.0
         self.attnLogitSoftcap = config.attentionLogitSoftcapping
 
         self._queryProj.wrappedValue = Linear(dim, nHeads * self.headDim, bias: false)
@@ -389,9 +421,7 @@ public class Gemma4Attention: Module {
 
         self._queryNorm.wrappedValue = Gemma4RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
         self._keyNorm.wrappedValue = Gemma4RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
-        if !isSliding {
-            self._valueNorm.wrappedValue = Gemma4RMSNormNoScale(eps: config.rmsNormEps)
-        }
+        self._valueNorm.wrappedValue = Gemma4RMSNormNoScale(eps: config.rmsNormEps)
 
         let ropeFactor = config.globalRopePartialFactor
         self.globalRopePartialFactor = ropeFactor
@@ -402,12 +432,13 @@ public class Gemma4Attention: Module {
                 dimensions: headDim, traditional: false,
                 base: config.ropeLocalBaseFreq, scale: 1.0)
         } else {
-            // Global attention: Proportional RoPE (0.25 partial factor)
+            // Global attention: Proportional RoPE with partial_rotary_factor from config
+            // vLLM Gemma4RotaryEmbedding: head_size=512, rotary_dim=0.25*512=128
             self.rope = Gemma4ProportionalRoPE(
                 dims: self.headDim,
                 traditional: false,
                 theta: config.ropeTheta,
-                partialRotaryFactor: config.globalRopePartialFactor
+                partialRotaryFactor: ropeFactor  // 0.25 from config
             )
         }
 
@@ -420,100 +451,125 @@ public class Gemma4Attention: Module {
         cache: KVCache? = nil
     ) -> MLXArray {
         let (B, L, _) = (x.dim(0), x.dim(1), x.dim(2))
+        let isKvSharedLayer = self.numKvSharedLayers > 0 && layerIdx >= (self.hiddenLayers - self.numKvSharedLayers)
 
+        // Q projection (always runs, even for KV-shared layers)
+        // vLLM gemma4.py lines 404-410, llama.cpp gemma4-iswa.cpp lines 64-76
         var queries = queryProj(x)
-        var keys = keyProj(x)
-        var values = valueProj(x)
-
         queries = queries.reshaped(B, L, nHeads, -1).transposed(0, 2, 1, 3)
-        keys = keys.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
-        values = values.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
-
         queries = queryNorm(queries)
-        keys = keyNorm(keys)
-        if let vn = valueNorm {
-            values = vn(values)
-        }
 
-        // Python reference: rope applies to keys BEFORE cache update, queries AFTER.
-        // RoPE is applied to full head_dim; partial rotation is handled by rope init (dims param).
-        let LCache = cache?.offset ?? 0
-        // Apply RoPE to keys first (before cache), then queries
-        keys = rope(keys, offset: LCache)
-        queries = rope(queries, offset: LCache)
-        
-        // Apply query scaling before matmul
-        queries = queries * scale
-
-        let output: MLXArray
-        if attnLogitSoftcap > 0 {
-            // Gemma 4 uses QK attention logit softcapping before softmax:
-            //   scores = tanh(scores / cap) * cap  (llama.cpp llm_build_gemma4_iswa)
-            // MLXFast.scaledDotProductAttention has no softcap parameter, so we do it manually.
-            let (cachedKeys, cachedValues) = cache?.update(keys: keys, values: values) ?? (keys, values)
-            var fullKeys = cachedKeys
-            var fullValues = cachedValues
-            // TurboKV decode if needed
-            if let kvCache = cache as? KVCacheSimple,
-               let pk = kvCache.polarKeys, let pv = kvCache.polarValues,
-               kvCache.compressedOffset > 0 {
-                var histK = MLXFast.turboDecodeK(packed: pk).asType(cachedKeys.dtype)
-                var histV = MLXFast.turboDecodeV(packed: pv).asType(cachedValues.dtype)
-                // Merge 2×256 virtual heads back to original count × 512
-                if kvCache.turboSplitHeads {
-                    let B = histK.dim(0), H2 = histK.dim(1), T = histK.dim(2)
-                    histK = histK.reshaped(B, H2 / 2, T, 512)
-                    histV = histV.reshaped(B, H2 / 2, T, 512)
-                }
-                // AXIS FIX: Sequence length axis is 2 for [B, H, L, D] format
-                fullKeys   = MLX.concatenated([histK, cachedKeys],   axis: 2)
-                fullValues = MLX.concatenated([histV, cachedValues],   axis: 2)
-            }
-            // GQA expansion
-            var k = fullKeys
-            var v = fullValues
-            if nHeads > nKVHeads {
-                k = MLX.repeated(k, count: repeats, axis: 1)
-                v = MLX.repeated(v, count: repeats, axis: 1)
-            }
-            // scores: [B, nH, L, S]
-            var scores = queries.matmul(k.transposed(0, 1, 3, 2))
-            // Apply attention mask
-            let maskArray: MLXArray?
-            switch mask {
-            case .none:
-                maskArray = nil
-            case .causal:
-                maskArray = createCausalMask(n: L, offset: LCache, windowSize: isSliding ? slidingWindow : nil)
-            case .array(let m):
-                maskArray = m
-            case .arrays(let a):
-                maskArray = a.first
-            @unknown default:
-                maskArray = nil
-            }
-
-            // Apply QK softcap: tanh(scores / cap) * cap
-            // Critically, we MUST evaluate tanh in float32. In float16/bfloat16, tanh(x) saturates
-            // to exactly 1.0 for very small values above 3.0 (due to lack of mantissa bits!),
-            // destroying all confidence gradients and resulting in uniform distributions!
-            let originalType = scores.dtype
-            let scoresF32 = scores.asType(.float32)
-            let cap = MLXArray(attnLogitSoftcap).asType(.float32)
-            scores = (MLX.tanh(scoresF32 / cap) * cap).asType(originalType)
-            
-            // Apply attention mask AFTER softcapping so that masked values (-1e9) 
-            // remain -infinity and do not get softcapped up to -50.0!
-            if let maskArray {
-                scores = scores + maskArray
-            }
-            // Softmax + weighted sum
-            let attnWeights = MLX.softmax(scores.asType(.float32), axis: -1, precise: true).asType(scores.dtype)
-            output = matmul(attnWeights, v)
+        let LCache: Int
+        if isKvSharedLayer {
+            // The shared cache was already updated by the concrete layer, so its offset includes L.
+            LCache = max(0, (cache?.offset ?? 0) - L)
         } else {
-            output = attentionWithCacheUpdate(
-                queries: queries, keys: keys, values: values,
-                cache: cache, scale: scale, mask: mask)
+            // Concrete layers update their cache *after* applying RoPE.
+            LCache = cache?.offset ?? 0
+        }
+        let output: MLXArray
+
+        if isKvSharedLayer {
+            // KV-shared layer: skip K/V projection, norm, RoPE, and cache update.
+            // Only apply RoPE to Q. Read K/V from the designated shared cache.
+            // vLLM gemma4.py lines 422-424, llama.cpp gemma4-iswa.cpp lines 105-109
+            queries = rope(queries, offset: LCache)
+
+            // Read K/V directly from the cache (populated by the concrete layer)
+            let cachedKeys = (cache as? KVCacheSimple)?.keys
+            let cachedValues = (cache as? KVCacheSimple)?.values
+            if let cachedKeys, let cachedValues {
+                let offset = cache?.offset ?? 0
+                let slicedKeys = cachedKeys[0..., 0..., 0 ..< offset, 0...]
+                let slicedValues = cachedValues[0..., 0..., 0 ..< offset, 0...]
+                output = MLXFast.scaledDotProductAttention(
+                    queries: queries, keys: slicedKeys, values: slicedValues,
+                    scale: scale, mask: mask
+                )
+            } else {
+                // Fallback: cache not yet populated, use self-projected K/V
+                var keys = keyProj(x)
+                var values = valueProj(x)
+                keys = keys.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
+                values = values.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
+                keys = keyNorm(keys)
+                if let vn = valueNorm { values = vn(values) }
+                keys = rope(keys, offset: LCache)
+                output = MLXFast.scaledDotProductAttention(
+                    queries: queries, keys: keys, values: values,
+                    scale: scale, mask: mask
+                )
+            }
+        } else {
+            // Non-shared layer: full K/V projection, norm, RoPE, cache update
+            // vLLM gemma4.py lines 412-417, llama.cpp gemma4-iswa.cpp lines 79-100
+            var keys = keyProj(x)
+            var values = valueProj(x)
+
+            keys = keys.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
+            values = values.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
+
+            keys = keyNorm(keys)
+            if let vn = valueNorm {
+                values = vn(values)
+            }
+
+            keys = rope(keys, offset: LCache)
+            queries = rope(queries, offset: LCache)
+
+            if attnLogitSoftcap > 0 {
+                queries = queries * scale
+                let (cachedKeys, cachedValues) = cache?.update(keys: keys, values: values) ?? (keys, values)
+                var fullKeys = cachedKeys
+                var fullValues = cachedValues
+                // TurboKV decode if needed
+                if let kvCache = cache as? KVCacheSimple,
+                   let pk = kvCache.polarKeys, let pv = kvCache.polarValues,
+                   kvCache.compressedOffset > 0 {
+                    var histK = MLXFast.turboDecodeK(packed: pk).asType(cachedKeys.dtype)
+                    var histV = MLXFast.turboDecodeV(packed: pv).asType(cachedValues.dtype)
+                    if kvCache.turboSplitHeads {
+                        let B = histK.dim(0), H2 = histK.dim(1), T = histK.dim(2)
+                        histK = histK.reshaped(B, H2 / 2, T, 512)
+                        histV = histV.reshaped(B, H2 / 2, T, 512)
+                    }
+                    fullKeys   = MLX.concatenated([histK, cachedKeys],   axis: 2)
+                    fullValues = MLX.concatenated([histV, cachedValues],   axis: 2)
+                }
+                var k = fullKeys
+                var v = fullValues
+                if nHeads > nKVHeads {
+                    k = MLX.repeated(k, count: repeats, axis: 1)
+                    v = MLX.repeated(v, count: repeats, axis: 1)
+                }
+                let scores = queries.matmul(k.transposed(0, 1, 3, 2))
+                let maskArray: MLXArray?
+                switch mask {
+                case .none:
+                    maskArray = nil
+                case .causal:
+                    maskArray = createCausalMask(n: L, offset: LCache, windowSize: isSliding ? slidingWindow : nil)
+                case .array(let m):
+                    maskArray = m
+                case .arrays(let a):
+                    maskArray = a.first
+                @unknown default:
+                    maskArray = nil
+                }
+                let originalType = scores.dtype
+                var scoresF32 = scores.asType(.float32)
+                let cap = MLXArray(attnLogitSoftcap).asType(.float32)
+                scoresF32 = (MLX.tanh(scoresF32 / cap) * cap)
+                if let maskArray {
+                    scoresF32 = scoresF32 + maskArray.asType(.float32)
+                }
+                let attnWeights = MLX.softmax(scoresF32, axis: -1, precise: true).asType(originalType)
+                output = matmul(attnWeights, v)
+            } else {
+                output = attentionWithCacheUpdate(
+                    queries: queries, keys: keys, values: values,
+                    cache: cache, scale: scale, mask: mask)
+            }
         }
         return outputProj(
             output.transposed(0, 2, 1, 3).reshaped(B, L, -1)
@@ -665,29 +721,46 @@ public class Gemma4TransformerBlock: Module {
         _ x: MLXArray, mask: MLXFast.ScaledDotProductAttentionMaskMode? = nil, cache: KVCache? = nil,
         perLayerInput: MLXArray? = nil
     ) -> MLXArray {
-        var residual = x
-        
-        // Potential per-layer conditioning
-        if let perLayerInput = perLayerInput,
-           let perLayerProj = perLayerProjection,
-           let perLayerGate = perLayerInputGate,
-           let postPerLayerNorm = postPerLayerInputNorm {
-            let gate = MLX.sigmoid(perLayerGate(x))
-            let gatedInput = perLayerInput * gate
-            let conditioned = perLayerProj(gatedInput)
-            residual = residual + postPerLayerNorm(conditioned)
-        }
+        // Gemma 4 decoder layer forward pass
+        // Reference: vLLM gemma4.py Gemma4DecoderLayer.forward() lines 586-646
+        //            llama.cpp gemma4-iswa.cpp lines 40-237
+        //
+        // Order: input_norm → attn → post_attn_norm → ADD residual
+        //        → pre_ff_norm → mlp → post_ff_norm → ADD residual
+        //        → PLE (gate, gelu, mul, project, norm, add)
+        //        → layer_scalar
 
+        var residual = x
+
+        // 1. Attention
         var h = inputLayerNorm(residual)
         h = attention(h, mask: mask ?? .none, cache: cache)
         h = postAttentionNorm(h)
-        var out = residual + (h * layerScalar)
+        var out = residual + h
 
+        // 2. Feedforward
         residual = out
         h = preFFWNorm(residual)
         h = mlp(h)
         h = postFFWNorm(h)
-        out = residual + (h * layerScalar)
+        out = residual + h
+
+        // 3. PLE (Per-Layer Embedding) — applied AFTER feedforward residual
+        // vLLM gemma4.py lines 632-640, llama.cpp gemma4-iswa.cpp lines 203-223
+        if let perLayerInput = perLayerInput,
+           let perLayerGate = perLayerInputGate,
+           let perLayerProj = perLayerProjection,
+           let postPerLayerNorm = postPerLayerInputNorm {
+            let gate = geluApproximate(perLayerGate(out))
+            let gatedInput = gate * perLayerInput
+            let conditioned = perLayerProj(gatedInput)
+            let normed = postPerLayerNorm(conditioned)
+            out = out + normed
+        }
+
+        // 4. Layer scalar — applied to final output
+        // vLLM gemma4.py line 644, llama.cpp gemma4-iswa.cpp lines 227-229
+        out = out * layerScalar
 
         return out
     }
@@ -695,12 +768,13 @@ public class Gemma4TransformerBlock: Module {
 
 
 public class Gemma4ModelInner: Module, LayerPartitionable {
-    @ModuleInfo(key: "embed_tokens") public var embedTokens: Embedding
+
+    @ModuleInfo(key: "embed_tokens") public var embedTokens: QuantizedEmbedding
     @ModuleInfo public var layers: [Gemma4TransformerBlock]
     @ModuleInfo var norm: Gemma4RMSNorm
 
     // Per-layer conditioning weights (Gemma 4 architectural novelty)
-    @ModuleInfo(key: "embed_tokens_per_layer") public var embedTokensPerLayer: Embedding?
+    @ModuleInfo(key: "embed_tokens_per_layer") public var embedTokensPerLayer: QuantizedEmbedding?
     @ModuleInfo(key: "per_layer_model_projection") var perLayerModelProjection: Linear?
     @ModuleInfo(key: "per_layer_projection_norm") var perLayerProjectionNorm: Gemma4RMSNorm?
 
@@ -713,9 +787,11 @@ public class Gemma4ModelInner: Module, LayerPartitionable {
     init(_ config: Gemma4Configuration) {
         self.config = config
 
-        self._embedTokens.wrappedValue = Embedding(
+        self._embedTokens.wrappedValue = QuantizedEmbedding(
             embeddingCount: config.vocabularySize,
-            dimensions: config.hiddenSize
+            dimensions: config.hiddenSize,
+            groupSize: 64,
+            bits: 4
         )
 
         self._layers.wrappedValue = (0 ..< config.hiddenLayers).map { layerIdx in
@@ -725,10 +801,12 @@ public class Gemma4ModelInner: Module, LayerPartitionable {
         self.norm = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
 
         if config.hiddenSizePerLayerInput > 0 {
-            // embed_tokens_per_layer: [vocabSizePerLayerInput, numLayers × hiddenSizePerLayerInput]
-            self._embedTokensPerLayer.wrappedValue = Embedding(
+            // embed_tokens_per_layer yields exactly hiddenSizePerLayerInput dimensions per layer 
+            self._embedTokensPerLayer.wrappedValue = QuantizedEmbedding(
                 embeddingCount: config.vocabSizePerLayerInput,
-                dimensions: config.hiddenLayers * config.hiddenSizePerLayerInput
+                dimensions: config.hiddenLayers * config.hiddenSizePerLayerInput,
+                groupSize: 64,
+                bits: 4
             )
             // per_layer_model_projection: [hiddenSize → numLayers × hiddenSizePerLayerInput]
             self._perLayerModelProjection.wrappedValue = Linear(
@@ -759,10 +837,32 @@ public class Gemma4ModelInner: Module, LayerPartitionable {
             layerCache = Array(repeating: nil as KVCache?, count: layers.count)
         }
 
-        let globalMask = createAttentionMask(h: h, cache: cache?.last.flatMap { $0 })
+        // Use the correct concrete cache layer for mask creation
+        // For shared KV models, the last cache entry (shared layer) is never written to.
+        // Use the last concrete global and sliding layers instead.
+        let firstSharedIdx = config.numKvSharedLayers > 0 ? config.hiddenLayers - config.numKvSharedLayers : config.hiddenLayers
+        
+        // Find first concrete global layer (for global mask)
+        var globalCacheIdx = config.slidingWindowPattern - 1  // First global layer
+        for i in stride(from: firstSharedIdx - 1, through: 0, by: -1) {
+            if i % config.slidingWindowPattern == config.slidingWindowPattern - 1 {
+                globalCacheIdx = i
+                break
+            }
+        }
+        // Find first concrete sliding layer (for sliding mask)
+        var slidingCacheIdx = 0
+        for i in 0 ..< firstSharedIdx {
+            if i % config.slidingWindowPattern != config.slidingWindowPattern - 1 {
+                slidingCacheIdx = i
+                break
+            }
+        }
+        
+        let globalMask = createAttentionMask(h: h, cache: cache?[globalCacheIdx])
         let slidingWindowMask: MLXFast.ScaledDotProductAttentionMaskMode = 
             config.slidingWindowPattern > 1 
-            ? createAttentionMask(h: h, cache: cache?.first.flatMap { $0 }, windowSize: config.slidingWindow)
+            ? createAttentionMask(h: h, cache: cache?[slidingCacheIdx], windowSize: config.slidingWindow)
             : .none
 
         // Compute per-layer conditioning tensor: [B, L, numLayers, hiddenSizePerLayerInput]
@@ -778,8 +878,10 @@ public class Gemma4ModelInner: Module, LayerPartitionable {
             let D = config.hiddenSizePerLayerInput
 
             // Token-based per-layer embeddings
-            let tokenScale = MLXArray(sqrt(Float(D))).asType(h.dtype)
-            var tokenEmbeds = (embedPerLayer(inputs) * tokenScale)
+            // vLLM: per_layer_embeds * embed_scale_per_layer (= sqrt(hidden_size_per_layer_input))
+            // llama.cpp: inp_per_layer = ggml_scale(inp_per_layer, sqrtf(n_embd_per_layer))
+            let embedScale = MLXArray(Float(D).squareRoot()).asType(h.dtype)
+            var tokenEmbeds = (embedPerLayer(inputs) * embedScale)
                 .reshaped(B, L, nL, D)  // [B, L, numLayers, D]
 
             // MASK OUT MULTIMODAL TOKENS: Zero out text-space embeddings for visual/audio tokens
@@ -797,12 +899,30 @@ public class Gemma4ModelInner: Module, LayerPartitionable {
             perLayerInputs = (tokenEmbeds + modelProjectedNormed) * combineScale
         }
 
+        // sharedFullIdx and sharedSlidingIdx use firstSharedIdx from above
+        // Find the last global and sliding layers before the shared block
+        var sharedFullIdx = firstSharedIdx - 1
+        while sharedFullIdx >= 0 && (sharedFullIdx % config.slidingWindowPattern != config.slidingWindowPattern - 1) {
+            sharedFullIdx -= 1
+        }
+        var sharedSlidingIdx = firstSharedIdx - 1
+        while sharedSlidingIdx >= 0 && (sharedSlidingIdx % config.slidingWindowPattern == config.slidingWindowPattern - 1) {
+            sharedSlidingIdx -= 1
+        }
+
         for (i, layer) in layers.enumerated() {
             let isGlobal = (i % config.slidingWindowPattern == config.slidingWindowPattern - 1)
             let layerMask = isGlobal ? globalMask : slidingWindowMask
-            let layerConditioning = perLayerInputs?[0..., 0..., i, 0...]
             
-            h = layer(h, mask: layerMask, cache: layerCache?[i], perLayerInput: layerConditioning)
+            let actualCacheIdx: Int
+            if config.numKvSharedLayers > 0 && i >= firstSharedIdx {
+                actualCacheIdx = isGlobal ? sharedFullIdx : sharedSlidingIdx
+            } else {
+                actualCacheIdx = i
+            }
+            let layerCache = cache?[actualCacheIdx]
+
+            h = layer(h, mask: layerMask, cache: layerCache, perLayerInput: perLayerInputs?[0..., 0..., i, 0...])
         }
 
         return norm(h)
@@ -847,8 +967,10 @@ public class Gemma4ModelInternal: Module, LayerPartitionable, LLMModel, KVCacheD
             out = model.embedTokens.asLinear(out)
         }
         if config.finalLogitSoftcapping > 0 {
-            let cap = MLXArray(config.finalLogitSoftcapping).asType(out.dtype)
-            out = MLX.tanh(out / cap) * cap
+            var outF32 = out.asType(.float32)
+            let cap = MLXArray(config.finalLogitSoftcapping).asType(.float32)
+            outF32 = MLX.tanh(outF32 / cap) * cap
+            out = outF32.asType(out.dtype)
         }
         return out
     }
@@ -858,7 +980,6 @@ public class Gemma4ModelInternal: Module, LayerPartitionable, LLMModel, KVCacheD
         for i in 0 ..< config.hiddenLayers {
             if i % config.slidingWindowPattern == config.slidingWindowPattern - 1 {
                 let cache = StandardKVCache()
-                cache.step = 1024
                 caches.append(cache)
             } else {
                 caches.append(RotatingKVCache(maxSize: config.slidingWindow, keep: 0))

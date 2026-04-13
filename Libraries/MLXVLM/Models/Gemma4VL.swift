@@ -302,7 +302,6 @@ private class Gemma4Projector: Module, UnaryLayer {
 public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider, LayerPartitionable {
     // `language_model` uses the existing MLXLLM Gemma4ModelInternal
     @ModuleInfo(key: "language_model") private var languageModel: Gemma4ModelInternal
-    @ModuleInfo(key: "lm_head") private var lmHead: Linear?
 
     @ModuleInfo(key: "vision_tower") private var visionTower: Gemma4VisionModel
     @ModuleInfo(key: "embed_vision") private var projector: Gemma4Projector
@@ -335,10 +334,6 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider, LayerPartitio
         
         // Always create a separate lm_head — following the Gemma 3 pattern.
         // For tied embeddings, sanitize() will copy embed_tokens weights to lm_head.
-        // This ensures logit projection uses QuantizedLinear.quantizedMM rather than
-        // QuantizedEmbedding.asLinear, which is critical for numerical accuracy.
-        // self._lmHead.wrappedValue = Linear(config.hiddenSize, config.vocabularySize, bias: false)
-        
         self._visionTower.wrappedValue = Gemma4VisionModel(config: vcfg)
         self._projector.wrappedValue = Gemma4Projector(visionDim: vcfg.hiddenSize, textDim: config.hiddenSize)
         if let acfg = config.audioConfig {
@@ -360,12 +355,8 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider, LayerPartitio
 
     public func callAsFunction(_ inputs: MLXArray, cache: [any KVCache]?) -> MLXArray {
         let optionalCache = cache?.map { $0 as KVCache? }
-        var h = languageModel(inputs, cache: optionalCache)
-        if let lmHead {
-            h = lmHead(h)
-        } else {
-            h = languageModel.model.embedTokens.asLinear(h)
-        }
+        var h = languageModel.model(inputs, inputEmbedding: nil, mask: nil, cache: optionalCache)
+        h = languageModel.model.embedTokens.asLinear(h)
         if config.finalLogitSoftcapping > 0 {
             let originalType = h.dtype
             let hF32 = h.asType(.float32)
@@ -446,17 +437,13 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider, LayerPartitio
             mask: input.text.mask
         )
         let convertedCache = cache.map { $0 as KVCache? }
-        var h = languageModel(
+        var h = languageModel.model(
             input.text.tokens,
             inputEmbedding: inputEmbeddings,
             mask: .causal, // Depending on phase
             cache: convertedCache
         )
-        if let lmHead {
-            h = lmHead(h)
-        } else {
-            h = languageModel.model.embedTokens.asLinear(h)
-        }
+        h = languageModel.model.embedTokens.asLinear(h)
         if config.finalLogitSoftcapping > 0 {
             let originalType = h.dtype
             let hF32 = h.asType(.float32)
@@ -481,6 +468,11 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider, LayerPartitio
             }
         }
         
+        print("[Gemma4VL] Sanitize executing! tieWordEmbeddings: \(config.tieWordEmbeddings)")
+        print("[Gemma4VL] Has language_model.model.embed_tokens.weight? \(processed["language_model.model.embed_tokens.weight"] != nil)")
+        
+        print("[Gemma4VL] Has language_model.model.embed_tokens.weight? \(processed["language_model.model.embed_tokens.weight"] != nil)")
+
         // Merge the vision tower and projector weights back in, as the LLM sanitize discards them
         for (k, v) in weights {
             if k.hasPrefix("vision_tower.") || k.hasPrefix("embed_vision.") || k.hasPrefix("audio_tower.") || k.hasPrefix("embed_audio.") {
@@ -513,47 +505,6 @@ public class Gemma4VL: Module, VLMModel, KVCacheDimensionProvider, LayerPartitio
             processed["vision_tower.std_bias"] = zeros([visionConfig.hiddenSize]).asType(activationDtype)
         }
         
-        // Finalize tied word embeddings copy, overriding the standard fallback.
-        // This MUST be done because we explicitly allocated a separate lm_head linear layer!
-        if processed["lm_head.weight"] == nil || config.tieWordEmbeddings {
-            // Check both prefixed and flat keys to be robust against different sanitization outputs
-            let prefix = "language_model."
-            let embedKeys = [
-                "\(prefix)model.embed_tokens.weight", "\(prefix)embed_tokens.weight", "\(prefix)model.embedTokens.weight", "\(prefix)embedTokens.weight",
-                "model.embed_tokens.weight", "embed_tokens.weight", "model.embedTokens.weight", "embedTokens.weight"
-            ]
-            
-            for key in embedKeys {
-                if let embedWeights = processed[key] {
-                    processed["lm_head.weight"] = embedWeights
-                    print("[Gemma4VL] Tied lm_head.weight from \(key)")
-                    break
-                }
-            }
-            
-            // Repeat for scales/biases if present (quantized models)
-            let scaleKeys = [
-                "\(prefix)model.embed_tokens.scales", "\(prefix)embed_tokens.scales", "\(prefix)model.embedTokens.scales", "\(prefix)embedTokens.scales",
-                "model.embed_tokens.scales", "embed_tokens.scales", "model.embedTokens.scales", "embedTokens.scales"
-            ]
-            for key in scaleKeys {
-                if let embedScales = processed[key] {
-                    processed["lm_head.scales"] = embedScales
-                    break
-                }
-            }
-            
-            let biasKeys = [
-                "\(prefix)model.embed_tokens.biases", "\(prefix)embed_tokens.biases", "\(prefix)model.embedTokens.biases", "\(prefix)embedTokens.biases",
-                "model.embed_tokens.biases", "embed_tokens.biases", "model.embedTokens.biases", "embedTokens.biases"
-            ]
-            for key in biasKeys {
-                if let embedBiases = processed[key] {
-                    processed["lm_head.biases"] = embedBiases
-                    break
-                }
-            }
-        }
         
         return processed
     }
@@ -566,6 +517,7 @@ public struct Gemma4MessageGenerator: MessageGenerator {
     
     public func generate(message: Chat.Message) -> MLXLMCommon.Message {
         var textContent = message.content
+        print("[Gemma4MessageGenerator] Raw textContent: \(textContent)")
         
         // Explicitly inject image tokens inline if they exist
         let visualPrefix = Array(repeating: "<|image|>", count: message.images.count).joined(separator: "\n")
@@ -606,6 +558,7 @@ public struct Gemma4Processor: UserInputProcessor {
 
     public func prepare(input: UserInput) async throws -> LMInput {
         let messages = Gemma4MessageGenerator().generate(from: input)
+        print("[Gemma4Processor] Final mapped messages for tokenizer: \(messages)")
         var promptTokens = try tokenizer.applyChatTemplate(messages: messages, tools: input.tools)
 
         var processedImage: LMInput.ProcessedImage? = nil
@@ -701,9 +654,13 @@ public struct Gemma4Processor: UserInputProcessor {
             // The MessageGenerator injected <|audio|> strings which tokenizer resolves to audioTokenId (258881)
             // Determine insertion point before wiping ALL instances.
             let targetIdx = expandedTokens.firstIndex(of: gemmaBoa) ?? expandedTokens.firstIndex(of: audioTokenId)
+            print("[Gemma4Processor] targetIdx: \(String(describing: targetIdx))")
+            print("[Gemma4Processor] Tokenizer count before audio wipe: \(expandedTokens.count)")
             
             // Wipe all manual occurrences to prevent broadcast shape errors
             expandedTokens.removeAll(where: { $0 == gemmaBoa || $0 == gemmaEoa || $0 == audioTokenId })
+            
+            print("[Gemma4Processor] Tokenizer count after audio wipe: \(expandedTokens.count)")
             
             if let idx = targetIdx {
                 // Re-clamp the index in case removeAll shifted it out of bounds
@@ -716,12 +673,11 @@ public struct Gemma4Processor: UserInputProcessor {
                     expandedTokens.insert(contentsOf: [gemmaBoa] + audioPadding + [gemmaEoa], at: 0)
                 }
             }
-            
+            print("[Gemma4Processor] Tokenizer count after audio insertion: \(expandedTokens.count)")
             promptTokens = expandedTokens
         }
-        
         // DEBUG: Render exactly what strings the LLM sees
-        let decodedPrompt = tokenizer.decode(tokenIds: promptTokens) ?? "Failed to decode"
+        let decodedPrompt = tokenizer.decode(tokenIds: promptTokens)
         print("[\(type(of: self))] Final Evaluated Prompt Geometry bounds:")
         print("\n----------------------")
         print(decodedPrompt)

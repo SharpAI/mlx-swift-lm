@@ -313,8 +313,8 @@ public func createSSMMask(h: MLXArray, cache: MambaCache?) -> MLXArray? {
 /// Standard KV cache implementation based on Python's KVCache
 /// See https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/models/base.py#L11
 public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
-    internal var keys: MLXArray?
-    internal var values: MLXArray?
+    public var keys: MLXArray?
+    public var values: MLXArray?
     
     // ── TurboQuant State ───────────────────────────────────────────────────────
     // When turboQuantEnabled=true (--turbo-kv flag), every incoming KV token is
