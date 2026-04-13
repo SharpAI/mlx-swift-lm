@@ -895,8 +895,14 @@ public class Gemma4ModelInner: Module, LayerPartitionable {
             let modelProjectedNormed = projNorm(modelProjected)
 
             // Combine
+            // For text tokens, we combine the text PLE embedding and the model projection
+            // scaling by 1/sqrt(2). For multimodal tokens, since the text embedding is zero,
+            // we should NOT scale the projection by 1/sqrt(2) to preserve original variance.
             let combineScale = MLXArray(Float(1.0 / 2.0.squareRoot())).asType(h.dtype)
-            perLayerInputs = (tokenEmbeds + modelProjectedNormed) * combineScale
+            // Use the same isTextToken mask (1.0 for text, 0.0 for modalities) to choose the scalar
+            let maskScalar = MLX.where(isTextToken.reshaped([B, L, 1, 1]), combineScale, MLXArray(1.0).asType(h.dtype))
+            
+            perLayerInputs = (tokenEmbeds + modelProjectedNormed) * maskScalar
         }
 
         // sharedFullIdx and sharedSlidingIdx use firstSharedIdx from above

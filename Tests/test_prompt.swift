@@ -1,0 +1,20 @@
+import Foundation
+import MLXLMCommon
+
+@main
+struct App {
+    static func main() async throws {
+        let registry = ModelRegistry.shared
+        let url = URL(fileURLWithPath: "/Users/simba/.cache/huggingface/hub/models--mlx-community--gemma-4-e4b-it-4bit/snapshots/d9ab042fedb4e180cc428676230f81d11ca7ad1c/")
+        let tokenizerContext = try await TokenizerContext.load(modelURL: url)
+        let tokenizer = tokenizerContext.tokenizer
+        let messages = [["role": "user", "content": "Hi"]]
+        let rendered = try tokenizer.applyChatTemplate(messages: messages)
+        print("Rendered:", rendered)
+        let promptList = try tokenizer.applyChatTemplate(messages: messages)
+        print("PROMPT LIST:", promptList)
+        for t in promptList {
+            print(t, tokenizer.decode(tokens: [t]))
+        }
+    }
+}

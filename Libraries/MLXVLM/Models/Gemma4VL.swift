@@ -211,50 +211,41 @@ private class Gemma4VisionEncoder: Module {
 }
 
 private class Gemma4PatchEmbedder: Module {
-    @ModuleInfo(key: "input_proj") var inputProj: Linear
+    @ModuleInfo(key: "input_proj") var inputProj: Conv2d
     // position_embedding_table is just an array parameter
     var position_embedding_table: MLXArray
     let patchSize: Int
 
     init(config: Gemma4VisionConfiguration) {
         self.patchSize = config.patchSize
-        self._inputProj.wrappedValue = Linear(
-            config.patchSize * config.patchSize * config.numChannels,
-            config.hiddenSize,
-            bias: false
+        self._inputProj.wrappedValue = Conv2d(
+            inputChannels: config.numChannels,
+            outputChannels: config.hiddenSize,
+            kernelSize: [config.patchSize, config.patchSize],
+            stride: [config.patchSize, config.patchSize],
+            bias: true
         )
         // Set the parameter directly. MLX requires Module parameters to be either Module or explicitly managed MLXArrays. 
         self.position_embedding_table = zeros([2, 10240, config.hiddenSize])
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let B = x.dim(0)
-        let C = x.dim(1)
-        let H = x.dim(2)
-        let W = x.dim(3)
-        let P = patchSize
+        // x is [B, C, H, W]. MLX Conv2d expects [B, H, W, C].
+        var hArr = x.transposed(0, 2, 3, 1)
         
-        let h = H / P
-        let w = W / P
+        hArr = inputProj(hArr)
         
-        // Reshape [B, C, H, W] -> [B, C, h, P, w, P]
-        let reshaped = x.reshaped([B, C, h, P, w, P])
-        // Transpose to [B, h, w, P, P, C]
-        let transposed = reshaped.transposed(0, 2, 4, 3, 5, 1)
-        // Flatten to [B, h*w, P*P*C]
-        let flattened = transposed.reshaped([B, h * w, P * P * C])
-        
-        var out = inputProj(flattened)
+        let B = hArr.dim(0)
+        let seqLen = hArr.dim(1) * hArr.dim(2)
+        let hiddenSize = hArr.dim(3)
+        // Flatten spatial dimensions
+        hArr = hArr.reshaped([B, seqLen, hiddenSize])
         
         // Add positional embeddings
         // The table is [2, 10240, hiddenSize]. We select index 0, and slice up to sequence length.
-        let seqLen = out.dim(1)
-        _ = position_embedding_table[0..., 0..<seqLen, 0...]
-        // posEmbeds has shape [2, seqLen, hiddenSize]. We want [1, seqLen, hiddenSize] or just [seqLen, hiddenSize]
-        // Actually since we don't know why it's 2, let's just pick index 0.
-        out = out + position_embedding_table[0, 0..<seqLen, 0...]
+        let posEmbeds = position_embedding_table[0, 0..<seqLen, 0...]
         
-        return out
+        return hArr + posEmbeds
     }
 }
 
@@ -287,7 +278,7 @@ private class Gemma4Projector: Module, UnaryLayer {
     @ModuleInfo(key: "embedding_projection") var projection: any UnaryLayer
     
     init(visionDim: Int, textDim: Int) {
-        self._projection.wrappedValue = Linear(visionDim, textDim, bias: false)
+        self._projection.wrappedValue = Linear(visionDim, textDim)
         super.init()
     }
     
