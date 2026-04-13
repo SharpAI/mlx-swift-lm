@@ -88,4 +88,28 @@ struct Gemma4Tests {
         let model = Gemma4ModelInternal(config)
         #expect(model.model.layers.count == config.hiddenLayers)
     }
+
+    @Test("Router Parameter Tree Dump")
+    func testRouterParameterTree() throws {
+        let config = makeTinyConfig()
+        let model = Gemma4ModelInternal(config)
+        
+        var weights = [String: MLXArray]()
+        weights["model.layers.0.experts.router.scale"] = MLXArray.ones([config.hiddenSize])
+        weights["model.layers.0.experts.router.proj.weight"] = MLXArray.ones([1, config.hiddenSize])
+        
+        print("Model parameters:")
+        for (k, _) in model.parameters() {
+            if k.contains("router") {
+                print(k)
+            }
+        }
+        
+        do {
+            try model.update(parameters: ModuleParameters.unflattened(weights))
+        } catch {
+            print("Update Error: \(error)")
+            throw error
+        }
+    }
 }

@@ -540,8 +540,8 @@ public class Gemma4MLP: Module {
 
 class Gemma4Router: Module {
     @ModuleInfo(key: "proj") var proj: Linear
-    @ModuleInfo(key: "scale") var scale: MLXArray
-    @ModuleInfo(key: "per_expert_scale") var perExpertScale: MLXArray
+    @ModuleInfo var scale: MLXArray
+    @ModuleInfo var per_expert_scale: MLXArray
 
     let eps: Float
     let scalarRootSize: Float
@@ -551,7 +551,7 @@ class Gemma4Router: Module {
         self.scalarRootSize = 1.0 / sqrt(Float(dimensions))
         self._proj.wrappedValue = Linear(dimensions, numExperts, bias: false)
         self._scale.wrappedValue = MLXArray.ones([dimensions])
-        self._perExpertScale.wrappedValue = MLXArray.ones([numExperts])
+        self._per_expert_scale.wrappedValue = MLXArray.ones([numExperts])
         super.init()
     }
 
@@ -578,7 +578,7 @@ class Gemma4Router: Module {
 
         // L1 normalize then apply per-expert scale
         topKWeights = topKWeights / topKWeights.sum(axis: -1, keepDims: true)
-        topKWeights = topKWeights * perExpertScale[topKInds]
+        topKWeights = topKWeights * MLX.takeAlong(per_expert_scale, topKInds, axis: -1)
 
         return (topKWeights, topKInds)
     }
