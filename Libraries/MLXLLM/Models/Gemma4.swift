@@ -21,9 +21,16 @@ public class Gemma4RMSNorm: Module, UnaryLayer {
     }
 
     public func callAsFunction(_ x: MLXArray) -> MLXArray {
-        // vLLM: standard RMSNorm — weight * x / sqrt(E[x^2] + eps)
-        // Gemma 4 norm weights are trained scale factors (~8-10), NOT zero-init offsets.
-        return MLXFast.rmsNorm(x, weight: self.weight, eps: self.eps)
+        // Evaluate in Float32 to prevent Float16 infinity overflow on M1/M2 architectures.
+        // Vision models like SigLIP/Qwen inject imageFeatures at magnitude ~300.
+        // 300^2 = 90,000, which overflows MLX .float16 max of 65504 causing NaNs if not isolated.
+        let originalType = x.dtype
+        let xF32 = x.asType(.float32)
+        let variance = MLX.mean(MLX.square(xF32), axis: -1, keepDims: true)
+        let rsqrtVar = MLX.rsqrt(variance + eps)
+        
+        // Weight is applied after to the original type to avoid type mismatch
+        return (self.weight * (xF32 * rsqrtVar).asType(originalType))
     }
 }
 
