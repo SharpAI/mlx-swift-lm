@@ -4,6 +4,7 @@ import Testing
 
 @testable import MLXEmbedders
 
+@Suite(.serialized)
 struct EmbeddingPoolingTests {
 
     @Test("Last-token pooling uses the final non-padding token")
