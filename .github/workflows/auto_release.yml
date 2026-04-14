@@ -18,18 +18,22 @@ jobs:
         with:
           fetch-depth: 0 # Essential for retrieving all tags to calculate the next semver bump
 
-      - name: Bump version and push tag
+      - name: Calculate release version (b<commit_count>)
         id: tag_version
-        uses: mathieudutour/github-tag-action@v6.2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          default_bump: patch
-          release_branches: main
+        run: |
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          TAG_NAME="b${COMMIT_COUNT}"
+          echo "Calculated tag: $TAG_NAME"
+          echo "new_tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          
+          # Create and push the tag manually
+          git tag $TAG_NAME
+          git push origin $TAG_NAME
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag_version.outputs.new_tag }}
           name: Release ${{ steps.tag_version.outputs.new_tag }}
-          body: ${{ steps.tag_version.outputs.changelog }}
+          body: "Automated release based on commit count ${{ steps.tag_version.outputs.new_tag }}"
           generate_release_notes: true
