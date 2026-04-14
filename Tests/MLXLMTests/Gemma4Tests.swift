@@ -5,7 +5,7 @@ import MLXLMCommon
 import MLXNN
 import Testing
 
-@Suite("Gemma 4 Architectural Integrity Tests")
+@Suite("Gemma 4 Architectural Integrity Tests", .serialized)
 struct Gemma4Tests {
 
     /// Create a minimal test configuration for Gemma 4 using upstream's JSON-based init

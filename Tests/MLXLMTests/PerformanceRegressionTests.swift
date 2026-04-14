@@ -3,7 +3,7 @@ import MLX
 import MLXLMCommon
 import Testing
 
-@Suite("Performance & Resource Regression Tests")
+@Suite("Performance & Resource Regression Tests", .serialized)
 struct PerformanceRegressionTests {
     
     /// Helper to measure resident set size (RSS) via Mach task info
