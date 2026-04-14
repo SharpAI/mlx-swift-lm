@@ -180,6 +180,7 @@ public struct Gemma4Configuration: Codable {
     // MoE / Global KV Configurations
     public let numExperts: Int?
     public let topKExperts: Int?
+    public let top_k_experts: Int?
     public let moeIntermediateSize: Int?
     public let numGlobalKeyValueHeads: Int
     public let tieWordEmbeddings: Bool
@@ -195,6 +196,8 @@ public struct Gemma4Configuration: Codable {
     public let vocabSizePerLayerInput: Int
     /// Attention logit softcapping value (typically 50.0).
     public let attentionLogitSoftcapping: Float
+    /// Whether k_proj is equivalent to v_proj for global attention layers
+    public let attentionKEqV: Bool
     
     public let visionConfig: Gemma4VisionConfigurationProxy?
     public let audioConfig: Gemma4AudioConfigurationProxy?
@@ -207,12 +210,13 @@ public struct Gemma4Configuration: Codable {
         maxPositionEmbeddings: Int, ropeScaling: [String: StringOrNumber]? = nil,
         globalHeadDim: Int = 512, numKvSharedLayers: Int = 0, useDoubleWideMlp: Bool = false,
         tieWordEmbeddings: Bool = true,
-        numExperts: Int? = nil, topKExperts: Int? = nil, moeIntermediateSize: Int? = nil,
+        numExperts: Int? = nil, topKExperts: Int? = nil, top_k_experts: Int? = nil, moeIntermediateSize: Int? = nil,
         numGlobalKeyValueHeads: Int? = nil,
         hiddenSizePerLayerInput: Int = 0, vocabSizePerLayerInput: Int = 0,
         globalRopePartialFactor: Float = 0.25,
         finalLogitSoftcapping: Float = 0.0,
         attentionLogitSoftcapping: Float = 50.0,
+        attentionKEqV: Bool = false,
         enableMoeBlock: Bool? = nil,
         visionConfig: Gemma4VisionConfigurationProxy? = nil,
         audioConfig: Gemma4AudioConfigurationProxy? = nil
@@ -240,6 +244,7 @@ public struct Gemma4Configuration: Codable {
         self.tieWordEmbeddings = tieWordEmbeddings
         self.numExperts = numExperts
         self.topKExperts = topKExperts
+        self.top_k_experts = top_k_experts
         self.moeIntermediateSize = moeIntermediateSize
         self.numGlobalKeyValueHeads = numGlobalKeyValueHeads ?? kvHeads
         self.hiddenSizePerLayerInput = hiddenSizePerLayerInput
@@ -247,6 +252,7 @@ public struct Gemma4Configuration: Codable {
         self.globalRopePartialFactor = globalRopePartialFactor
         self.finalLogitSoftcapping = finalLogitSoftcapping
         self.attentionLogitSoftcapping = attentionLogitSoftcapping
+        self.attentionKEqV = attentionKEqV
         self.enableMoeBlock = enableMoeBlock ?? (numExperts != nil && numExperts! > 0)
         self.visionConfig = visionConfig
         self.audioConfig = audioConfig
@@ -277,6 +283,7 @@ public struct Gemma4Configuration: Codable {
         // MoE
         case numExperts = "num_experts"
         case topKExperts = "num_experts_per_tok"
+        case top_k_experts = "top_k_experts"
         case tieWordEmbeddings = "tie_word_embeddings"
         case moeIntermediateSize = "moe_intermediate_size"
         case numGlobalKeyValueHeads = "num_global_key_value_heads"
@@ -288,6 +295,7 @@ public struct Gemma4Configuration: Codable {
         // Logit softcapping
         case finalLogitSoftcapping = "final_logit_softcapping"
         case attentionLogitSoftcapping = "attention_logit_softcapping"
+        case attentionKEqV = "attention_k_eq_v"
         case visionConfig = "vision_config"
         case audioConfig = "audio_config"
     }
@@ -317,7 +325,8 @@ public struct Gemma4Configuration: Codable {
         let tieWordOpt = try container.decodeIfPresent(Bool.self, forKey: .tieWordEmbeddings)
         tieWordEmbeddings = tieWordOpt ?? true
         numExperts = try container.decodeIfPresent(Int.self, forKey: .numExperts)
-        topKExperts = try container.decodeIfPresent(Int.self, forKey: .topKExperts)
+        topKExperts = try container.decodeIfPresent(Int.self, forKey: .topKExperts) ?? (try container.decodeIfPresent(Int.self, forKey: .top_k_experts))
+        top_k_experts = topKExperts
         moeIntermediateSize = try container.decodeIfPresent(Int.self, forKey: .moeIntermediateSize)
 
         let enableMoeOpt = try container.decodeIfPresent(Bool.self, forKey: .enableMoeBlock)
@@ -340,6 +349,7 @@ public struct Gemma4Configuration: Codable {
         queryPreAttnScalar = try container.decodeIfPresent(Float.self, forKey: .queryPreAttnScalar)
         finalLogitSoftcapping = try container.decodeIfPresent(Float.self, forKey: .finalLogitSoftcapping) ?? 0.0
         attentionLogitSoftcapping = try container.decodeIfPresent(Float.self, forKey: .attentionLogitSoftcapping) ?? 0.0
+        attentionKEqV = try container.decodeIfPresent(Bool.self, forKey: .attentionKEqV) ?? false
         slidingWindow = try container.decodeIfPresent(Int.self, forKey: .slidingWindow) ?? 512
         slidingWindowPattern = try container.decodeIfPresent(Int.self, forKey: .slidingWindowPattern) ?? (hiddenLayers == 35 ? 5 : 6)
         maxPositionEmbeddings = try container.decodeIfPresent(Int.self, forKey: .maxPositionEmbeddings) ?? 32768
@@ -384,6 +394,7 @@ public class Gemma4Attention: Module {
     let slidingWindowPattern: Int
     let eps: Float
     let globalRopePartialFactor: Float
+    let attentionKEqV: Bool
     /// QK attention logit softcapping (Gemma 4 uses 30.0). 0 = disabled.
     let attnLogitSoftcap: Float
 
@@ -410,6 +421,7 @@ public class Gemma4Attention: Module {
         self.slidingWindowPattern = config.slidingWindowPattern
         self.isSliding = (layerIdx + 1) % config.slidingWindowPattern != 0
         self.eps = config.rmsNormEps
+        self.attentionKEqV = config.attentionKEqV
         
         self.nHeads = config.attentionHeads
         self.nKVHeads = self.isSliding ? config.kvHeads : config.numGlobalKeyValueHeads
@@ -428,7 +440,6 @@ public class Gemma4Attention: Module {
 
         self._queryNorm.wrappedValue = Gemma4RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
         self._keyNorm.wrappedValue = Gemma4RMSNorm(dimensions: headDim, eps: config.rmsNormEps)
-        self._valueNorm.wrappedValue = Gemma4RMSNormNoScale(eps: config.rmsNormEps)
 
         let ropeFactor = config.globalRopePartialFactor
         self.globalRopePartialFactor = ropeFactor
@@ -511,7 +522,12 @@ public class Gemma4Attention: Module {
             // Non-shared layer: full K/V projection, norm, RoPE, cache update
             // vLLM gemma4.py lines 412-417, llama.cpp gemma4-iswa.cpp lines 79-100
             var keys = keyProj(x)
-            var values = valueProj(x)
+            var values: MLXArray
+            if !isSliding && attentionKEqV {
+                values = keys
+            } else {
+                values = valueProj(x)
+            }
 
             keys = keys.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
             values = values.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
@@ -641,7 +657,7 @@ class Gemma4Router: Module {
 
         // L1 normalize then apply per-expert scale
         topKWeights = topKWeights / topKWeights.sum(axis: -1, keepDims: true)
-        topKWeights = topKWeights * MLX.takeAlong(per_expert_scale, topKInds, axis: -1)
+        topKWeights = topKWeights * per_expert_scale[topKInds]
 
         return (topKWeights, topKInds)
     }
@@ -689,6 +705,11 @@ public class Gemma4TransformerBlock: Module {
     @ModuleInfo(key: "pre_feedforward_layernorm") public var preFFWNorm: Gemma4RMSNorm
     @ModuleInfo(key: "post_feedforward_layernorm") public var postFFWNorm: Gemma4RMSNorm
 
+    // Gemma 4 MoE Dual-Stream Layernorms
+    @ModuleInfo(key: "pre_feedforward_layernorm_2") public var preFFWNorm2: Gemma4RMSNorm?
+    @ModuleInfo(key: "post_feedforward_layernorm_1") public var postFFWNorm1: Gemma4RMSNorm?
+    @ModuleInfo(key: "post_feedforward_layernorm_2") public var postFFWNorm2: Gemma4RMSNorm?
+
     // Per-layer conditioning (Gemma 4 architectural novelty)
     @ModuleInfo(key: "per_layer_projection") var perLayerProjection: Linear?
     @ModuleInfo(key: "per_layer_input_gate") var perLayerInputGate: Linear?
@@ -710,6 +731,18 @@ public class Gemma4TransformerBlock: Module {
         self._postAttentionNorm.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
         self._preFFWNorm.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
         self._postFFWNorm.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+
+        if config.enableMoeBlock, let nExp = config.numExperts, let topK = config.topKExperts, let moeDim = config.moeIntermediateSize {
+            self._expertsBlock.wrappedValue = Gemma4SparseMoeBlock(
+                dimensions: config.hiddenSize,
+                numExperts: nExp,
+                topK: topK,
+                moeIntermediateSize: moeDim
+            )
+            self._preFFWNorm2.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+            self._postFFWNorm1.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+            self._postFFWNorm2.wrappedValue = Gemma4RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
+        }
 
         if config.hiddenSizePerLayerInput > 0 {
             // per_layer_projection: [hiddenSizePerLayerInput → hiddenSize]
@@ -745,12 +778,33 @@ public class Gemma4TransformerBlock: Module {
         h = postAttentionNorm(h)
         var out = residual + h
 
-        // 2. Feedforward
-        residual = out
-        h = preFFWNorm(residual)
-        h = mlp(h)
-        h = postFFWNorm(h)
-        out = residual + h
+        // 2. Feedforward (Dual-Path for MoE: Shared MLP + Sparse Experts)
+        let ffwResidual = out
+        
+        // 3. FFW path
+        var combinedVal: MLXArray
+        if let experts = expertsBlock {
+            // Path A: Shared MLP
+            let mlpNormed = preFFWNorm(ffwResidual)
+            let mlpValRaw = mlp(mlpNormed)
+            let mlpVal = postFFWNorm1?(mlpValRaw) ?? mlpValRaw
+            
+            // Path B: Sparse Experts
+            let expNormed = preFFWNorm2?(ffwResidual) ?? mlpNormed
+            let expValRaw = experts(expNormed, routerInput: ffwResidual) // Router SEES UN-NORMED RESIDUAL
+            let expVal = postFFWNorm2?(expValRaw) ?? expValRaw
+            
+            combinedVal = mlpVal + expVal
+        } else {
+            // Standard feedforward only
+            let mlpNormed = preFFWNorm(ffwResidual)
+            let mlpValRaw = mlp(mlpNormed)
+            combinedVal = mlpValRaw
+        }
+        
+        combinedVal = postFFWNorm(combinedVal)
+        
+        out = ffwResidual + combinedVal
 
         // 3. PLE (Per-Layer Embedding) — applied AFTER feedforward residual
         // vLLM gemma4.py lines 632-640, llama.cpp gemma4-iswa.cpp lines 203-223
@@ -765,10 +819,9 @@ public class Gemma4TransformerBlock: Module {
             out = out + normed
         }
 
-        // 4. Layer scalar — applied to final output
-        // vLLM gemma4.py line 644, llama.cpp gemma4-iswa.cpp lines 227-229
+        // 4. Layer scalar
         out = out * layerScalar
-
+        
         return out
     }
 }
@@ -884,32 +937,28 @@ public class Gemma4ModelInner: Module, LayerPartitionable {
             let nL = config.hiddenLayers
             let D = config.hiddenSizePerLayerInput
 
+            // MASK OUT MULTIMODAL TOKENS: embedTokensPerLayer only has a vocabulary of config.vocabularySizePerLayerInput (e.g. 256000).
+            // Any token above this (e.g. imageTokenId 258880) must be mapped to 0 (<pad>) to prevent out-of-bounds fetches.
+            let validMask = MLX.logicalAnd(MLX.greaterEqual(inputs, MLXArray(0)), MLX.less(inputs, MLXArray(config.vocabularySizePerLayerInput)))
+            let tokenIds = MLX.where(validMask, inputs, MLX.zeros(like: inputs))
+
             // Token-based per-layer embeddings
             // vLLM: per_layer_embeds * embed_scale_per_layer (= sqrt(hidden_size_per_layer_input))
             // llama.cpp: inp_per_layer = ggml_scale(inp_per_layer, sqrtf(n_embd_per_layer))
             let embedScale = MLXArray(Float(D).squareRoot()).asType(h.dtype)
-            var tokenEmbeds = (embedPerLayer(inputs) * embedScale)
+            let tokenEmbeds = (embedPerLayer(tokenIds) * embedScale)
                 .reshaped(B, L, nL, D)  // [B, L, numLayers, D]
-
-            // MASK OUT MULTIMODAL TOKENS: Zero out text-space embeddings for visual/audio tokens
-            let isTextToken = MLX.logicalOr(MLX.less(inputs, MLXArray(258880)), MLX.greater(inputs, MLXArray(258884)))
-            let expandedMask = isTextToken.reshaped([B, L, 1, 1]).asType(tokenEmbeds.dtype)
-            tokenEmbeds = tokenEmbeds * expandedMask
 
             let projScale = MLXArray(1.0 / sqrt(Float(config.hiddenSize))).asType(h.dtype)
             let modelProjected = (modelProj(h) * projScale)
                 .reshaped(B, L, nL, D)
             let modelProjectedNormed = projNorm(modelProjected)
 
-            // Combine
-            // For text tokens, we combine the text PLE embedding and the model projection
-            // scaling by 1/sqrt(2). For multimodal tokens, since the text embedding is zero,
-            // we should NOT scale the projection by 1/sqrt(2) to preserve original variance.
+             // Combine
+            // For both text and multimodal tokens, combine the PLE embedding and the model projection
+            // scaling by 1/sqrt(2) as implemented in original Gemma 4 architecture.
             let combineScale = MLXArray(Float(1.0 / 2.0.squareRoot())).asType(h.dtype)
-            // Use the same isTextToken mask (1.0 for text, 0.0 for modalities) to choose the scalar
-            let maskScalar = MLX.where(isTextToken.reshaped([B, L, 1, 1]), combineScale, MLXArray(1.0).asType(h.dtype))
-            
-            perLayerInputs = (tokenEmbeds + modelProjectedNormed) * maskScalar
+            perLayerInputs = (tokenEmbeds + modelProjectedNormed) * combineScale
         }
 
         // sharedFullIdx and sharedSlidingIdx use firstSharedIdx from above
@@ -1048,12 +1097,18 @@ public class Gemma4ModelInternal: Module, LayerPartitionable, LLMModel, KVCacheD
             finalWeights[newK] = v
         }
         
-        // Gemma 4 shares k_proj weights with v_proj in some layers (or all)
+        // Gemma 4 shares k_proj weights with v_proj in some sliding window global layers
         for i in 0..<config.hiddenLayers {
             let kWeightKey = "model.layers.\(i).self_attn.k_proj.weight"
             let vWeightKey = "model.layers.\(i).self_attn.v_proj.weight"
             if finalWeights[kWeightKey] != nil && finalWeights[vWeightKey] == nil {
                 finalWeights[vWeightKey] = finalWeights[kWeightKey]
+                if let scales = finalWeights["model.layers.\(i).self_attn.k_proj.scales"] {
+                    finalWeights["model.layers.\(i).self_attn.v_proj.scales"] = scales
+                }
+                if let biases = finalWeights["model.layers.\(i).self_attn.k_proj.biases"] {
+                    finalWeights["model.layers.\(i).self_attn.v_proj.biases"] = biases
+                }
             }
         }
         

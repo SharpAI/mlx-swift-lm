@@ -50,7 +50,10 @@ public func loadWeights(
             if weights["\(path).scales"] != nil {
                 if let perLayerQuantization {
                     let dict = perLayerQuantization.perLayerQuantization
-                    if let opt = dict[path] ?? dict["language_model.\(path)"] {
+                    if let opt = dict[path] ?? 
+                                 dict["language_model.\(path)"] ??
+                                 dict[path.replacingOccurrences(of: ".experts.router.", with: ".router.")] ??
+                                 dict["language_model." + path.replacingOccurrences(of: ".experts.router.", with: ".router.")] {
                         switch opt {
                         case .skip: return nil
                         case .quantize(let q): return q.asTuple
