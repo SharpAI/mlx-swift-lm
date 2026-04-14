@@ -1,0 +1,28 @@
+name: Performance Audit
+
+on:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  benchmark:
+    if: contains(github.event.pull_request.labels.*.name, 'run-benchmark')
+    name: Regression Benchmark
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build Benchmark Tool
+        run: swift build -c release --product BenchmarkHelpers
+
+      - name: Run Baseline Gemma4 Benchmark
+        run: |
+          # Use synthetic weights for performance tracking to avoid GBytes of downloads in CI
+          swift run -c release mlx-swift-lm-benchmark --model gemma4 --synthetic --prompt-len 512 --gen-len 128
+          
+      - name: Run Memory Efficiency Audit
+        run: |
+          # Check for memory leaks / peak memory stability
+          swift run -c release mlx-swift-lm-benchmark --model gemma4 --synthetic --max-mem 4GB

@@ -37,10 +37,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/SharpAI/mlx-swift.git", branch: "main"),
-        .package(
-            url: "https://github.com/huggingface/swift-transformers",
-            .upToNextMinor(from: "1.2.0")
-        ),
+
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0-latest"),
     ],
     targets: [
@@ -60,6 +57,7 @@ let package = Package(
         .target(
             name: "MLXVLM",
             dependencies: [
+                "MLXLLM",
                 "MLXLMCommon",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),

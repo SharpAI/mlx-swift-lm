@@ -14,6 +14,9 @@ public enum Chat {
         /// Array of video data associated with the message.
         public var videos: [UserInput.Video]
 
+        /// Array of audio data associated with the message.
+        public var audio: [UserInput.Audio]
+
         /// Array of tool calls (typically for the assistant role).
         public var toolCalls: [[String: any Sendable]]?
 
@@ -22,34 +25,35 @@ public enum Chat {
 
         public init(
             role: Role, content: String, images: [UserInput.Image] = [],
-            videos: [UserInput.Video] = [], toolCalls: [[String: any Sendable]]? = nil,
+            videos: [UserInput.Video] = [], audio: [UserInput.Audio] = [], toolCalls: [[String: any Sendable]]? = nil,
             toolCallId: String? = nil
         ) {
             self.role = role
             self.content = content
             self.images = images
             self.videos = videos
+            self.audio = audio
             self.toolCalls = toolCalls
             self.toolCallId = toolCallId
         }
 
         public static func system(
-            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = []
+            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = [], audio: [UserInput.Audio] = []
         ) -> Self {
-            Self(role: .system, content: content, images: images, videos: videos)
+            Self(role: .system, content: content, images: images, videos: videos, audio: audio)
         }
 
         public static func assistant(
-            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = [],
+            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = [], audio: [UserInput.Audio] = [],
             toolCalls: [[String: any Sendable]]? = nil
         ) -> Self {
-            Self(role: .assistant, content: content, images: images, videos: videos, toolCalls: toolCalls)
+            Self(role: .assistant, content: content, images: images, videos: videos, audio: audio, toolCalls: toolCalls)
         }
 
         public static func user(
-            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = []
+            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = [], audio: [UserInput.Audio] = []
         ) -> Self {
-            Self(role: .user, content: content, images: images, videos: videos)
+            Self(role: .user, content: content, images: images, videos: videos, audio: audio)
         }
 
         public static func tool(_ content: String, toolCallId: String? = nil) -> Self {
@@ -66,7 +70,7 @@ public enum Chat {
 }
 
 /// Protocol for something that can convert structured
-/// ``Chat.Message`` into model specific ``Message``
+/// ``Chat/Message`` into model specific ``Message``
 /// (raw dictionary) format.
 ///
 /// Typically this is owned and used by a ``UserInputProcessor``:

@@ -103,16 +103,32 @@ public func attentionWithCacheUpdate(
 
 
     guard let cache else {
+        var safeMask = mask
+        let targetS = keys.dim(2)
+        if case .array(let customMask) = mask {
+            if customMask.dim(-1) != targetS && customMask.dim(-1) > targetS {
+                let sliced: MLXArray
+                if customMask.ndim == 2 {
+                    sliced = customMask[0..., ..<targetS]
+                } else if customMask.ndim == 4 {
+                    sliced = customMask[0..., 0..., 0..., ..<targetS]
+                } else {
+                    fatalError("Unsupported mask dimensionality: \(customMask.ndim)")
+                }
+                safeMask = .array(sliced)
+            }
+        }
+
         if isCPU {
             return fallbackScaledDotProductAttention(
-                queries: queries, keys: keys, values: values, scale: scale, mask: mask)
+                queries: queries, keys: keys, values: values, scale: scale, mask: safeMask)
         }
         return MLXFast.scaledDotProductAttention(
             queries: queries,
             keys: keys,
             values: values,
             scale: scale,
-            mask: mask
+            mask: safeMask
         )
     }
 

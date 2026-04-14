@@ -3,14 +3,17 @@ import MLX
 import MLXLMCommon
 import Testing
 
-private let cacheCreators: [@Sendable () -> any KVCache] = [
-    { KVCacheSimple() },
-    { RotatingKVCache(maxSize: 32) },
-    { QuantizedKVCache() },
-    { ChunkedKVCache(chunkSize: 16) },
-    { ArraysCache(size: 2) },
-    { MambaCache() },
-]
+extension MLXTestingSuite {
+    @Suite
+    struct KVCacheTests {
+    private static let cacheCreators: [@Sendable () -> any KVCache] = [
+        { KVCacheSimple() },
+        { RotatingKVCache(maxSize: 32) },
+        { QuantizedKVCache() },
+        { ChunkedKVCache(chunkSize: 16) },
+        { ArraysCache(size: 2) },
+        { MambaCache() },
+    ]
 
 @Test(
     .serialized,
@@ -132,7 +135,7 @@ func testCacheCopyOnEmptyCache(creator: (() -> any KVCache)) async throws {
 }
 
 /// CacheList.copy() produces independent sub-caches.
-@Test
+@Test(.serialized)
 func testCacheListCopyIsIndependent() async throws {
     let sub1 = KVCacheSimple()
     let sub2 = RotatingKVCache(maxSize: 32)
@@ -177,4 +180,6 @@ func testCacheListCopyIsIndependent() async throws {
         #expect(orig.shape == saved.shape)
         #expect(allClose(orig, saved).item(Bool.self))
     }
+}
+}
 }

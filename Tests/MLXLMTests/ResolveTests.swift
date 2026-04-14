@@ -52,7 +52,9 @@ private final class LockIsolated<Value: Sendable>: @unchecked Sendable {
     }
 }
 
-@Suite struct ResolveTests {
+extension MLXTestingSuite {
+    @Suite
+    struct ResolveTests {
 
     @Test func nilTokenizerSourceUsesModelDirectory() async throws {
         let downloader = MockDownloader()
@@ -201,4 +203,5 @@ private final class LockIsolated<Value: Sendable>: @unchecked Sendable {
             Issue.record("Unexpected error: \(error)")
         }
     }
+}
 }

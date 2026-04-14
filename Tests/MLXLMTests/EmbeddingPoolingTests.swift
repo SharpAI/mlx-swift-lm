@@ -4,7 +4,9 @@ import Testing
 
 @testable import MLXEmbedders
 
-struct EmbeddingPoolingTests {
+extension MLXTestingSuite {
+    @Suite
+    struct EmbeddingPoolingTests {
 
     @Test("Last-token pooling uses the final non-padding token")
     func testLastPoolingRespectsMask() {
@@ -61,4 +63,5 @@ struct EmbeddingPoolingTests {
         #expect(pooling.strategy == .last)
         #expect(pooling.dimension == nil)
     }
+}
 }

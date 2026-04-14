@@ -1,0 +1,42 @@
+name: Regression Harness
+
+on:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  performance-audit:
+    if: contains(github.event.pull_request.labels.*.name, 'run-benchmark')
+    name: Performance & Memory Audit
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Build Benchmark Tool
+        run: swift build -c release --product BenchmarkHelpers
+
+      - name: Install MLX Metal library
+        run: |
+          python3 -m venv /tmp/mlx_venv
+          /tmp/mlx_venv/bin/pip install --quiet mlx
+          cp /tmp/mlx_venv/lib/python*/site-packages/mlx/lib/mlx.metallib .build/release/
+
+      - name: TFLOPS Regression Check
+        run: |
+          # Verify that throughput remains stable
+          swift run -c release mlx-swift-lm-benchmark --model gemma4 --synthetic --prompt-len 512 --gen-len 128
+          
+      - name: Memory Efficiency Audit
+        run: |
+          # Check peak memory stability (mimicking root project's speculative-decoding-eval)
+          swift run -c release mlx-swift-lm-benchmark --model gemma4 --synthetic --max-mem 4GB
+
+      - name: Token Variance Check
+        run: |
+          # Verify that the output token variance is within baseline (PLE stability)
+          swift run -c release mlx-swift-lm-benchmark --model gemma4 --synthetic --verbose
