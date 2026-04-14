@@ -41,7 +41,7 @@ jobs:
         run: swift package resolve
 
       - name: Build (Release)
-        run: swift build -c release --build-tests
+        run: swift build -c release -Xswiftc -enable-testing --build-tests
 
       - name: Install MLX Metal library
         run: |
