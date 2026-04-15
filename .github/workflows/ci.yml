@@ -41,7 +41,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: SharpAI/mlx-swift
-          path: ../mlx-swift
+          path: mlx-swift
+
+      - name: Redirect mlx-swift dependency to local checkout
+        run: |
+          sed -i '' -E 's|\.package\(url: "https://github.com/SharpAI/mlx-swift\.git".*|\.package(path: "../mlx-swift"),|' Package.swift
+          sed -i '' -E 's|\.package\(url: "https://github.com/ml-explore/mlx-swift\.git".*|\.package(path: "../mlx-swift"),|' Package.swift
 
       - name: Resolve dependencies
         run: swift package resolve
