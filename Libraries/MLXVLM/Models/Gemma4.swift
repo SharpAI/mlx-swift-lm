@@ -1716,18 +1716,24 @@ public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider {
 
         guard let pixelValues else {
             if let audioValues = audioValues, let audioTower = audioTower, let embedAudio = embedAudio, let audioTokenId = config.audioTokenId {
-                let actualAudioMask = audioMask ?? MLXArray.zeros(audioValues.shape[0..<2], dtype: .bool)
+                let actualAudioMask = audioMask ?? MLXArray.ones(audioValues.shape[0..<2], dtype: .bool)
+                print("[ALM Audio] audioValues=\(audioValues.shape) mask=\(actualAudioMask.shape) maskSum=\(actualAudioMask.asType(.int32).sum().item(Int.self))")
                 let (audioOutputs, _) = audioTower(audioValues, mask: actualAudioMask)
+                eval(audioOutputs)
                 let audioFeatures = embedAudio(audioOutputs).asType(inputsEmbeds.dtype)
+                eval(audioFeatures)
 
                 let audioTokenMask = inputIds .== audioTokenId
                 let audioTokenCount = audioTokenMask.asType(.int32).sum().item(Int.self)
                 let audioFeatureCount = audioFeatures.dim(1)
+                print("[ALM Audio] audioOutputs=\(audioOutputs.shape) mean=\(audioOutputs.mean().item(Float.self)) tokenCount=\(audioTokenCount) featureCount=\(audioFeatureCount)")
                 guard audioTokenCount == audioFeatureCount else {
                     print("[Gemma4] Audio token count mismatch: \(audioTokenCount) tokens vs \(audioFeatureCount) features. Skipping.")
                     return (inputsEmbeds, perLayerInputs)
                 }
 
+                let firstAudioPos = MLX.argMax(audioTokenMask[0].asType(.int32), axis: 0).item(Int.self)
+                let embedBefore = inputsEmbeds[0, firstAudioPos, 0].item(Float.self)
 
                 var audioMaskExpanded = expandedDimensions(audioTokenMask, axis: -1)
                 audioMaskExpanded = broadcast(audioMaskExpanded, to: inputsEmbeds.shape)
@@ -1736,6 +1742,9 @@ public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider {
                     mask: audioMaskExpanded,
                     source: audioFeatures
                 )
+                eval(inputsEmbeds)
+                let embedAfter = inputsEmbeds[0, firstAudioPos, 0].item(Float.self)
+                print("[ALM Audio] scatter: pos=\(firstAudioPos) before=\(embedBefore) after=\(embedAfter) changed=\(embedBefore != embedAfter)")
             }
             return (inputsEmbeds, perLayerInputs)
         }
@@ -1761,17 +1770,27 @@ public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider {
         )
 
         if let audioValues = audioValues, let audioTower = audioTower, let embedAudio = embedAudio, let audioTokenId = config.audioTokenId {
-            let actualAudioMask = audioMask ?? MLXArray.zeros(audioValues.shape[0..<2], dtype: .bool)
+            let actualAudioMask = audioMask ?? MLXArray.ones(audioValues.shape[0..<2], dtype: .bool)
+            print("[Omni Audio] audioValues=\(audioValues.shape) mask=\(actualAudioMask.shape) maskSum=\(actualAudioMask.asType(.int32).sum().item(Int.self))")
             let (audioOutputs, _) = audioTower(audioValues, mask: actualAudioMask)
+            eval(audioOutputs)
             let audioFeatures = embedAudio(audioOutputs).asType(inputsEmbeds.dtype)
+            eval(audioFeatures)
 
             let audioTokenMask = inputIds .== audioTokenId
             let audioTokenCount = audioTokenMask.asType(.int32).sum().item(Int.self)
             let audioFeatureCount = audioFeatures.dim(1)
+            let audioStd = MLX.sqrt(MLX.variance(audioOutputs)).item(Float.self)
+            let audioAbsMean = MLX.abs(audioOutputs).mean().item(Float.self)
+            print("[Omni Audio] audioOutputs=\(audioOutputs.shape) mean=\(audioOutputs.mean().item(Float.self)) std=\(audioStd) absMean=\(audioAbsMean) tokenCount=\(audioTokenCount) featureCount=\(audioFeatureCount)")
             guard audioTokenCount == audioFeatureCount else {
                 print("[Gemma4] Omni audio token count mismatch: \(audioTokenCount) tokens vs \(audioFeatureCount) features. Skipping.")
                 return (inputsEmbeds, perLayerInputs)
             }
+
+            // Sample embed value at first audio token position BEFORE scatter
+            let firstAudioPos = MLX.argMax(audioTokenMask[0].asType(.int32), axis: 0).item(Int.self)
+            let embedBefore = inputsEmbeds[0, firstAudioPos, 0].item(Float.self)
 
             var audioMaskExpanded = expandedDimensions(audioTokenMask, axis: -1)
             audioMaskExpanded = broadcast(audioMaskExpanded, to: inputsEmbeds.shape)
@@ -1780,6 +1799,9 @@ public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider {
                 mask: audioMaskExpanded,
                 source: audioFeatures
             )
+            eval(inputsEmbeds)
+            let embedAfter = inputsEmbeds[0, firstAudioPos, 0].item(Float.self)
+            print("[Omni Audio] scatter: pos=\(firstAudioPos) before=\(embedBefore) after=\(embedAfter) changed=\(embedBefore != embedAfter)")
         }
 
         return (inputsEmbeds, perLayerInputs)
@@ -1848,6 +1870,40 @@ public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider {
     }
 }
 
+// MARK: - Message Generator
+
+/// Message generator for Gemma4/Gemma3n that places images BEFORE text in the content
+/// array, matching the Python reference `apply_chat_template(image_first=True)` behaviour.
+/// The Gemma4 Jinja template processes content in array order, so ordering matters:
+///   Python:  [image, text, audio]  →  <|image|>\ntext<|audio|>
+///   (Wrong): [text, image, audio]  →  text<|image|><|audio|>  (model ignores audio)
+public struct Gemma4MessageGenerator: MessageGenerator {
+    public init() {}
+
+    public func generate(message: Chat.Message) -> MLXLMCommon.Message {
+        // System/assistant/tool roles: no media, use plain string content
+        if message.role != .user || (message.images.isEmpty && message.audio.isEmpty) {
+            var dict: [String: any Sendable] = [
+                "role": message.role.rawValue,
+                "content": message.content,
+            ]
+            if let toolCalls = message.toolCalls { dict["tool_calls"] = toolCalls }
+            if let toolCallId = message.toolCallId { dict["tool_call_id"] = toolCallId }
+            return dict
+        }
+        // User messages with media: images FIRST, then text, then audio
+        // This matches the Python: apply_chat_template(..., image_first=True)
+        var content: [[String: any Sendable]] = []
+        content += message.images.map { _ in ["type": "image"] as [String: any Sendable] }
+        content.append(["type": "text", "text": message.content])
+        content += message.audio.map { _ in ["type": "audio"] as [String: any Sendable] }
+        return [
+            "role": message.role.rawValue,
+            "content": content,
+        ]
+    }
+}
+
 // MARK: - Processor
 
 public struct Gemma4Processor: UserInputProcessor {
@@ -1886,7 +1942,7 @@ public struct Gemma4Processor: UserInputProcessor {
     }
 
     public func prepare(input: UserInput) async throws -> LMInput {
-        let messages = Qwen2VLMessageGenerator().generate(from: input)
+        let messages = Gemma4MessageGenerator().generate(from: input)
 
         var promptTokens = try tokenizer.applyChatTemplate(
             messages: messages, tools: input.tools,
@@ -1989,6 +2045,8 @@ public struct Gemma4ProcessorConfiguration: Codable, Sendable {
     public let imageTokenId: Int
     public let boiTokenId: Int
     public let eoiTokenId: Int?
+    public let boaTokenId: Int
+    public let eoaTokenId: Int
     public let audioTokenId: Int?
 
     enum CodingKeys: String, CodingKey {
@@ -2001,6 +2059,8 @@ public struct Gemma4ProcessorConfiguration: Codable, Sendable {
         case imageTokenId = "image_token_id"
         case boiTokenId = "boi_token_id"
         case eoiTokenId = "eoi_token_id"
+        case boaTokenId = "boa_token_id"
+        case eoaTokenId = "eoa_token_id"
         case audioTokenId = "audio_token_id"
     }
 
@@ -2018,6 +2078,8 @@ public struct Gemma4ProcessorConfiguration: Codable, Sendable {
         imageTokenId = try c.decodeIfPresent(Int.self, forKey: CodingKeys.imageTokenId) ?? 258_880
         boiTokenId = try c.decodeIfPresent(Int.self, forKey: CodingKeys.boiTokenId) ?? 255_999
         eoiTokenId = try c.decodeIfPresent(Int.self, forKey: CodingKeys.eoiTokenId) ?? 258_882
+        boaTokenId = try c.decodeIfPresent(Int.self, forKey: CodingKeys.boaTokenId) ?? 256_000
+        eoaTokenId = try c.decodeIfPresent(Int.self, forKey: CodingKeys.eoaTokenId) ?? 258_883
         audioTokenId = try c.decodeIfPresent(Int.self, forKey: CodingKeys.audioTokenId) ?? 258_881
     }
 
