@@ -37,6 +37,12 @@ jobs:
       - name: Clear stale module cache
         run: find .build -type d -name ModuleCache -exec rm -rf {} + 2>/dev/null || true
 
+      - name: Checkout SharpAI/mlx-swift
+        uses: actions/checkout@v4
+        with:
+          repository: SharpAI/mlx-swift
+          path: ../mlx-swift
+
       - name: Resolve dependencies
         run: swift package resolve
 
