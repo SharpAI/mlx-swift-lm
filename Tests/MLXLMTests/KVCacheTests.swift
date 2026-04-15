@@ -135,7 +135,7 @@ func testCacheCopyOnEmptyCache(creator: (() -> any KVCache)) async throws {
 }
 
 /// CacheList.copy() produces independent sub-caches.
-@Test(.serialized)
+@Test
 func testCacheListCopyIsIndependent() async throws {
     let sub1 = KVCacheSimple()
     let sub2 = RotatingKVCache(maxSize: 32)
