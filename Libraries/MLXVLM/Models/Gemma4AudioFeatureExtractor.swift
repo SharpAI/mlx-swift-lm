@@ -129,7 +129,7 @@ public class Gemma4AudioFeatureExtractor {
     /// - Parameter waveform: 1-D Float array of audio samples at `samplingRate` Hz.
     /// - Returns: `(features, mask)` where:
     ///   - `features`: MLXArray of shape `[1, numFrames, featureSize]`
-    ///   - `mask`: MLXArray of shape `[1, numFrames]` — `true` = padding (invalid)
+    ///   - `mask`: MLXArray of shape `[1, numFrames]` — `true` = valid audio frame
     public func extract(waveform: [Float]) -> (features: MLXArray, mask: MLXArray) {
         let maxLength = 480_000  // 30s max
         var wav = waveform
@@ -277,9 +277,8 @@ public class Gemma4AudioFeatureExtractor {
         let flatMel = melSpectrogram.flatMap { $0 }
         let features = MLXArray(flatMel, [1, numFrames, featureSize])
 
-        // Mask: true = invalid/padding (inverted from frameMask where true = valid)
-        let invertedMask = frameMask.map { !$0 }
-        let mask = MLXArray(invertedMask, [1, numFrames])
+        // Match Hugging Face Gemma4AudioFeatureExtractor: true = valid, false = padding
+        let mask = MLXArray(frameMask, [1, numFrames])
 
         return (features, mask)
     }
