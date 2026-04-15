@@ -99,12 +99,14 @@ public struct LMInput {
     /// Representation of prepared input audio.
     public struct ProcessedAudio {
         public let features: MLXArray
+        public let mask: MLXArray?
         public let seqLengths: [Int]?
 
         public init(
-            features: MLXArray, seqLengths: [Int]? = nil
+            features: MLXArray, mask: MLXArray? = nil, seqLengths: [Int]? = nil
         ) {
             self.features = features
+            self.mask = mask
             self.seqLengths = seqLengths
         }
     }

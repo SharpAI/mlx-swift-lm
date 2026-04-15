@@ -1,0 +1,11 @@
+--- Libraries/MLXVLM/Models/Gemma4.swift
++++ Libraries/MLXVLM/Models/Gemma4.swift
+@@ -1900,6 +1900,8 @@
+         if let audioInput = input.audio.first {
+             print("[Omni Debug] Extracting audio samples")
+             let samples = try MediaProcessing.extractAudioSamples(from: audioInput)
++            print("[Omni Debug] Extracted \(samples.count) float samples. Min: \(samples.min() ?? 0.0), Max: \(samples.max() ?? 0.0)")
++            
+             let (features, mask) = processor.extract(waveform: samples)
++            print("[Omni Debug] Extracted features shape: \(features.shape). Mean: \(features.mean().item(Float.self))")
+             
