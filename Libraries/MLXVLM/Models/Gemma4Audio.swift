@@ -144,8 +144,18 @@ private class ClippedLinear: Module {
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        // Safe to ignore clipping for audio as confirmed by MLX framework devs, but needed for unarchiving compliance.
-        return linear(x)
+        // Apply activation clipping: these bounds are calibrated quantization ranges
+        // stored in the 8-bit PTQ checkpoint. Without clipping, activations blow out of
+        // the calibrated distribution across all 12 conformer blocks → wrong speech features.
+        var inp = x
+        if let lo = inputMin, let hi = inputMax {
+            inp = MLX.clip(inp, min: lo.asType(inp.dtype), max: hi.asType(inp.dtype))
+        }
+        var out = linear(inp)
+        if let lo = outputMin, let hi = outputMax {
+            out = MLX.clip(out, min: lo.asType(out.dtype), max: hi.asType(out.dtype))
+        }
+        return out
     }
 }
 
@@ -170,8 +180,9 @@ private class SubsampleConvLayer: Module {
     func callAsFunction(_ x: MLXArray, mask: MLXArray) -> (MLXArray, MLXArray) {
         var out = x
 
-        // Zero out invalid (padding) positions where mask == true
-        out = MLX.where(mask.expandedDimensions(axis: -1).expandedDimensions(axis: -1), MLXArray.zeros(like: out), out)
+        // Match HF semantics: mask == true marks valid audio frames.
+        let expandedMask = mask.expandedDimensions(axis: -1).expandedDimensions(axis: -1)
+        out = MLX.where(expandedMask, out, MLXArray.zeros(like: out))
 
         out = MLX.padded(out, widths: [[0, 0], [1, 1], [1, 1], [0, 0]])
 
@@ -487,8 +498,7 @@ private class AudioAttention: Module {
         let valueBlocks = extractBlockContext(v)
         let U = queryBlocks.dim(1)
 
-        let validMask = logicalNot(mask)
-        let extractedValid = extractBlockContext(validMask)
+        let extractedValid = extractBlockContext(mask)
         
         let cond1 = extractedValid.reshaped(extractedValid.dim(0), 1, extractedValid.dim(1), 1, extractedValid.dim(2))
         let cond2 = causalValidMask.reshaped(1, 1, 1, causalValidMask.dim(0), causalValidMask.dim(1))
@@ -551,17 +561,17 @@ private class ConformerBlock: Module {
 
         // Residual taken AFTER ffn1 (matches Python: res = x where x = ffn1(x))
         let residual = hidden
-        // No extra clip here — Python normalizes raw ffn1 output directly
         let attnIn = normPreAttn(hidden)
-        // Attention base is the normalized input (pre-norm pattern, matches Python)
-        hidden = attnIn + selfAttention(attnIn, mask: mask, causalValidMask: causalValidMask)
+        hidden = selfAttention(attnIn, mask: mask, causalValidMask: causalValidMask)
         hidden = MLX.clip(hidden, min: MLXArray(-gradientClipping), max: MLXArray(gradientClipping))
         hidden = residual + normPostAttn(hidden)
-        
-        // Zero out invalid positions before lconv1d
-        let validityMask = logicalNot(mask).expandedDimensions(axis: -1).asType(hidden.dtype)
+
+        // Zero invalid frames before lconv1d — required by both HF (modeling_gemma3n.py:897-900)
+        // and mlx-vlm Python (audio.py:451-452). Prevents padding from bleeding into valid
+        // frame outputs via the convolution receptive field.
+        // mask = True=VALID (current convention), so multiply directly to zero invalid frames.
+        let validityMask = mask.expandedDimensions(axis: -1).asType(hidden.dtype)
         hidden = hidden * validityMask
-        
         hidden = lconv1d(hidden)
         hidden = ffn2(hidden)
         hidden = MLX.clip(hidden, min: MLXArray(-gradientClipping), max: MLXArray(gradientClipping))
@@ -600,8 +610,8 @@ public class Gemma4AudioModel: Module {
         let chunkSize = config.attentionChunkSize
         let maxFutureHorizon = config.attentionContextRight
         let maxPastHorizon = max(0, config.attentionContextLeft - 1)
-        let upperDiagonal = maxPastHorizon + maxFutureHorizon
         let contextSize = chunkSize + maxPastHorizon + maxFutureHorizon
+        let upperDiagonal = maxPastHorizon + maxFutureHorizon
 
         let onesLower = MLXArray.ones([contextSize, chunkSize])
         let lowerCausal = MLX.tril(onesLower).transposed()
@@ -631,7 +641,11 @@ public class Gemma4AudioModel: Module {
             currentMask = currentMask[0..., ..<targetLen]
         }
 
-        let validOut = MLX.where(currentMask.expandedDimensions(axis: -1), MLXArray.zeros(like: audioEncodings), audioEncodings)
+        let validOut = MLX.where(
+            currentMask.expandedDimensions(axis: -1),
+            audioEncodings,
+            MLXArray.zeros(like: audioEncodings)
+        )
         return (validOut, currentMask)
     }
 
