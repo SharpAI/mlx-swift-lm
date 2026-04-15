@@ -29,7 +29,7 @@ extension MLXTestingSuite {
         
         // Load a standard configuration (not tiny, but small enough for a 8GB runner)
         // This simulates a baseline workload.
-        let config = ModelConfiguration(
+        _ = ModelConfiguration(
             id: "tiny-performance-check"
             // tokenizerSource defaults to nil/model-dir
         )

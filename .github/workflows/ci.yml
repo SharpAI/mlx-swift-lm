@@ -88,3 +88,46 @@ jobs:
           name: library-test-results
           path: .build/artifacts/
           retention-days: 7
+
+  integration-test:
+    name: Build & Test SwiftLM Integration
+    runs-on: macos-15
+    steps:
+      - name: Checkout mlx-swift-lm (this repository)
+        uses: actions/checkout@v4
+        with:
+          path: mlx-swift-lm
+          submodules: recursive
+
+      - name: Checkout SwiftLM
+        uses: actions/checkout@v4
+        with:
+          repository: SharpAI/SwiftLM
+          path: SwiftLM
+          submodules: recursive
+
+      - name: Redirect Dependencies to Local Form
+        run: |
+          cd SwiftLM
+          
+          # Replace the local submodule with the actively checked out code
+          rm -rf mlx-swift-lm
+          cp -r ../mlx-swift-lm .
+          
+      - name: Build SwiftLM
+        run: |
+          cd SwiftLM
+          swift build -c release
+
+      - name: Install MLX Metal library
+        run: |
+          cd SwiftLM
+          python3 -m venv /tmp/mlx_venv
+          /tmp/mlx_venv/bin/pip install --quiet mlx
+          MLX_LIB=$(find /tmp/mlx_venv -name "mlx.metallib" | head -n 1)
+          cp $MLX_LIB .build/release/ 2>/dev/null || true
+
+      - name: Run Speculative Decoding Tests
+        run: |
+          cd SwiftLM
+          bash tests/test-speculative-eval.sh

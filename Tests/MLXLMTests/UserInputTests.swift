@@ -95,6 +95,8 @@ public class UserInputTests: XCTestCase {
         assertEqual(expected, messages)
     }
 
+
+
     // MARK: - Mistral3 Message Generator Tests
 
     public func testMistral3ConversionText() {
@@ -229,5 +231,7 @@ public class UserInputTests: XCTestCase {
         let userInput = UserInput(chat: chat)
         XCTAssertEqual(userInput.images.count, 1)
     }
+
+
 
 }

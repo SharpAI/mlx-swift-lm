@@ -37,3 +37,25 @@ jobs:
           name: Release ${{ steps.tag_version.outputs.new_tag }}
           body: "Automated release based on commit count ${{ steps.tag_version.outputs.new_tag }}"
           generate_release_notes: true
+
+      - name: Trigger SwiftLM Dependency Bump
+        uses: actions/github-script@v6
+        env:
+          PR_TOKEN: ${{ secrets.SWIFTLM_PR_TOKEN || secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+        with:
+          github-token: ${{ env.PR_TOKEN }}
+          script: |
+            try {
+              await github.rest.repos.createDispatchEvent({
+                owner: 'SharpAI',
+                repo: 'SwiftLM',
+                event_type: 'dependency_bump',
+                client_payload: {
+                  source_repo: context.repo.repo,
+                  new_tag: '${{ steps.tag_version.outputs.new_tag }}'
+                }
+              });
+              console.log("Successfully dispatched dependency_bump event to SharpAI/SwiftLM");
+            } catch (error) {
+              console.log("Dispatch failed. Ensure SWIFTLM_PR_TOKEN is set in repository secrets with repo scoping.", error);
+            }

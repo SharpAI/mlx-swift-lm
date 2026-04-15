@@ -1,0 +1,44 @@
+name: 🔄 Auto-Sync Upstream
+
+on:
+  schedule:
+    - cron: '30 4 * * *' # Every day at 4:30 AM UTC
+  workflow_dispatch: # Enable manual triggers
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add Upstream Remote
+        run: git remote add upstream https://github.com/ml-explore/mlx-swift-lm.git
+
+      - name: Fetch Upstream
+        run: git fetch upstream
+
+      - name: Create or Update Sync Branch
+        run: |
+          git checkout -B sync/upstream-latest
+          git reset --hard upstream/main
+          git push -f origin sync/upstream-latest
+
+      - name: Create Pull Request to Main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create --base main --head sync/upstream-latest \
+            --title "🔄 Auto-Sync: Apple Upstream Repository" \
+            --body "Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. Please review merge conflicts (if any) and verify CI pipelines." || echo "PR already exists or no changes"
