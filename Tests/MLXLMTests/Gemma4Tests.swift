@@ -97,5 +97,59 @@ extension MLXTestingSuite {
         #expect(!sum.isNaN)
         #expect(!sum.isInfinite)
     }
+
+    /// Create a minimal test configuration for Gemma 4 Text MoE
+    private func makeTinyTextMoEConfigData() -> Data {
+        let json = """
+        {
+            "model_type": "gemma4_text",
+            "hidden_size": 64,
+            "num_hidden_layers": 2,
+            "intermediate_size": 128,
+            "num_attention_heads": 4,
+            "head_dim": 16,
+            "global_head_dim": 64,
+            "rms_norm_eps": 1e-6,
+            "vocab_size": 100,
+            "num_key_value_heads": 2,
+            "rope_traditional": false,
+            "sliding_window": 128,
+            "sliding_window_pattern": 1,
+            "max_position_embeddings": 512,
+            "num_kv_shared_layers": 0,
+            "use_double_wide_mlp": false,
+            "tie_word_embeddings": true,
+            "hidden_size_per_layer_input": 32,
+            "vocab_size_per_layer_input": 10,
+            "final_logit_softcapping": 30.0,
+            "enable_moe_block": true,
+            "num_experts": 4,
+            "top_k_experts": 2,
+            "moe_intermediate_size": 128,
+            "attention_k_eq_v": false
+        }
+        """
+        return json.data(using: .utf8)!
+    }
+
+    @Test("Gemma 4 Text MoE Instantiation & Forward Pass")
+    func testGemma4TextMoEInstantiationAndForward() throws {
+        let data = makeTinyTextMoEConfigData()
+        let config = try JSONDecoder().decode(Gemma4TextConfiguration.self, from: data)
+        let model = Gemma4TextModel(config)
+        #expect(model.vocabularySize == 100)
+        
+        // This validates that the conditional MoE logic and SwitchGLU layer initialize properly
+        // without crashing, proving we correctly load gemma4_text active MoEs.
+        let input = MLXArray(0..<8).reshaped(1, 8)
+        let output = model(input, cache: nil)
+
+        // Ensure dimensionality is correct
+        #expect(output.shape == [1, 8, model.vocabularySize])
+        
+        let sum = output.sum().item(Float.self)
+        #expect(!sum.isNaN)
+        #expect(!sum.isInfinite)
+    }
 }
 }
