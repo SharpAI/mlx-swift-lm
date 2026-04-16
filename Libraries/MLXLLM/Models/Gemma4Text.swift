@@ -33,6 +33,10 @@ public struct Gemma4TextConfiguration: Codable, Sendable {
     var attentionKeqV: Bool = false
     var finalLogitSoftcapping: Float = 30.0
     var useDoubleWideMlp: Bool = true
+    var enableMoEBlock: Bool = false
+    var numExperts: Int?
+    var topKExperts: Int?
+    var moeIntermediateSize: Int?
     var layerTypes: [String] = []
     var tieWordEmbeddings: Bool = true
 
@@ -66,6 +70,10 @@ public struct Gemma4TextConfiguration: Codable, Sendable {
         case attentionKeqV = "attention_k_eq_v"
         case finalLogitSoftcapping = "final_logit_softcapping"
         case useDoubleWideMlp = "use_double_wide_mlp"
+        case enableMoEBlock = "enable_moe_block"
+        case numExperts = "num_experts"
+        case topKExperts = "top_k_experts"
+        case moeIntermediateSize = "moe_intermediate_size"
         case layerTypes = "layer_types"
         case tieWordEmbeddings = "tie_word_embeddings"
         case ropeParameters = "rope_parameters"
@@ -110,6 +118,14 @@ public struct Gemma4TextConfiguration: Codable, Sendable {
             try container.decodeIfPresent(Float.self, forKey: .finalLogitSoftcapping) ?? 30.0
         self.useDoubleWideMlp =
             try container.decodeIfPresent(Bool.self, forKey: .useDoubleWideMlp) ?? true
+        self.enableMoEBlock =
+            try container.decodeIfPresent(Bool.self, forKey: .enableMoEBlock) ?? false
+        self.numExperts =
+            try container.decodeIfPresent(Int.self, forKey: .numExperts)
+        self.topKExperts =
+            try container.decodeIfPresent(Int.self, forKey: .topKExperts)
+        self.moeIntermediateSize =
+            try container.decodeIfPresent(Int.self, forKey: .moeIntermediateSize)
         if let decoded = try container.decodeIfPresent([String].self, forKey: .layerTypes) {
             self.layerTypes = decoded
         } else {
@@ -374,6 +390,89 @@ private class Gemma4MLP: Module {
     }
 }
 
+// MARK: - MoE Router
+
+private class Gemma4TextRouter: Module {
+    let topKExperts: Int
+    let rootSize: Float
+
+    @ModuleInfo(key: "norm") var norm: RMSNormNoScale
+    @ModuleInfo(key: "proj") var proj: Linear
+    @ModuleInfo(key: "scale") var scale: MLXArray
+    @ModuleInfo(key: "per_expert_scale") var perExpertScale: MLXArray
+
+    init(_ config: Gemma4TextConfiguration) {
+        guard let numExperts = config.numExperts, let topKExperts = config.topKExperts else {
+            fatalError("Gemma4 MoE router requires numExperts and topKExperts")
+        }
+
+        self.topKExperts = topKExperts
+        self.rootSize = pow(Float(config.hiddenSize), -0.5)
+
+        self._norm.wrappedValue = RMSNormNoScale(eps: config.rmsNormEps)
+        self._proj.wrappedValue = Linear(config.hiddenSize, numExperts, bias: false)
+        self._scale.wrappedValue = MLXArray.ones([config.hiddenSize])
+        self._perExpertScale.wrappedValue = MLXArray.ones([numExperts])
+        super.init()
+    }
+
+    func callAsFunction(_ x: MLXArray) -> (MLXArray, MLXArray) {
+        var x = norm(x)
+        x = x * MLXArray(rootSize, dtype: x.dtype)
+        x = x * scale.asType(x.dtype)
+
+        let expertScores = proj(x)
+        let routerProbabilities = MLX.softmax(expertScores, axis: -1, precise: true)
+
+        let topKIndices = MLX.argPartition(-expertScores, kth: topKExperts - 1, axis: -1)[
+            .ellipsis, ..<topKExperts,
+        ]
+        var topKWeights = MLX.takeAlong(routerProbabilities, topKIndices, axis: -1)
+        topKWeights = topKWeights / MLX.sum(topKWeights, axis: -1, keepDims: true)
+        topKWeights = topKWeights * perExpertScale[topKIndices].asType(topKWeights.dtype)
+        return (topKIndices, topKWeights)
+    }
+}
+
+// MARK: - MoE Experts
+
+private class Gemma4TextExperts: Module {
+    @ModuleInfo(key: "switch_glu") var switchGLU: SwitchGLU
+
+    init(_ config: Gemma4TextConfiguration) {
+        guard let numExperts = config.numExperts,
+            let moeIntermediateSize = config.moeIntermediateSize
+        else {
+            fatalError("Gemma4 MoE experts require numExperts and moeIntermediateSize")
+        }
+
+        self._switchGLU.wrappedValue = SwitchGLU(
+            inputDims: config.hiddenSize,
+            hiddenDims: moeIntermediateSize,
+            numExperts: numExperts,
+            activation: geluApproximate,
+            bias: false
+        )
+        super.init()
+    }
+
+    func callAsFunction(
+        _ x: MLXArray, topKIndices: MLXArray, topKWeights: MLXArray
+    ) -> MLXArray {
+        let batch = x.dim(0)
+        let length = x.dim(1)
+        let hidden = x.dim(2)
+        let topK = topKIndices.dim(-1)
+
+        let expertOutput = switchGLU(
+            x.reshaped(batch * length, hidden),
+            topKIndices.reshaped(batch * length, topK)
+        )
+        let weights = topKWeights.reshaped(batch * length, topK, 1).asType(expertOutput.dtype)
+        return (expertOutput * weights).sum(axis: -2).reshaped(batch, length, hidden)
+    }
+}
+
 // MARK: - Decoder Layer
 
 private class Gemma4DecoderLayer: Module {
@@ -388,6 +487,11 @@ private class Gemma4DecoderLayer: Module {
     @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayernorm: RMSNorm
     @ModuleInfo(key: "pre_feedforward_layernorm") var preFeedforwardLayernorm: RMSNorm
     @ModuleInfo(key: "post_feedforward_layernorm") var postFeedforwardLayernorm: RMSNorm
+    @ModuleInfo(key: "router") var router: Gemma4TextRouter?
+    @ModuleInfo(key: "experts") var experts: Gemma4TextExperts?
+    @ModuleInfo(key: "post_feedforward_layernorm_1") var postFeedforwardLayernorm1: RMSNorm?
+    @ModuleInfo(key: "post_feedforward_layernorm_2") var postFeedforwardLayernorm2: RMSNorm?
+    @ModuleInfo(key: "pre_feedforward_layernorm_2") var preFeedforwardLayernorm2: RMSNorm?
 
     // Per-layer input (PLE) gating
     @ModuleInfo(key: "per_layer_input_gate") var perLayerInputGate: Linear?
@@ -414,6 +518,17 @@ private class Gemma4DecoderLayer: Module {
             dimensions: config.hiddenSize, eps: config.rmsNormEps)
         self._postFeedforwardLayernorm.wrappedValue = RMSNorm(
             dimensions: config.hiddenSize, eps: config.rmsNormEps)
+
+        if config.enableMoEBlock {
+            self._router.wrappedValue = Gemma4TextRouter(config)
+            self._experts.wrappedValue = Gemma4TextExperts(config)
+            self._postFeedforwardLayernorm1.wrappedValue = RMSNorm(
+                dimensions: config.hiddenSize, eps: config.rmsNormEps)
+            self._postFeedforwardLayernorm2.wrappedValue = RMSNorm(
+                dimensions: config.hiddenSize, eps: config.rmsNormEps)
+            self._preFeedforwardLayernorm2.wrappedValue = RMSNorm(
+                dimensions: config.hiddenSize, eps: config.rmsNormEps)
+        }
 
         if hiddenSizePerLayerInput > 0 {
             self._perLayerInputGate.wrappedValue = Linear(
@@ -446,8 +561,26 @@ private class Gemma4DecoderLayer: Module {
         var out = residual + postAttn
 
         let residual2 = out
-        out = preFeedforwardLayernorm(out)
-        out = mlp(out)
+        if let router, let experts,
+            let postFeedforwardLayernorm1,
+            let postFeedforwardLayernorm2,
+            let preFeedforwardLayernorm2
+        {
+            // MoE: dual dense + sparse feedforward
+            var dense = preFeedforwardLayernorm(out)
+            dense = mlp(dense)
+            dense = postFeedforwardLayernorm1(dense)
+
+            let (topKIndices, topKWeights) = router(out)
+            var sparse = preFeedforwardLayernorm2(out)
+            sparse = experts(sparse, topKIndices: topKIndices, topKWeights: topKWeights)
+            sparse = postFeedforwardLayernorm2(sparse)
+
+            out = dense + sparse
+        } else {
+            out = preFeedforwardLayernorm(out)
+            out = mlp(out)
+        }
         out = postFeedforwardLayernorm(out)
         out = residual2 + out
 
@@ -675,6 +808,34 @@ public class Gemma4TextModel: Module, LLMModel, KVCacheDimensionProvider {
             {
                 continue
             }
+
+            // MoE expert weight remapping: fused HF tensors → SwitchGLU layout
+            if k.hasSuffix(".experts.down_proj") {
+                sanitized[
+                    k.replacingOccurrences(
+                        of: ".experts.down_proj",
+                        with: ".experts.switch_glu.down_proj.weight"
+                    )
+                ] = v
+                continue
+            }
+            if k.hasSuffix(".experts.gate_up_proj") {
+                let mid = v.dim(-2) / 2
+                sanitized[
+                    k.replacingOccurrences(
+                        of: ".experts.gate_up_proj",
+                        with: ".experts.switch_glu.gate_proj.weight"
+                    )
+                ] = v[.ellipsis, ..<mid, 0...]
+                sanitized[
+                    k.replacingOccurrences(
+                        of: ".experts.gate_up_proj",
+                        with: ".experts.switch_glu.up_proj.weight"
+                    )
+                ] = v[.ellipsis, mid..., 0...]
+                continue
+            }
+
             sanitized[k] = v
         }
         return sanitized
