@@ -323,11 +323,15 @@ private class Gemma4Attention: Module {
             var v: MLXArray
             if let vProj {
                 v = vProj(x).reshaped(B, L, nKvHeads, effectiveHeadDim)
+                v = vNorm(v)
+                v = v.transposed(0, 2, 1, 3)
             } else {
-                v = k
+                // When K-eq-V, k is already transposed to [B, nKvHeads, L, D].
+                // Applying vNorm (last-axis, layout-agnostic) and then transposing
+                // again would yield [B, L, nKvHeads, D] — the wrong layout.
+                // Skip the extra transpose; the norm is still applied correctly.
+                v = vNorm(k)
             }
-            v = vNorm(v)
-            v = v.transposed(0, 2, 1, 3)
 
             if let cache {
                 let (updatedK, updatedV) = cache.update(keys: k, values: v)

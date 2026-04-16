@@ -861,7 +861,7 @@ private final class Gemma4TextDecoderLayer: Module {
     }
 }
 
-private final class Gemma4TextBackbone: Module {
+private final class Gemma4TextBackbone: Module, LayerPartitionable, StreamableMoE {
     let config: Gemma4TextConfiguration
     let firstKVSharedLayerIdx: Int
     let layerIdxToCacheIdx: [Int]
@@ -878,6 +878,13 @@ private final class Gemma4TextBackbone: Module {
     @ModuleInfo(key: "per_layer_model_projection") var perLayerModelProjection: Gemma4ScaledLinear?
     @ModuleInfo(key: "per_layer_projection_norm") var perLayerProjectionNorm:
         Gemma4RMSNormZeroShift?
+
+    // MARK: - LayerPartitionable
+    public var gpuLayerCount: Int?
+    public var totalLayerCount: Int { layers.count }
+
+    // MARK: - StreamableMoE
+    public var streamExperts: Bool = false
 
     init(_ config: Gemma4TextConfiguration) {
         self.config = config
@@ -1039,16 +1046,24 @@ private final class Gemma4TextBackbone: Module {
                 } else {
                     nil
                 }
-            let (output, kvState, attentionOffset) = layer(
-                h,
-                mask: layerMask,
-                cache: layerCache,
-                perLayerInput: layerInput,
-                sharedKV: hasExplicitCache && idx >= firstKVSharedLayerIdx
-                    ? intermediates[sourceIdx].kv : nil,
-                offset: hasExplicitCache && idx >= firstKVSharedLayerIdx
+            let sharedKVForLayer: Gemma4SharedKVState? =
+                hasExplicitCache && idx >= firstKVSharedLayerIdx
+                    ? intermediates[sourceIdx].kv : nil
+            let sharedOffsetForLayer: Int? =
+                hasExplicitCache && idx >= firstKVSharedLayerIdx
                     ? intermediates[sourceIdx].offset : nil
-            )
+            let (output, kvState, attentionOffset) = partitionedLayerCall(
+                index: idx, gpuLayerCount: gpuLayerCount, stream: streamExperts
+            ) {
+                layer(
+                    h,
+                    mask: layerMask,
+                    cache: layerCache,
+                    perLayerInput: layerInput,
+                    sharedKV: sharedKVForLayer,
+                    offset: sharedOffsetForLayer
+                )
+            }
             h = output
             intermediates[idx] = (kvState, attentionOffset)
         }
@@ -1645,7 +1660,7 @@ private final class Gemma4MultimodalEmbedder: Module, UnaryLayer {
 
 // MARK: - Model
 
-public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider {
+public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider, StreamableMoE {
     @ModuleInfo(key: "vision_tower") private var visionTower: Gemma4VisionModel
     @ModuleInfo(key: "language_model") private var languageModel: Gemma4TextLanguageModel
     @ModuleInfo(key: "embed_vision") private var embedVision: Gemma4MultimodalEmbedder
@@ -1658,6 +1673,12 @@ public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider {
     public var vocabularySize: Int { config.vocabularySize }
     public var kvHeads: [Int] { languageModel.kvHeads }
     public var loraLayers: [Module] { languageModel.model.layers }
+
+    // MARK: - StreamableMoE (delegates to the backbone)
+    public var streamExperts: Bool {
+        get { languageModel.model.streamExperts }
+        set { languageModel.model.streamExperts = newValue }
+    }
 
     public init(_ config: Gemma4Configuration) {
         self.config = config

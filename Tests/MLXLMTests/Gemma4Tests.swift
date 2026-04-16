@@ -151,5 +151,106 @@ extension MLXTestingSuite {
         #expect(!sum.isNaN)
         #expect(!sum.isInfinite)
     }
+
+    // -------------------------------------------------------------------------
+    // MARK: - K-eq-V regression tests (Issue #59)
+    //
+    // Prior to the fix, attention_k_eq_v=true caused a double-transpose of v:
+    //   k → kNorm → transpose → [B, nKvH, L, D]
+    //   v = k  (already transposed)
+    //   v = vNorm(v).transposed(0,2,1,3)  → [B, L, nKvH, D]  ← WRONG!
+    // Leading to: [broadcast_shapes] (1,512,2,512) vs (1,2,512,512)
+    // These tests guard against the regression re-entering main.
+    // -------------------------------------------------------------------------
+
+    private func makeTinyKeqVConfigData() -> Data {
+        let json = """
+        {
+            "model_type": "gemma4_text",
+            "hidden_size": 64,
+            "num_hidden_layers": 2,
+            "intermediate_size": 128,
+            "num_attention_heads": 4,
+            "head_dim": 16,
+            "global_head_dim": 64,
+            "num_global_key_value_heads": 2,
+            "rms_norm_eps": 1e-6,
+            "vocab_size": 100,
+            "num_key_value_heads": 2,
+            "rope_traditional": false,
+            "sliding_window": 8,
+            "sliding_window_pattern": 1,
+            "max_position_embeddings": 512,
+            "num_kv_shared_layers": 0,
+            "use_double_wide_mlp": false,
+            "tie_word_embeddings": true,
+            "hidden_size_per_layer_input": 0,
+            "vocab_size_per_layer_input": 100,
+            "final_logit_softcapping": 30.0,
+            "enable_moe_block": false,
+            "attention_k_eq_v": true
+        }
+        """
+        return json.data(using: .utf8)!
+    }
+
+    private func makeTinyKeqVMoEConfigData() -> Data {
+        let json = """
+        {
+            "model_type": "gemma4_text",
+            "hidden_size": 64,
+            "num_hidden_layers": 2,
+            "intermediate_size": 128,
+            "num_attention_heads": 4,
+            "head_dim": 16,
+            "global_head_dim": 64,
+            "num_global_key_value_heads": 2,
+            "rms_norm_eps": 1e-6,
+            "vocab_size": 100,
+            "num_key_value_heads": 2,
+            "rope_traditional": false,
+            "sliding_window": 8,
+            "sliding_window_pattern": 1,
+            "max_position_embeddings": 512,
+            "num_kv_shared_layers": 0,
+            "use_double_wide_mlp": false,
+            "tie_word_embeddings": true,
+            "hidden_size_per_layer_input": 0,
+            "vocab_size_per_layer_input": 100,
+            "final_logit_softcapping": 30.0,
+            "enable_moe_block": true,
+            "num_experts": 4,
+            "top_k_experts": 2,
+            "moe_intermediate_size": 64,
+            "attention_k_eq_v": true
+        }
+        """
+        return json.data(using: .utf8)!
+    }
+
+    @Test("K-eq-V Forward Pass — no double-transpose regression (Issue #59)")
+    func testGemma4KeqVForwardPass() throws {
+        let config = try JSONDecoder().decode(Gemma4TextConfiguration.self, from: makeTinyKeqVConfigData())
+        let model = Gemma4TextModel(config)
+        let input = MLXArray(0..<6).reshaped(1, 6)
+        let output = model(input, cache: nil)
+        #expect(output.shape == [1, 6, model.vocabularySize])
+        let sum = output.sum().item(Float.self)
+        #expect(!sum.isNaN)
+        #expect(!sum.isInfinite)
+    }
+
+    @Test("K-eq-V + MoE Forward Pass — gemma-4-26b-a4b shape regression (Issue #59)")
+    func testGemma4KeqVMoEForwardPass() throws {
+        let config = try JSONDecoder().decode(Gemma4TextConfiguration.self, from: makeTinyKeqVMoEConfigData())
+        let model = Gemma4TextModel(config)
+        let input = MLXArray(0..<6).reshaped(1, 6)
+        let output = model(input, cache: nil)
+        #expect(output.shape == [1, 6, model.vocabularySize])
+        let sum = output.sum().item(Float.self)
+        #expect(!sum.isNaN)
+        #expect(!sum.isInfinite)
+    }
 }
 }
+
