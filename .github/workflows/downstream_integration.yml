@@ -21,14 +21,17 @@ jobs:
           repository: SharpAI/SwiftLM
           path: SwiftLM
           token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: recursive
 
       - name: Point SwiftLM to this PR's mlx-swift-lm
         # SwiftLM uses `.package(path: "./mlx-swift-lm")` so we replace that
         # directory with the current PR checkout directly.
         run: |
-          # Remove the pinned subdir and symlink to our PR checkout
+          # Remove the pinned subdir and copy our PR checkout instead of symlinking to avoid git submodule errors
           rm -rf SwiftLM/mlx-swift-lm
-          ln -s $GITHUB_WORKSPACE SwiftLM/mlx-swift-lm
+          # Copy everything except SwiftLM itself if we are in the root
+          mkdir -p SwiftLM/mlx-swift-lm
+          find . -mindepth 1 -maxdepth 1 ! -name "SwiftLM" -exec cp -r {} SwiftLM/mlx-swift-lm/ \;
 
       - name: Install Metal Toolchain
         run: xcodebuild -downloadComponent MetalToolchain || true
@@ -44,22 +47,26 @@ jobs:
         run: swift package resolve
         working-directory: SwiftLM
 
-      - name: Build SwiftLM
-        run: swift build --build-tests
-        working-directory: SwiftLM
-
       - name: Install MLX Metal library
         run: |
           python3 -m venv /tmp/mlx_venv
           /tmp/mlx_venv/bin/pip install --quiet mlx
-          METALLIB=/tmp/mlx_venv/lib/python*/site-packages/mlx/lib/mlx.metallib
+          METALLIB=$(echo /tmp/mlx_venv/lib/python*/site-packages/mlx/lib/mlx.metallib)
+          # Make it available system-wide for all subsequent steps
+          sudo cp "$METALLIB" /usr/local/lib/mlx.metallib || true
+          echo "MLX_METAL_LIB=$METALLIB" >> $GITHUB_ENV
+
+      - name: Build SwiftLM
+        run: swift build --build-tests
+        working-directory: SwiftLM
+
+      - name: Copy Metal library to build outputs
+        run: |
+          METALLIB="$MLX_METAL_LIB"
           # Copy to all locations the test runner and linked bundles may search
-          cp $METALLIB SwiftLM/.build/debug/ || true
-          find SwiftLM/.build -name "*.xctest" -exec cp $METALLIB {}/Contents/MacOS/ \; 2>/dev/null || true
-          find SwiftLM/.build -type d \( -name "debug" -o -name "release" \) -exec cp $METALLIB {}/ \; 2>/dev/null || true
-          find SwiftLM/.build/checkouts -type d -name "*.metallib" 2>/dev/null || true
-          # Also copy beside test binaries directly
-          find SwiftLM/.build -name "*Tests" -type f -exec sh -c 'cp '$METALLIB' "$(dirname {})"/' \; 2>/dev/null || true
+          find SwiftLM/.build -type d \( -name "debug" -o -name "release" \) -exec cp "$METALLIB" {}/ \; 2>/dev/null || true
+          find SwiftLM/.build -name "*.xctest" -exec cp "$METALLIB" {}/Contents/MacOS/ \; 2>/dev/null || true
+          find SwiftLM/.build -name "*Tests" -type f -exec sh -c 'cp "'"$METALLIB"'" "$(dirname ${1})/"' _ {} \; 2>/dev/null || true
 
       - name: Run SwiftLM Integration Tests
         run: swift test --parallel --skip-build
