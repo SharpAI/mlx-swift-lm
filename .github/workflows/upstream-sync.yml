@@ -32,7 +32,16 @@ jobs:
       - name: Create or Update Sync Branch
         run: |
           git checkout -B sync/upstream-latest
-          git reset --hard upstream/main
+          # Merge upstream instead of hard reset so SharpAI-specific changes
+          # (Package.swift fork dependencies, custom op hooks) are preserved.
+          git merge upstream/main --no-edit --strategy-option=ours --allow-unrelated-histories || true
+          # Always restore the SharpAI fork dependency — upstream will overwrite
+          # this with ml-explore/mlx-swift, which lacks TurboKV/SSD Metal ops.
+          # The tag is bumped separately by update_dependencies.yml.
+          CURRENT_TAG=$(grep -oP '(?<=exact: ")([^"]+)' Package.swift || echo "0.30.6")
+          sed -i "s|package(url: \"https://github.com/ml-explore/mlx-swift.*|package(url: \"https://github.com/SharpAI/mlx-swift.git\", exact: \"${CURRENT_TAG}\"),|" Package.swift
+          git add Package.swift
+          git diff --cached --quiet || git commit -m "chore(sync): restore SharpAI mlx-swift fork dependency after upstream merge"
           git push -f origin sync/upstream-latest
 
       - name: Create Pull Request to Main

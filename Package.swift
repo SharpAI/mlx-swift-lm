@@ -36,7 +36,20 @@ let package = Package(
             targets: ["IntegrationTestHelpers"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/SharpAI/mlx-swift.git", branch: "main"),
+        // ── Dependency Update Flow ────────────────────────────────────────────────
+        // ml-explore/mlx-swift  →  SharpAI/mlx-swift (sync bot PR + CI)
+        //
+        // SharpAI/mlx-swift adds custom Metal ops NOT in Apple upstream:
+        //   MLXFast.turboDecodeK/V, turboQuantEncode  (TurboKV compression)
+        //   MLXFast.preadInto, prefault               (SSD streaming)
+        // We MUST depend on the SharpAI fork, NOT ml-explore/mlx-swift.
+        //
+        // This package uses a local path reference so the exact commit is
+        // controlled by WhichEver repo (SwiftLM) has both as submodules.
+        // In standalone CI, the checkout step clones SharpAI/mlx-swift
+        // into ../mlx-swift so this path resolves correctly.
+        // ─────────────────────────────────────────────────────────────────────────
+        .package(path: "../mlx-swift"),
 
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.0-latest"),
     ],
@@ -65,7 +78,8 @@ let package = Package(
             ],
             path: "Libraries/MLXVLM",
             exclude: [
-                "README.md"
+                "README.md",
+                "Models/test_features.patch"
             ]
         ),
         .target(

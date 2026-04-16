@@ -30,12 +30,22 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-v1-${{ hashFiles('Package.resolved') }}
+          key: ${{ runner.os }}-spm-v2-${{ hashFiles('Package.resolved') }}
           restore-keys: |
-            ${{ runner.os }}-spm-v1-
+            ${{ runner.os }}-spm-v2-
 
       - name: Clear stale module cache
         run: find .build -type d -name ModuleCache -exec rm -rf {} + 2>/dev/null || true
+
+      - name: Checkout SharpAI/mlx-swift
+        uses: actions/checkout@v4
+        with:
+          repository: SharpAI/mlx-swift
+          path: mlx-swift
+
+      - name: Redirect mlx-swift dependency to local checkout
+        run: |
+          sed -i '' -E 's|\.package\(path: "\.\./mlx-swift"\),|\.package(path: "./mlx-swift"),|' Package.swift
 
       - name: Resolve dependencies
         run: swift package resolve
