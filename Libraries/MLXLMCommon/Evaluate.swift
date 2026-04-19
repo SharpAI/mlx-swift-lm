@@ -333,20 +333,27 @@ struct TokenRing {
     }
 
     /// Bulk-load from a prompt. Keeps the last `capacity` tokens.
+    ///
+    /// The prompt may arrive 1-D (`[N]`) or 2-D (`[1, N]` — how VLM prefill
+    /// supplies `input.text.tokens`). We flatten to 1-D first so `dim(0)`
+    /// reflects the true token count. Without this, a 2-D `[1, N]` is read as
+    /// `n = 1`, the `n < capacity` branch fires with a bogus count, and a
+    /// later `append(...)` crashes at `[broadcast_shapes] Shapes (capacity)
+    /// and (N + capacity - 1) cannot be broadcast`.
     mutating func loadPrompt(_ prompt: MLXArray) {
-        let n = prompt.dim(0)
-        let promptTokens = prompt.asType(.int32)
+        let promptTokens = prompt.asType(.int32).reshaped(-1)
+        let n = promptTokens.dim(0)
         if n <= capacity {
             if n < capacity {
                 let padding = MLXArray.zeros([capacity - n], type: Int32.self)
-                buffer = concatenated([promptTokens.reshaped(-1), padding])
+                buffer = concatenated([promptTokens, padding])
             } else {
-                buffer = promptTokens.reshaped(-1)
+                buffer = promptTokens
             }
             count = n
             writeIndex = n % capacity
         } else {
-            buffer = promptTokens[(-capacity)...].reshaped(-1)
+            buffer = promptTokens[(-capacity)...]
             count = capacity
             writeIndex = 0
         }
