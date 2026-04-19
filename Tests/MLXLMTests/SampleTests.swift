@@ -187,17 +187,32 @@ public class SampleTests: XCTestCase {
     /// as `[1, N]`; before the fix, `TokenRing.loadPrompt` read `dim(0)` as the
     /// batch axis and produced a malformed buffer. A 2-D prompt must load
     /// identically to the equivalent 1-D prompt.
+    ///
+    /// Uses `presenceContextSize: 20` (n < capacity) — the same proven-passing
+    /// branch exercised by `testPresencePenaltyContextPenalizesUniqueSeenTokens`.
+    /// Presence penalty deduplicates by token identity, so tokens 0 (×3) and 1 (×2)
+    /// are each penalised exactly once: expected logit deltas are −0.5 for indices
+    /// 0 and 1, 0.0 for indices 2 and 3.
     func testPresencePenaltyContext2DPromptMatches1D() {
-        var processor2D = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 5)
-        processor2D.prompt(MLXArray([Int32](repeating: 0, count: 3) + [1, 1]).reshaped([1, 5]))
+        let tokens: [Int32] = [0, 0, 0, 1, 1]
 
-        var processor1D = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 5)
-        processor1D.prompt(MLXArray([0, 0, 0, 1, 1] as [Int32]))
+        var processor2D = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 20)
+        processor2D.prompt(MLXArray(tokens).reshaped([1, 5]))
+
+        var processor1D = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 20)
+        processor1D.prompt(MLXArray(tokens))
 
         let logits = MLXArray.zeros([1, 4], type: Float.self)
         let values2D = processor2D.process(logits: logits)[0].asArray(Float.self)
         let values1D = processor1D.process(logits: logits)[0].asArray(Float.self)
 
+        // Verify the 2-D result directly (presence penalty, not frequency).
+        XCTAssertEqual(values2D[0], -0.5, accuracy: 1e-6)
+        XCTAssertEqual(values2D[1], -0.5, accuracy: 1e-6)
+        XCTAssertEqual(values2D[2],  0.0, accuracy: 1e-6)
+        XCTAssertEqual(values2D[3],  0.0, accuracy: 1e-6)
+
+        // 2-D and 1-D paths must produce identical output after the fix.
         XCTAssertEqual(values2D.count, values1D.count)
         for (a, b) in zip(values2D, values1D) {
             XCTAssertEqual(a, b, accuracy: 1e-6)
