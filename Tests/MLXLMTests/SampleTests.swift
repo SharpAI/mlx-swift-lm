@@ -202,9 +202,10 @@ public class SampleTests: XCTestCase {
         var processor1D = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 20)
         processor1D.prompt(MLXArray(tokens))
 
-        let logits = MLXArray.zeros([1, 4], type: Float.self)
-        let values2D = processor2D.process(logits: logits)[0].asArray(Float.self)
-        let values1D = processor1D.process(logits: logits)[0].asArray(Float.self)
+        let logits2D = MLXArray.zeros([1, 4], type: Float.self)
+        let logits1D = MLXArray.zeros([1, 4], type: Float.self)
+        let values2D = processor2D.process(logits: logits2D)[0].asArray(Float.self)
+        let values1D = processor1D.process(logits: logits1D)[0].asArray(Float.self)
 
         // Verify the 2-D result directly (presence penalty, not frequency).
         XCTAssertEqual(values2D[0], -0.5, accuracy: 1e-6)
