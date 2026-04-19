@@ -182,6 +182,63 @@ public class SampleTests: XCTestCase {
         XCTAssertEqual(values[3], 0.0, accuracy: 1e-6)
     }
 
+    /// Regression for `[broadcast_shapes] Shapes (capacity) and (N + capacity - 1)`
+    /// fixed in SharpAI/mlx-swift-lm#24. VLM prefill passes `input.text.tokens`
+    /// as `[1, N]`; before the fix, `TokenRing.loadPrompt` read `dim(0)` as the
+    /// batch axis and produced a malformed buffer. A 2-D prompt must load
+    /// identically to the equivalent 1-D prompt.
+    ///
+    /// Uses `presenceContextSize: 20` (n < capacity) — the same proven-passing
+    /// branch exercised by `testPresencePenaltyContextPenalizesUniqueSeenTokens`.
+    /// Presence penalty deduplicates by token identity, so tokens 0 (×3) and 1 (×2)
+    /// are each penalised exactly once: expected logit deltas are −0.5 for indices
+    /// 0 and 1, 0.0 for indices 2 and 3.
+    func testPresencePenaltyContext2DPromptMatches1D() {
+        let tokens: [Int32] = [0, 0, 0, 1, 1]
+
+        var processor2D = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 20)
+        processor2D.prompt(MLXArray(tokens).reshaped([1, 5]))
+
+        var processor1D = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 20)
+        processor1D.prompt(MLXArray(tokens))
+
+        let logits2D = MLXArray.zeros([1, 4], type: Float.self)
+        let logits1D = MLXArray.zeros([1, 4], type: Float.self)
+        let values2D = processor2D.process(logits: logits2D)[0].asArray(Float.self)
+        let values1D = processor1D.process(logits: logits1D)[0].asArray(Float.self)
+
+        // Verify the 2-D result directly (presence penalty, not frequency).
+        XCTAssertEqual(values2D[0], -0.5, accuracy: 1e-6)
+        XCTAssertEqual(values2D[1], -0.5, accuracy: 1e-6)
+        XCTAssertEqual(values2D[2],  0.0, accuracy: 1e-6)
+        XCTAssertEqual(values2D[3],  0.0, accuracy: 1e-6)
+
+        // 2-D and 1-D paths must produce identical output after the fix.
+        XCTAssertEqual(values2D.count, values1D.count)
+        for (a, b) in zip(values2D, values1D) {
+            XCTAssertEqual(a, b, accuracy: 1e-6)
+        }
+    }
+
+    /// Regression for SharpAI/mlx-swift-lm#24: a 2-D prompt longer than
+    /// `presenceContextSize` previously built a buffer of shape
+    /// `[N + capacity - 1]` because `n` was read as the batch axis (1) instead
+    /// of the token count. The resulting ring was inconsistent with `positions`
+    /// (shape `[capacity]`), so the first `didSample(...)` after prompt
+    /// ingestion crashed at `MLX.where(mask [capacity], token,
+    /// buffer [N + capacity - 1])`. Driving the full prompt → process →
+    /// didSample path with a 2-D prompt longer than capacity proves the ring
+    /// is well-formed after 2-D ingestion.
+    func testPenaltyProcessorAppendAfterLong2DPromptDoesNotCrash() {
+        var processor = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 20)
+        let tokens = MLXArray((0..<700).map { Int32($0 % 128) }).reshaped([1, 700])
+        processor.prompt(tokens)
+
+        let logits = MLXArray.zeros([1, 128], type: Float.self)
+        _ = processor.process(logits: logits)
+        processor.didSample(token: MLXArray([Int32(42)]))
+    }
+
     func testGenerateParametersPenaltyProcessorComposesPenaltiesInOrder() {
         var processor = GenerateParameters(
             repetitionPenalty: 1.5, repetitionContextSize: 5,
