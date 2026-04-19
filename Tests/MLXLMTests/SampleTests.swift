@@ -182,12 +182,12 @@ public class SampleTests: XCTestCase {
         XCTAssertEqual(values[3], 0.0, accuracy: 1e-6)
     }
 
+    /// Regression for `[broadcast_shapes] Shapes (capacity) and (N + capacity - 1)`
+    /// fixed in SharpAI/mlx-swift-lm#24. VLM prefill passes `input.text.tokens`
+    /// as `[1, N]`; before the fix, `TokenRing.loadPrompt` read `dim(0)` as the
+    /// batch axis and produced a malformed buffer. A 2-D prompt must load
+    /// identically to the equivalent 1-D prompt.
     func testPresencePenaltyContext2DPromptMatches1D() {
-        // Regression for `[broadcast_shapes] Shapes (capacity) and (N + capacity - 1)`.
-        // VLM prefill passes `input.text.tokens` as `[1, N]`; before the fix,
-        // `TokenRing.loadPrompt` read `dim(0)` as the batch axis and produced
-        // a malformed buffer. A 2-D prompt should load identically to the
-        // equivalent 1-D prompt.
         var processor2D = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 5)
         processor2D.prompt(MLXArray([Int32](repeating: 0, count: 3) + [1, 1]).reshaped([1, 5]))
 
@@ -204,19 +204,20 @@ public class SampleTests: XCTestCase {
         }
     }
 
+    /// Regression for SharpAI/mlx-swift-lm#24: a 2-D prompt longer than
+    /// `presenceContextSize` previously built a buffer of shape
+    /// `[N + capacity - 1]` because `n` was read as the batch axis (1) instead
+    /// of the token count. The resulting ring was inconsistent with `positions`
+    /// (shape `[capacity]`), so the first `didSample(...)` after prompt
+    /// ingestion crashed at `MLX.where(mask [capacity], token,
+    /// buffer [N + capacity - 1])`. Driving the full prompt → process →
+    /// didSample path with a 2-D prompt longer than capacity proves the ring
+    /// is well-formed after 2-D ingestion.
     func testPenaltyProcessorAppendAfterLong2DPromptDoesNotCrash() {
-        // Regression: a 2-D prompt longer than `presenceContextSize` previously
-        // built a buffer of shape `[N + capacity - 1]` because `n` was read as
-        // the batch axis (1) instead of the token count. The resulting ring
-        // was inconsistent with `positions` (shape `[capacity]`), so the first
-        // `didSample(...)` after prompt ingestion crashed at
-        // `MLX.where(mask [capacity], token, buffer [N + capacity - 1])`.
         var processor = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 20)
         let tokens = MLXArray((0..<700).map { Int32($0 % 128) }).reshaped([1, 700])
         processor.prompt(tokens)
 
-        // Exercising the full prompt → process → didSample path proves the
-        // ring is well-formed after 2-D ingestion.
         let logits = MLXArray.zeros([1, 128], type: Float.self)
         _ = processor.process(logits: logits)
         processor.didSample(token: MLXArray([Int32(42)]))
