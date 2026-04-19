@@ -297,7 +297,7 @@ public enum ChatSessionTests {
             to: "What is the weather in San Francisco?", images: [], videos: [])
         {
             switch generation {
-            case .chunk(let text, _):
+            case .chunk(let text):
                 print(text, terminator: "")
                 responseText += text
             case .toolCall(let toolCall):
@@ -845,7 +845,7 @@ public enum ToolCallTests {
             var toolCalls: [ToolCall] = []
             for try await generation in stream {
                 switch generation {
-                case .chunk(let chunk, _):
+                case .chunk(let chunk):
                     text += chunk
                 case .toolCall(let toolCall):
                     toolCalls.append(toolCall)

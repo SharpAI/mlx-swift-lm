@@ -11,6 +11,118 @@ import MLX
 import MLXLMCommon
 import MLXNN
 
+// MARK: - MultiLinear
+
+class MultiLinear: Module, Quantizable {
+    let inputDims: Int
+    let outputDims: Int
+    let numHeads: Int
+
+    @ParameterInfo(key: "weight") var weight: MLXArray
+
+    init(inputDims: Int, outputDims: Int, numHeads: Int) {
+        self.inputDims = inputDims
+        self.outputDims = outputDims
+        self.numHeads = numHeads
+
+        let scale = sqrt(1.0 / Float(inputDims))
+        _weight.wrappedValue = MLXRandom.uniform(
+            low: -scale,
+            high: scale,
+            [numHeads, outputDims, inputDims]
+        )
+        super.init()
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        return x.matmul(weight.swappedAxes(-1, -2))
+    }
+
+    // MARK: - Quantizable conformance
+
+    public func toQuantized(groupSize: Int, bits: Int, mode: QuantizationMode) -> Module {
+        return QuantizedMultiLinear(
+            weight: weight,
+            groupSize: groupSize,
+            bits: bits,
+            mode: mode
+        )
+    }
+}
+
+// MARK: - QuantizedMultiLinear
+
+/// Quantized version of MultiLinear that handles packed 4-bit weights.
+/// This is the Swift equivalent of Python's QuantizedMultiLinear class (lines 89-129 in glm_moe_dsa.py).
+class QuantizedMultiLinear: Module, Quantized {
+    public let groupSize: Int
+    public let bits: Int
+    public let mode: QuantizationMode
+
+    @ParameterInfo(key: "weight") var weight: MLXArray
+    @ParameterInfo(key: "scales") var scales: MLXArray
+    @ParameterInfo(key: "biases") var biases: MLXArray?
+
+    /// Initialize from non-quantized weights (for conversion from MultiLinear)
+    init(
+        weight: MLXArray,
+        groupSize: Int,
+        bits: Int,
+        mode: QuantizationMode = .affine
+    ) {
+        self.groupSize = groupSize
+        self.bits = bits
+        self.mode = mode
+
+        let (quantizedWeight, scales, biases) = MLX.quantized(
+            weight, groupSize: groupSize, bits: bits, mode: mode
+        )
+        _weight.wrappedValue = quantizedWeight
+        _scales.wrappedValue = scales
+        _biases.wrappedValue = biases
+
+        super.init()
+        self.freeze()
+    }
+
+    /// Initialize with pre-quantized weights and scales (for loading from file)
+    init(
+        weight: MLXArray,
+        scales: MLXArray,
+        biases: MLXArray?,
+        groupSize: Int,
+        bits: Int,
+        mode: QuantizationMode = .affine
+    ) {
+        self.groupSize = groupSize
+        self.bits = bits
+        self.mode = mode
+
+        _weight.wrappedValue = weight
+        _scales.wrappedValue = scales
+        _biases.wrappedValue = biases
+
+        super.init()
+        self.freeze()
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        // Use quantizedMM for efficient quantized matrix multiplication
+        // The weight is in shape [numHeads, outputDims, inputDims(packed)]
+        return quantizedMM(
+            x,
+            weight,
+            scales: scales,
+            biases: biases,
+            transpose: true,
+            groupSize: groupSize,
+            bits: bits,
+            mode: mode
+        )
+    }
+}
+
+// MARK: - Attention
 
 class GLMMoeDSAAttention: Module {
     let config: GLMMoeDSAConfiguration
@@ -470,9 +582,10 @@ public class GLMMoeDSAModel: Module, LLMModel, KVCacheDimensionProvider {
             }
             
             // Drop DSA indexer parameters since SwiftLM currently evaluates via dense MLA for streaming compatibility
-            sanitized = sanitized.filter { key, _ in
-                !key.hasPrefix("\(attnPrefix).indexer.")
-            }
+            sanitized.removeValue(forKey: "\(attnPrefix).indexer.wk.weight")
+            sanitized.removeValue(forKey: "\(attnPrefix).indexer.wq_b.weight")
+            sanitized.removeValue(forKey: "\(attnPrefix).indexer.weights_proj.weight")
+            sanitized.removeValue(forKey: "\(attnPrefix).indexer.k_norm.weight")
         }
 
         let numMptLayers = configuration.numNextnPredictLayers
@@ -508,10 +621,6 @@ public struct GLMMoeDSAConfiguration: Codable, Sendable {
     var qkRopeHeadDim: Int
     var qkNopeHeadDim: Int
     var vHeadDim: Int
-    var indexerNHeads: Int?
-    var indexerHeadDim: Int?
-    var indexerTopk: Int?
-    var indexerRopeInterleave: Bool?
     var topkMethod: String
     var scoringFunc: String
     var normTopkProb: Bool
@@ -548,9 +657,9 @@ public struct GLMMoeDSAConfiguration: Codable, Sendable {
         case qkRopeHeadDim = "qk_rope_head_dim"
         case qkNopeHeadDim = "qk_nope_head_dim"
         case vHeadDim = "v_head_dim"
-        case indexerNHeads = "index_n_heads"
-        case indexerHeadDim = "index_head_dim"
-        case indexerTopk = "index_topk"
+        case indexNHeads = "index_n_heads"
+        case indexHeadDim = "index_head_dim"
+        case indexTopk = "index_topk"
         case indexerRopeInterleave = "indexer_rope_interleave"
         case topkMethod = "topk_method"
         case scoringFunc = "scoring_func"
@@ -594,9 +703,9 @@ public struct GLMMoeDSAConfiguration: Codable, Sendable {
         self.vHeadDim = try container.decode(Int.self, forKey: .vHeadDim)
         
         // Optional indexer params
-        _ = try container.decodeIfPresent(Int.self, forKey: .indexerNHeads)
-        _ = try container.decodeIfPresent(Int.self, forKey: .indexerHeadDim)
-        _ = try container.decodeIfPresent(Int.self, forKey: .indexerTopk)
+        _ = try container.decodeIfPresent(Int.self, forKey: .indexNHeads)
+        _ = try container.decodeIfPresent(Int.self, forKey: .indexHeadDim)
+        _ = try container.decodeIfPresent(Int.self, forKey: .indexTopk)
         _ = try container.decodeIfPresent(Bool.self, forKey: .indexerRopeInterleave)
         
         self.topkMethod =
