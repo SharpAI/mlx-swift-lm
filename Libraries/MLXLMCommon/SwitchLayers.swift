@@ -15,7 +15,11 @@ private let compiledSwiGLU: @Sendable (MLXArray, MLXArray) -> MLXArray = compile
 
 private let compiledGeGLU: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(shapeless: true) {
     (gate: MLXArray, x: MLXArray) -> MLXArray in
-    (0.5 * gate * (1 + tanh(sqrt(2 / Float.pi) * (gate + 0.044715 * gate * gate * gate)))) * x
+    let half = MLXArray(0.5, dtype: gate.dtype)
+    let one = MLXArray(1.0, dtype: gate.dtype)
+    let c1 = MLXArray(Float(sqrt(2 / Float.pi)), dtype: gate.dtype)
+    let c2 = MLXArray(0.044715, dtype: gate.dtype)
+    return (half * gate * (one + tanh(c1 * (gate + c2 * gate * gate * gate)))) * x
 }
 
 @inline(__always)

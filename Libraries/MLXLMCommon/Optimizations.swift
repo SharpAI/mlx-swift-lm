@@ -12,7 +12,11 @@ import MLXNN
 /// across all call sites instead of re-tracing the graph on every invocation.
 public let safeGeluApproximate: @Sendable (MLXArray) -> MLXArray =
     compile(shapeless: true) { (x: MLXArray) -> MLXArray in
-        0.5 * x * (1 + tanh(sqrt(2 / Float.pi) * (x + 0.044715 * x * x * x)))
+        let half = MLXArray(0.5, dtype: x.dtype)
+        let one = MLXArray(1.0, dtype: x.dtype)
+        let c1 = MLXArray(Float(sqrt(2 / Float.pi)), dtype: x.dtype)
+        let c2 = MLXArray(0.044715, dtype: x.dtype)
+        return half * x * (one + tanh(c1 * (x + c2 * x * x * x)))
     }
 
 /// Module wrapper for `safeGeluApproximate` — drop-in for `GELU(approximation: .precise)`.
