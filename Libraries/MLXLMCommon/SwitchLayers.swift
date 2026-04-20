@@ -4,6 +4,20 @@ import MLXNN
 
 // Port of https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/models/switch_layers.py
 
+// Compiled activation kernels — fuses gate activation + element-wise multiply into
+// a single Metal dispatch per expert batch. Matches Python's @partial(mx.compile, shapeless=True).
+// This eliminates the separate Metal kernel launch for the activation and the multiply,
+// halving the number of dispatches in every MoE expert invocation.
+private let compiledSwiGLU: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(shapeless: true) {
+    (gate: MLXArray, x: MLXArray) -> MLXArray in
+    silu(gate) * x
+}
+
+private let compiledGeGLU: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(shapeless: true) {
+    (gate: MLXArray, x: MLXArray) -> MLXArray in
+    (0.5 * gate * (1 + tanh(sqrt(2 / Float.pi) * (gate + 0.044715 * gate * gate * gate)))) * x
+}
+
 public func gatherSort(x: MLXArray, indices: MLXArray) -> (MLXArray, MLXArray, MLXArray) {
     let m = indices.dim(-1)
     let indices = indices.flattened()
@@ -44,6 +58,11 @@ public class SwitchGLU: Module, @unchecked Sendable {
     let hiddenDims: Int
     let numExperts: Int
     let activation: (MLXArray) -> MLXArray
+    // Compiled fast-path flags — detected once at init via test inference.
+    // When true the corresponding file-scope compiled closure is used instead
+    // of the generic activation call, saving one extra Metal kernel dispatch.
+    let isSiluActivation: Bool
+    let isGeluActivation: Bool
 
     // ── Async pipeline state (SSD streaming optimization) ──
     // Persistent buffers: allocated once per layer, reused across tokens.
@@ -65,6 +84,18 @@ public class SwitchGLU: Module, @unchecked Sendable {
         self.hiddenDims = hiddenDims
         self.numExperts = numExperts
         self.activation = activation
+
+        // Detect common activation types for compiled fast path.
+        // We run a test forward pass to compare outputs numerically rather than
+        // using pointer equality (closures cannot be compared directly in Swift).
+        // Use a scalar to keep this essentially free at init time.
+        let testInput = MLXArray([Float(1.0)])
+        let testOutput = activation(testInput)
+        let siluOut = silu(testInput)
+        // safeGeluApproximate value at x=1: 0.5 * 1 * (1 + tanh(sqrt(2/π) * (1 + 0.044715)))
+        let geluOut = (0.5 as Float) * testInput * (1 + tanh(sqrt(2 / Float.pi) * (testInput + 0.044715 * testInput * testInput * testInput)))
+        self.isSiluActivation = (testOutput .== siluOut).all().item(Bool.self)
+        self.isGeluActivation = !self.isSiluActivation && (testOutput .== geluOut).all().item(Bool.self)
 
         self._gateProj.wrappedValue = SwitchLinear(
             inputDims: inputDims, outputDims: hiddenDims, numExperts: numExperts, bias: bias)
@@ -424,10 +455,21 @@ public class SwitchGLU: Module, @unchecked Sendable {
             return MLX.squeezed(x, axis: -2)
         }
 
-        // ── Fallback: original sequential path (non-SSD or non-quantized) ──
+        // ── Standard path: non-SSD or non-quantized ─────────────────────────
+        // Use compiled fused activation when possible: saves one Metal kernel
+        // dispatch per expert batch vs calling activation(gate) then multiplying.
+        // Note: bfloat16 promotion is handled inside the compiled closures since
+        // both inputs flow through gatherMM which preserves model weight dtype.
         let xUp = upProj(x, idx, sortedIndices: doSort)
         let xGate = gateProj(x, idx, sortedIndices: doSort)
-        let intermediate = activation(xGate.asType(.bfloat16)) * xUp.asType(.bfloat16)
+        let intermediate: MLXArray
+        if isSiluActivation {
+            intermediate = compiledSwiGLU(xGate.asType(.bfloat16), xUp.asType(.bfloat16))
+        } else if isGeluActivation {
+            intermediate = compiledGeGLU(xGate.asType(.bfloat16), xUp.asType(.bfloat16))
+        } else {
+            intermediate = activation(xGate.asType(.bfloat16)) * xUp.asType(.bfloat16)
+        }
         x = downProj(
             intermediate,
             idx,
