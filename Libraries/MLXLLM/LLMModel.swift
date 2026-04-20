@@ -50,7 +50,9 @@ extension LLMModel {
             
             var cacheArrays: [MLXArray] = []
             for c in cache { cacheArrays.append(contentsOf: c.innerState()) }
-            asyncEval(cacheArrays)
+            if !cacheArrays.isEmpty {
+                asyncEval(cacheArrays)
+            }
             
             y = y[prefillStepSize...]
             processed += prefillStepSize

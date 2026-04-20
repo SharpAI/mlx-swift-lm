@@ -18,6 +18,11 @@ private let compiledGeGLU: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(
     (0.5 * gate * (1 + tanh(sqrt(2 / Float.pi) * (gate + 0.044715 * gate * gate * gate)))) * x
 }
 
+@inline(__always)
+private func preservePrecisionCast(_ x: MLXArray) -> MLXArray {
+    x.dtype == .float16 ? x.asType(.bfloat16) : x
+}
+
 public func gatherSort(x: MLXArray, indices: MLXArray) -> (MLXArray, MLXArray, MLXArray) {
     let m = indices.dim(-1)
     let indices = indices.flattened()
@@ -233,7 +238,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     let usedDown = Array(_persistentDown![0..<ranges.count])
                     let xGate = qGate.computeExperts(x, buffers: usedGate, ranges: ranges)
                     let xUp = qUp.computeExperts(x, buffers: usedUp, ranges: ranges)
-                    let intermediate = activation(xGate.asType(.bfloat16)) * xUp.asType(.bfloat16)
+                    let intermediate = activation(preservePrecisionCast(xGate)) * preservePrecisionCast(xUp)
                     x = qDown.computeExperts(intermediate, buffers: usedDown, ranges: ranges)
 
                 } else {
@@ -385,7 +390,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     // Lazy compute (no eval — next layer forces it)
                     let xGate = qGate.computeExperts(x, buffers: usedGate, ranges: ranges)
                     let xUp = qUp.computeExperts(x, buffers: usedUp, ranges: ranges)
-                    let intermediate = activation(xGate.asType(.bfloat16)) * xUp.asType(.bfloat16)
+                    let intermediate = activation(preservePrecisionCast(xGate)) * preservePrecisionCast(xUp)
                     x = qDown.computeExperts(intermediate, buffers: usedDown, ranges: ranges)
                 }
 
@@ -445,7 +450,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                 // Lazy compute (no eval — next layer forces it)
                 let xGate = qGate.computeExperts(x, buffers: gateBuffers, ranges: ranges)
                 let xUp = qUp.computeExperts(x, buffers: upBuffers, ranges: ranges)
-                let intermediate = activation(xGate.asType(.bfloat16)) * xUp.asType(.bfloat16)
+                let intermediate = activation(preservePrecisionCast(xGate)) * preservePrecisionCast(xUp)
                 x = qDown.computeExperts(intermediate, buffers: downBuffers, ranges: ranges)
             }
 
@@ -464,11 +469,11 @@ public class SwitchGLU: Module, @unchecked Sendable {
         let xGate = gateProj(x, idx, sortedIndices: doSort)
         let intermediate: MLXArray
         if isSiluActivation {
-            intermediate = compiledSwiGLU(xGate.asType(.bfloat16), xUp.asType(.bfloat16))
+            intermediate = compiledSwiGLU(preservePrecisionCast(xGate), preservePrecisionCast(xUp))
         } else if isGeluActivation {
-            intermediate = compiledGeGLU(xGate.asType(.bfloat16), xUp.asType(.bfloat16))
+            intermediate = compiledGeGLU(preservePrecisionCast(xGate), preservePrecisionCast(xUp))
         } else {
-            intermediate = activation(xGate.asType(.bfloat16)) * xUp.asType(.bfloat16)
+            intermediate = activation(preservePrecisionCast(xGate)) * preservePrecisionCast(xUp)
         }
         x = downProj(
             intermediate,

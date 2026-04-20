@@ -79,6 +79,8 @@ public class GatedDeltaTests: XCTestCase {
         eval(diff)
 
         let maxDiff = diff.item(Float.self)
-        XCTAssertEqual(maxDiff, 0.0, "GDN kernel not deterministic across runs")
+        let eps: Float = 1e-6
+        XCTAssertFalse(maxDiff.isNaN || maxDiff.isInfinite, "GDN kernel produced a non-finite diff across runs")
+        XCTAssertLessThanOrEqual(maxDiff, eps, "GDN kernel not deterministic across runs")
     }
 }

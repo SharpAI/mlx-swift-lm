@@ -13,10 +13,6 @@ let v = MLXArray.zeros([1, 1, 116, 512])
 let mask = MLXArray.zeros([1, 1, 116, 116])
 
 print("Attempting to run SDPA...")
-do {
-    let out = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: 1.0, mask: .array(mask))
-    MLX.eval(out)
-    print("SDPA success!")
-} catch {
-    print("Caught error: \(error)")
-}
+let out = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: 1.0, mask: .array(mask))
+MLX.eval(out)
+print("SDPA success!")
