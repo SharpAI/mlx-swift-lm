@@ -202,7 +202,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     let usedDown = Array(_persistentDown![0..<ranges.count])
                     let xGate = qGate.computeExperts(x, buffers: usedGate, ranges: ranges)
                     let xUp = qUp.computeExperts(x, buffers: usedUp, ranges: ranges)
-                    let intermediate = activation(xGate) * xUp
+                    let intermediate = activation(xGate.asType(.bfloat16)) * xUp.asType(.bfloat16)
                     x = qDown.computeExperts(intermediate, buffers: usedDown, ranges: ranges)
 
                 } else {
@@ -354,7 +354,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     // Lazy compute (no eval — next layer forces it)
                     let xGate = qGate.computeExperts(x, buffers: usedGate, ranges: ranges)
                     let xUp = qUp.computeExperts(x, buffers: usedUp, ranges: ranges)
-                    let intermediate = activation(xGate) * xUp
+                    let intermediate = activation(xGate.asType(.bfloat16)) * xUp.asType(.bfloat16)
                     x = qDown.computeExperts(intermediate, buffers: usedDown, ranges: ranges)
                 }
 
@@ -414,7 +414,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                 // Lazy compute (no eval — next layer forces it)
                 let xGate = qGate.computeExperts(x, buffers: gateBuffers, ranges: ranges)
                 let xUp = qUp.computeExperts(x, buffers: upBuffers, ranges: ranges)
-                let intermediate = activation(xGate) * xUp
+                let intermediate = activation(xGate.asType(.bfloat16)) * xUp.asType(.bfloat16)
                 x = qDown.computeExperts(intermediate, buffers: downBuffers, ranges: ranges)
             }
 
@@ -427,8 +427,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
         // ── Fallback: original sequential path (non-SSD or non-quantized) ──
         let xUp = upProj(x, idx, sortedIndices: doSort)
         let xGate = gateProj(x, idx, sortedIndices: doSort)
+        let intermediate = activation(xGate.asType(.bfloat16)) * xUp.asType(.bfloat16)
         x = downProj(
-            activation(xGate) * xUp,
+            intermediate,
             idx,
             sortedIndices: doSort)
 

@@ -495,7 +495,7 @@ private final class Gemma4TextMLP: Module, UnaryLayer {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        downProj(geluApproximate(gateProj(x)) * upProj(x))
+        downProj(safeGeluApproximate(gateProj(x)) * upProj(x))
     }
 }
 
@@ -555,7 +555,7 @@ private final class Gemma4TextExperts: Module {
             inputDims: config.hiddenSize,
             hiddenDims: moeIntermediateSize,
             numExperts: numExperts,
-            activation: geluApproximate,
+            activation: safeGeluApproximate,
             bias: false
         )
         super.init()
@@ -850,7 +850,7 @@ private final class Gemma4TextDecoderLayer: Module {
         {
             residual = h
             var gated = perLayerInputGate(h)
-            gated = geluApproximate(gated)
+            gated = safeGeluApproximate(gated)
             gated = gated * perLayerInput
             gated = perLayerProjection(gated)
             gated = postPerLayerInputNorm(gated)
@@ -1130,8 +1130,8 @@ private final class Gemma4TextLanguageModel: Module, KVCacheDimensionProvider {
             logits = model.embedTokens.asLinear(output)
         }
         if let finalLogitSoftcapping, finalLogitSoftcapping > 0 {
-            let scale = MLXArray(finalLogitSoftcapping)
-            return LMOutput(logits: tanh(logits / scale) * scale)
+            let scale = MLXArray(finalLogitSoftcapping, dtype: logits.dtype)
+            return LMOutput(logits: compiledSoftcap(x: logits, cap: scale))
         }
         return LMOutput(logits: logits)
     }
@@ -1384,7 +1384,7 @@ private final class Gemma4VisionMLP: Module, UnaryLayer {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        downProj(geluApproximate(gateProj(x)) * upProj(x))
+        downProj(safeGeluApproximate(gateProj(x)) * upProj(x))
     }
 }
 
