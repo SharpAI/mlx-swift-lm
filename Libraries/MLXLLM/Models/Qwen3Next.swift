@@ -16,9 +16,12 @@ func sigmoidMultiply(_ x: MLXArray, _ gate: MLXArray) -> MLXArray {
     x * sigmoid(gate)
 }
 
-private let compiledSwiGLU: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(shapeless: true) {
-    (gate: MLXArray, x: MLXArray) -> MLXArray in
-    silu(gate) * x
+private let _compiledSwiGLUFn = MLX.compile(shapeless: true) { (args: [MLXArray]) -> [MLXArray] in
+    [silu(args[0]) * args[1]]
+}
+
+private func compiledSwiGLU(_ gate: MLXArray, _ x: MLXArray) -> MLXArray {
+    _compiledSwiGLUFn([gate, x])[0]
 }
 
 // MARK: - Model Components

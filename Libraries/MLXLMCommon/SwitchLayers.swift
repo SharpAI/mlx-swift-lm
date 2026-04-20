@@ -8,18 +8,28 @@ import MLXNN
 // a single Metal dispatch per expert batch. Matches Python's @partial(mx.compile, shapeless=True).
 // This eliminates the separate Metal kernel launch for the activation and the multiply,
 // halving the number of dispatches in every MoE expert invocation.
-private let compiledSwiGLU: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(shapeless: true) {
-    (gate: MLXArray, x: MLXArray) -> MLXArray in
-    silu(gate) * x
+private let _compiledSwiGLUFn = MLX.compile(shapeless: true) { (args: [MLXArray]) -> [MLXArray] in
+    [silu(args[0]) * args[1]]
 }
 
-private let compiledGeGLU: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(shapeless: true) {
-    (gate: MLXArray, x: MLXArray) -> MLXArray in
+private let _compiledGeGLUFn = MLX.compile(shapeless: true) { (args: [MLXArray]) -> [MLXArray] in
+    let gate = args[0]
+    let x = args[1]
     let half = MLXArray(0.5, dtype: gate.dtype)
     let one = MLXArray(1.0, dtype: gate.dtype)
     let c1 = MLXArray(Float(sqrt(2 / Float.pi)), dtype: gate.dtype)
     let c2 = MLXArray(0.044715, dtype: gate.dtype)
-    return (half * gate * (one + tanh(c1 * (gate + c2 * gate * gate * gate)))) * x
+    return [(half * gate * (one + tanh(c1 * (gate + c2 * gate * gate * gate)))) * x]
+}
+
+@inline(__always)
+public func compiledSwiGLU(_ gate: MLXArray, _ x: MLXArray) -> MLXArray {
+    _compiledSwiGLUFn([gate, x])[0]
+}
+
+@inline(__always)
+public func compiledGeGLU(_ gate: MLXArray, _ x: MLXArray) -> MLXArray {
+    _compiledGeGLUFn([gate, x])[0]
 }
 
 @inline(__always)
