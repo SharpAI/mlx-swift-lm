@@ -13,13 +13,14 @@ private let _compiledSwiGLUFn = MLX.compile(shapeless: true) { (args: [MLXArray]
 }
 
 private let _compiledGeGLUFn = MLX.compile(shapeless: true) { (args: [MLXArray]) -> [MLXArray] in
-    let gate = args[0]
-    let x = args[1]
-    let half = MLXArray(0.5, dtype: gate.dtype)
-    let one = MLXArray(1.0, dtype: gate.dtype)
-    let c1 = MLXArray(Float(sqrt(2 / Float.pi)), dtype: gate.dtype)
-    let c2 = MLXArray(0.044715, dtype: gate.dtype)
-    return [(half * gate * (one + tanh(c1 * (gate + c2 * gate * gate * gate)))) * x]
+    let gate = args[0].asType(.float32)
+    let x = args[1].asType(.float32)
+    let half = MLXArray(0.5, dtype: .float32)
+    let one = MLXArray(1.0, dtype: .float32)
+    let c1 = MLXArray(Float(sqrt(2 / Float.pi)), dtype: .float32)
+    let c2 = MLXArray(0.044715, dtype: .float32)
+    let out = (half * gate * (one + tanh(c1 * (gate + c2 * gate * gate * gate)))) * x
+    return [out.asType(args[0].dtype)]
 }
 
 @inline(__always)
