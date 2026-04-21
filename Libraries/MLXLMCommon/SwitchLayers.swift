@@ -404,7 +404,8 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     // Lazy compute (no eval — next layer forces it)
                     let xGate = qGate.computeExperts(x, buffers: usedGate, ranges: ranges)
                     let xUp = qUp.computeExperts(x, buffers: usedUp, ranges: ranges)
-                    let intermediate = activation(preservePrecisionCast(xGate)) * preservePrecisionCast(xUp)
+                    var intermediate = activation(preservePrecisionCast(xGate)) * preservePrecisionCast(xUp)
+                    if intermediate.dtype != xGate.dtype { intermediate = intermediate.asType(xGate.dtype) }
                     x = qDown.computeExperts(intermediate, buffers: usedDown, ranges: ranges)
                 }
 
@@ -464,7 +465,8 @@ public class SwitchGLU: Module, @unchecked Sendable {
                 // Lazy compute (no eval — next layer forces it)
                 let xGate = qGate.computeExperts(x, buffers: gateBuffers, ranges: ranges)
                 let xUp = qUp.computeExperts(x, buffers: upBuffers, ranges: ranges)
-                let intermediate = activation(preservePrecisionCast(xGate)) * preservePrecisionCast(xUp)
+                var intermediate = activation(preservePrecisionCast(xGate)) * preservePrecisionCast(xUp)
+                if intermediate.dtype != xGate.dtype { intermediate = intermediate.asType(xGate.dtype) }
                 x = qDown.computeExperts(intermediate, buffers: downBuffers, ranges: ranges)
             }
 
@@ -481,7 +483,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
         // both inputs flow through gatherMM which preserves model weight dtype.
         let xUp = upProj(x, idx, sortedIndices: doSort)
         let xGate = gateProj(x, idx, sortedIndices: doSort)
-        let intermediate: MLXArray
+        var intermediate: MLXArray
         if isSiluActivation {
             intermediate = compiledSwiGLU(preservePrecisionCast(xGate), preservePrecisionCast(xUp))
         } else if isGeluActivation {
@@ -489,6 +491,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
         } else {
             intermediate = activation(preservePrecisionCast(xGate)) * preservePrecisionCast(xUp)
         }
+        if intermediate.dtype != xGate.dtype { intermediate = intermediate.asType(xGate.dtype) }
         x = downProj(
             intermediate,
             idx,
