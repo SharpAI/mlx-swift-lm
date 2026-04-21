@@ -40,16 +40,27 @@ extension LLMModel {
         var processed = 0
 
         // Prepare the prompt in chunks if larger than the prefill size.
-        // After each chunk, call the progress hook so the server can emit
-        // llama-server-style slot_update SSE events with real n_past.
+        // asyncEval lets the CPU build chunk N+1's graph while the GPU evaluates
+        // chunk N. Python mlx-lm gets this pipelining for free because its bindings
+        // defer eval until a value is read. The previous `eval(cache)` call was a
+        // blocking sync that drained the GPU pipeline between chunks.
         while y.tokens.size > prefillStepSize {
             let input = y[.newAxis, ..<prefillStepSize]
             _ = self(input, cache: cache.isEmpty ? nil : cache, state: nil)
-            eval(cache)
+            
+            var cacheArrays: [MLXArray] = []
+            for c in cache { cacheArrays.append(contentsOf: c.innerState()) }
+            if !cacheArrays.isEmpty {
+                asyncEval(cacheArrays)
+            }
+            
             y = y[prefillStepSize...]
             processed += prefillStepSize
             activePrefillProgressHook?(processed, totalTokens)
         }
+
+        // Single sync after the loop — flush any remaining async work.
+        eval(cache)
 
         return .tokens(y)
     }

@@ -16,6 +16,14 @@ func sigmoidMultiply(_ x: MLXArray, _ gate: MLXArray) -> MLXArray {
     x * sigmoid(gate)
 }
 
+private let _compiledSwiGLUFn = MLX.compile(shapeless: true) { (args: [MLXArray]) -> [MLXArray] in
+    [silu(args[0]) * args[1]]
+}
+
+private func compiledSwiGLU(_ gate: MLXArray, _ x: MLXArray) -> MLXArray {
+    _compiledSwiGLUFn([gate, x])[0]
+}
+
 // MARK: - Model Components
 
 final class Qwen3NextRMSNormGated: Module {
@@ -136,7 +144,7 @@ final class Qwen3NextMLP: Module, UnaryLayer {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        downProj(silu(gateProj(x)) * upProj(x))
+        downProj(compiledSwiGLU(gateProj(x), upProj(x)))
     }
 }
 
