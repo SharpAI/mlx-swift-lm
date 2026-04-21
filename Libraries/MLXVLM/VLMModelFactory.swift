@@ -212,25 +212,29 @@ public class VLMRegistry: AbstractModelRegistry, @unchecked Sendable {
     static public let gemma4_E2B_it_4bit = ModelConfiguration(
         id: "mlx-community/gemma-4-e2b-it-4bit",
         defaultPrompt: "Describe the image in English",
-        extraEOSTokens: ["<end_of_turn>"]
+        extraEOSTokens: ["<turn|>", "<pad>"],
+        eosTokenIds: [0]
     )
 
     static public let gemma4_E4B_it_4bit = ModelConfiguration(
         id: "mlx-community/gemma-4-e4b-it-4bit",
         defaultPrompt: "Describe the image in English",
-        extraEOSTokens: ["<end_of_turn>"]
+        extraEOSTokens: ["<turn|>", "<pad>"],
+        eosTokenIds: [0]
     )
 
     static public let gemma4_31B_it_4bit = ModelConfiguration(
         id: "mlx-community/gemma-4-31b-it-4bit",
         defaultPrompt: "Describe the image in English",
-        extraEOSTokens: ["<end_of_turn>"]
+        extraEOSTokens: ["<turn|>", "<pad>"],
+        eosTokenIds: [0]
     )
 
     static public let gemma4_26BA4B_it_4bit = ModelConfiguration(
         id: "mlx-community/gemma-4-26b-a4b-it-4bit",
         defaultPrompt: "Describe the image in English",
-        extraEOSTokens: ["<end_of_turn>"]
+        extraEOSTokens: ["<turn|>", "<pad>"],
+        eosTokenIds: [0]
     )
 
     static public let smolvlm = ModelConfiguration(
@@ -357,7 +361,7 @@ public final class VLMModelFactory: ModelFactory {
         }
 
         var mutableConfiguration = configuration
-        mutableConfiguration.eosTokenIds = eosTokenIds
+        mutableConfiguration.eosTokenIds = eosTokenIds.union(configuration.eosTokenIds)
 
         // Auto-detect tool call format from model type if not explicitly set
         if mutableConfiguration.toolCallFormat == nil {

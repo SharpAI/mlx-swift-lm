@@ -115,6 +115,7 @@ public struct ModelConfiguration: Sendable {
         tokenizerSource: TokenizerSource? = nil,
         defaultPrompt: String = "",
         extraEOSTokens: Set<String> = [],
+        eosTokenIds: Set<Int> = [],
         toolCallFormat: ToolCallFormat? = nil,
         preparePrompt: (@Sendable (String) -> String)? = nil,
         lazyLoad: Bool = false
@@ -123,6 +124,7 @@ public struct ModelConfiguration: Sendable {
         self.tokenizerSource = tokenizerSource
         self.defaultPrompt = defaultPrompt
         self.extraEOSTokens = extraEOSTokens
+        self.eosTokenIds = eosTokenIds
         self.toolCallFormat = toolCallFormat
         self.lazyLoad = lazyLoad
     }

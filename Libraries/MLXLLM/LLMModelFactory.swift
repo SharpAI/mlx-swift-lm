@@ -208,13 +208,29 @@ public class LLMRegistry: AbstractModelRegistry, @unchecked Sendable {
     static public let gemma4_e4b_it_4bit = ModelConfiguration(
         id: "mlx-community/gemma-4-e4b-it-4bit",
         defaultPrompt: "What is the difference between a fruit and a vegetable?",
-        extraEOSTokens: ["<turn|>"]
+        extraEOSTokens: ["<turn|>", "<pad>"],
+        eosTokenIds: [0]
     )
 
     static public let gemma4_e2b_it_4bit = ModelConfiguration(
         id: "mlx-community/gemma-4-e2b-it-4bit",
         defaultPrompt: "What is the difference between a fruit and a vegetable?",
-        extraEOSTokens: ["<turn|>"]
+        extraEOSTokens: ["<turn|>", "<pad>"],
+        eosTokenIds: [0]
+    )
+
+    static public let gemma4_26BA4B_it_4bit = ModelConfiguration(
+        id: "mlx-community/gemma-4-26b-a4b-it-4bit",
+        defaultPrompt: "What is the difference between a fruit and a vegetable?",
+        extraEOSTokens: ["<turn|>", "<pad>"],
+        eosTokenIds: [0]
+    )
+
+    static public let gemma4_31B_it_4bit = ModelConfiguration(
+        id: "mlx-community/gemma-4-31b-it-4bit",
+        defaultPrompt: "What is the difference between a fruit and a vegetable?",
+        extraEOSTokens: ["<turn|>", "<pad>"],
+        eosTokenIds: [0]
     )
 
     static public let qwen205b4bit = ModelConfiguration(
@@ -400,6 +416,8 @@ public class LLMRegistry: AbstractModelRegistry, @unchecked Sendable {
             gemma3n_E2B_it_lm_4bit,
             gemma4_e4b_it_4bit,
             gemma4_e2b_it_4bit,
+            gemma4_26BA4B_it_4bit,
+            gemma4_31B_it_4bit,
             granite3_3_2b_4bit,
             granite_4_0_h_tiny_4bit_dwq,
             llama3_1_8B_4bit,
@@ -556,7 +574,7 @@ public final class LLMModelFactory: ModelFactory {
 
         // Build a ModelConfiguration with loaded EOS token IDs and tool call format
         var mutableConfiguration = configuration
-        mutableConfiguration.eosTokenIds = eosTokenIds
+        mutableConfiguration.eosTokenIds = eosTokenIds.union(configuration.eosTokenIds)
         if mutableConfiguration.toolCallFormat == nil {
             mutableConfiguration.toolCallFormat = ToolCallFormat.infer(
                 from: baseConfig.modelType, configData: configData)
