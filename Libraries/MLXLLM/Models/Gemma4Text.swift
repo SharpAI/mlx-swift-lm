@@ -9,6 +9,28 @@ import MLX
 import MLXLMCommon
 import MLXNN
 
+// MARK: - KV State
+
+/// Discriminated union that carries either regular (fp16/bf16) or quantized KV tensors through
+/// the attention forward pass. Mirrors the equivalent type in MLXVLM/Models/Gemma4.swift.
+private enum Gemma4LLMKVState {
+    case regular(keys: MLXArray, values: MLXArray)
+    case quantized(
+        keys: (MLXArray, MLXArray, MLXArray?),
+        values: (MLXArray, MLXArray, MLXArray?),
+        groupSize: Int,
+        bits: Int,
+        mode: QuantizationMode
+    )
+
+    var seqLen: Int {
+        switch self {
+        case .regular(let keys, _):          return keys.dim(2)
+        case .quantized(let keys, _, _, _, _): return keys.0.dim(-2)
+        }
+    }
+}
+
 // MARK: - Configuration
 
 public struct Gemma4TextConfiguration: Codable, Sendable {
@@ -333,24 +355,106 @@ private class Gemma4Attention: Module {
                 v = vNorm(k)
             }
 
-            if let cache {
+            // Dispatch to the correct KV-cache update based on concrete cache type.
+            // QuantizedKVCache traps on `.update(keys:values:)` — we must call
+            // `.updateQuantized(keys:values:)` and then route to
+            // `quantizedScaledDotProductAttention` below.
+            let kvState: Gemma4LLMKVState
+            if let quantizedCache = cache as? QuantizedKVCacheProtocol {
+                let (qKeys, qValues) = quantizedCache.updateQuantized(keys: k, values: v)
+                kvState = .quantized(
+                    keys: qKeys,
+                    values: qValues,
+                    groupSize: quantizedCache.groupSize,
+                    bits: quantizedCache.bits,
+                    mode: quantizedCache.mode
+                )
+            } else if let cache {
                 let (updatedK, updatedV) = cache.update(keys: k, values: v)
-                keys = updatedK
-                values = updatedV
+                kvState = .regular(keys: updatedK, values: updatedV)
             } else {
-                keys = k
-                values = v
+                kvState = .regular(keys: k, values: v)
             }
+
+            queries = queries.transposed(0, 2, 1, 3)
+            queries = gemma4ApplyRotaryPosition(rope, to: queries, offset: activePositionOffset)
+
+            // Adjust mask if cache is shorter than mask (mask was built for a longer sequence).
+            // Only slice — never pad: if mask is already shorter we leave it alone.
+            var adjustedMask = mask
+            if case .array(let maskArray) = mask {
+                let keysSeqLen = kvState.seqLen
+                if maskArray.dim(-1) > keysSeqLen {
+                    adjustedMask = .array(maskArray[.ellipsis, 0 ..< keysSeqLen])
+                }
+            }
+
+            let output: MLXArray =
+                switch kvState {
+                case .regular(let rKeys, let rValues):
+                    MLXFast.scaledDotProductAttention(
+                        queries: queries,
+                        keys: rKeys,
+                        values: rValues,
+                        scale: scale,
+                        mask: adjustedMask ?? .none
+                    )
+                case .quantized(let qKeys, let qValues, let groupSize, let bits, let mode):
+                    quantizedScaledDotProductAttention(
+                        queries: queries,
+                        quantizedKeys: qKeys,
+                        quantizedValues: qValues,
+                        scale: scale,
+                        mask: adjustedMask ?? .none,
+                        groupSize: groupSize,
+                        bits: bits,
+                        mode: mode
+                    )
+                }
+
+            // Build the kvPair that will be stored in `intermediates` and potentially
+            // consumed as `sharedKV` by later KV-sharing layers.  Those layers expect
+            // full-context FP16/BF16 tensors.  For the regular path we already have them;
+            // for the quantized path we dequantize the full accumulated cache state.
+            let retKVPair: (MLXArray, MLXArray)
+            switch kvState {
+            case .regular(let rk, let rv):
+                retKVPair = (rk, rv)
+            case .quantized(let qk, let qv, let groupSize, let bits, _):
+                // If the cache has accumulated more than the current step we need the
+                // full state, not just the new-token quantized tuples.  Try the protocol
+                // accessor first; fall back to dequantizing the just-updated tuples.
+                if let fullState = (cache as? QuantizedKVCacheProtocol)?.getQuantizedState() {
+                    let fullKeys   = dequantized(fullState.0.0, scales: fullState.0.1,
+                                                 biases: fullState.0.2, groupSize: groupSize, bits: bits)
+                    let fullValues = dequantized(fullState.1.0, scales: fullState.1.1,
+                                                 biases: fullState.1.2, groupSize: groupSize, bits: bits)
+                    retKVPair = (fullKeys, fullValues)
+                } else {
+                    // First decode step (offset==1): no prior context to merge.
+                    retKVPair = (dequantized(qk.0, scales: qk.1, biases: qk.2,
+                                             groupSize: groupSize, bits: bits),
+                                 dequantized(qv.0, scales: qv.1, biases: qv.2,
+                                             groupSize: groupSize, bits: bits))
+                }
+            }
+
+            return (
+                oProj(output.transposed(0, 2, 1, 3).reshaped(B, L, -1)),
+                retKVPair,
+                activePositionOffset
+            )
         }
 
+        // ── sharedKV path ──
+        // (queries already computed above; keys/values come from an earlier layer)
         queries = queries.transposed(0, 2, 1, 3)
         queries = gemma4ApplyRotaryPosition(rope, to: queries, offset: activePositionOffset)
 
-        // Adjust mask if cache size differs from mask size
         var adjustedMask = mask
         if case .array(let maskArray) = mask {
             let keysSeqLen = keys.dim(2)
-            if maskArray.dim(-1) != keysSeqLen {
+            if maskArray.dim(-1) > keysSeqLen {
                 adjustedMask = .array(maskArray[.ellipsis, 0 ..< keysSeqLen])
             }
         }
