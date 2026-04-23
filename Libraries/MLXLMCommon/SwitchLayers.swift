@@ -144,6 +144,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     _persistentUp = qUp.allocateExpertBuffers(maxBuffers)
                     _persistentDown = qDown.allocateExpertBuffers(maxBuffers)
 
+
                     // Merged eval: idx + buffer allocations (same as ssd-opt-v1)
                     var toEval: [MLXArray] = [idx]
                     toEval.append(contentsOf: _persistentGate!)

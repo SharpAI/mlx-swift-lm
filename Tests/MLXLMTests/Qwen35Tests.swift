@@ -12,7 +12,7 @@ extension MLXTestingSuite {
         private func makeTinyConfigData() -> Data {
             let json = """
             {
-                "model_type": "qwen2",
+                "model_type": "qwen3_5",
                 "hidden_size": 64,
                 "num_hidden_layers": 2,
                 "intermediate_size": 128,

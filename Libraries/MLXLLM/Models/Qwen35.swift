@@ -613,7 +613,7 @@ public class Qwen35TextModelInner: Module, LayerPartitionable, StreamableMoE {
         var hiddenStates = embedTokens(inputs)
 
         var cacheArray = cache
-        if cacheArray == nil {
+        if cacheArray == nil || cacheArray?.count != layers.count {
             cacheArray = Array(repeating: nil as KVCache?, count: layers.count)
         }
 
@@ -638,7 +638,7 @@ public class Qwen35TextModelInner: Module, LayerPartitionable, StreamableMoE {
         var hiddenStates = embedTokens(inputs)
 
         var cacheArray = cache
-        if cacheArray == nil {
+        if cacheArray == nil || cacheArray?.count != layers.count {
             cacheArray = Array(repeating: nil as KVCache?, count: layers.count)
         }
 

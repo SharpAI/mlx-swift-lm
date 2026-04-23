@@ -1,6 +1,6 @@
 import XCTest
 @testable import MLXLMCommon
-import MLX
+
 
 final class ToolRegressionTests: XCTestCase {
     func testGemma4ToolCallParsing() throws {
@@ -32,6 +32,7 @@ final class ToolRegressionTests: XCTestCase {
         
         XCTAssertEqual(processor.toolCalls.count, 1)
         XCTAssertEqual(processor.toolCalls.first?.function.name, "system_status")
+        XCTAssertEqual(output, "")
     }
 
     func testGemma4ToolCallParsingWithoutEndTag() throws {
@@ -66,5 +67,6 @@ final class ToolRegressionTests: XCTestCase {
         // If EOS extracts it successfully:
         XCTAssertEqual(processor.toolCalls.count, 1)
         XCTAssertEqual(processor.toolCalls.first?.function.name, "system_status")
+        XCTAssertEqual(output, "")
     }
 }
