@@ -32,7 +32,7 @@ final class ToolRegressionTests: XCTestCase {
         
         XCTAssertEqual(processor.toolCalls.count, 1)
         XCTAssertEqual(processor.toolCalls.first?.function.name, "system_status")
-        XCTAssertEqual(output, "")
+        XCTAssertEqual(output, "<turn|>\n")
     }
 
     func testGemma4ToolCallParsingWithoutEndTag() throws {
