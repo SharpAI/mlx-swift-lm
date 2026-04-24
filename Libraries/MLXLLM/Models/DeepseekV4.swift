@@ -751,6 +751,7 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         }
 
         // 3. Filter out MTP (multi-token prediction) layers and rotary_emb keys
+        // Also drop compressor/indexer sub-module keys (not yet implemented)
         let numMainLayers = args.numHiddenLayers - args.numNextnPredictLayers
         return newWeights.filter { key, _ in
             // Drop MTP layer weights (layers at index >= numMainLayers)
@@ -763,7 +764,15 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
                 }
             }
             // Drop rotary embedding precomputed frequencies
-            return !key.contains("rotary_emb.inv_freq")
+            if key.contains("rotary_emb.inv_freq") { return false }
+            // Drop compressor/indexer sub-module weights — these implement long-range
+            // compressed attention and are not yet implemented in this Swift port.
+            // Affected layers are those with compress_ratio != 0 (layers 2+).
+            // TODO: implement DeepseekV4Compressor and DeepseekV4Indexer modules.
+            if key.contains(".attn.compressor.") || key.contains(".attn.indexer.") {
+                return false
+            }
+            return true
         }
     }
 

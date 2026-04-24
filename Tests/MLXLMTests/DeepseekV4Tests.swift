@@ -210,7 +210,35 @@ public class DeepseekV4Tests: XCTestCase {
         XCTAssertEqual(stackedGate.shape[0], config.nRoutedExperts)
     }
 
-    // MARK: - Gate Routing
+    func testSanitizeDropsCompressorIndexerKeys() {
+        // Compressor/indexer sub-modules are not yet implemented; ensure sanitize drops them.
+        let config = makeSmallConfig()
+        let model = DeepseekV4Model(config)
+
+        var fakeWeights: [String: MLXArray] = [
+            "model.layers.0.attn.wkv.weight": zeros([1, 1]),
+            "model.layers.0.attn.compressor.wkv.weight": zeros([1, 1]),
+            "model.layers.0.attn.compressor.wgate.weight": zeros([1, 1]),
+            "model.layers.0.attn.indexer.wq_b.weight": zeros([1, 1]),
+            "model.layers.0.attn.indexer.weights_proj.weight": zeros([1, 1]),
+            "model.layers.0.attn.indexer.compressor.wkv.weight": zeros([1, 1]),
+        ]
+
+        let sanitized = model.sanitize(weights: fakeWeights)
+
+        XCTAssertNotNil(sanitized["model.layers.0.attn.wkv.weight"],
+                        "Standard wkv should be kept")
+        XCTAssertNil(sanitized["model.layers.0.attn.compressor.wkv.weight"],
+                     "Compressor keys should be dropped")
+        XCTAssertNil(sanitized["model.layers.0.attn.compressor.wgate.weight"],
+                     "Compressor keys should be dropped")
+        XCTAssertNil(sanitized["model.layers.0.attn.indexer.wq_b.weight"],
+                     "Indexer keys should be dropped")
+        XCTAssertNil(sanitized["model.layers.0.attn.indexer.compressor.wkv.weight"],
+                     "Nested indexer compressor keys should be dropped")
+    }
+
+
 
     func testMoEGateRoutingShape() {
         let config = makeSmallConfig()
@@ -297,10 +325,15 @@ public class DeepseekV4Tests: XCTestCase {
         let configPath = modelPath.appendingPathComponent("config.json")
         let configData = try Data(contentsOf: configPath)
         let config = try JSONDecoder().decode(DeepseekV4Configuration.self, from: configData)
+        // Read base config for per-layer quantization
+        let baseConfig = try JSONDecoder().decode(BaseConfiguration.self, from: configData)
 
-        // Create model and load weights
+        // Create model and load weights with per-layer quantization
         let model = DeepseekV4Model(config)
-        try loadWeights(modelDirectory: modelPath, model: model)
+        try loadWeights(
+            modelDirectory: modelPath,
+            model: model,
+            perLayerQuantization: baseConfig.perLayerQuantization)
 
         // Run a forward pass with dummy tokens (just first 10 tokens)
         let promptTokens = MLXArray([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])[.newAxis, .ellipsis]
