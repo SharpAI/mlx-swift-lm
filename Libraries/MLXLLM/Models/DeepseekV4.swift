@@ -297,8 +297,8 @@ class DeepseekV4Attention: Module {
         self._woA.wrappedValue = Linear(nHeadsPerGroup * config.headDim, config.oGroups * config.oLoraRank, bias: false)
         self._woB.wrappedValue = Linear(config.oGroups * config.oLoraRank, config.hiddenSize, bias: false)
 
-        // Attention sink: initialized to zeros, overwritten by weight loading
-        self.attn_sink = zeros([config.numAttentionHeads])
+        // Attention sink: shape [qkRopeHeadDim], initialized to zeros, overwritten by weight loading
+        self.attn_sink = zeros([config.qkRopeHeadDim])
 
         // RoPE using compress_rope_theta (used for most layers with compress_ratio != 0)
         // We use a single rope config as a simplification
@@ -441,6 +441,21 @@ class DeepseekV4Gate: Module {
         self.scoringFunc = config.scoringFunc
         self.weight = zeros([config.nRoutedExperts, config.hiddenSize])
         self.e_score_correction_bias = zeros([config.nRoutedExperts])
+    }
+
+    /// Allow hash-routing layers (0..numHashLayers-1) to load without e_score_correction_bias.
+    /// Those layers use tid2eid hash routing in the original code; we keep the zero default.
+    override func updateMissing(
+        parameter: String,
+        verify: VerifyUpdate,
+        path: [String],
+        modulePath: [String]
+    ) throws {
+        if parameter == "e_score_correction_bias" {
+            return  // keep zero-initialized default
+        }
+        try super.updateMissing(
+            parameter: parameter, verify: verify, path: path, modulePath: modulePath)
     }
 
     func callAsFunction(_ x: MLXArray) -> (MLXArray, MLXArray) {
@@ -772,6 +787,11 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
             if key.contains(".attn.compressor.") || key.contains(".attn.indexer.") {
                 return false
             }
+            // Note: .attn.attn_sink is a valid model parameter — do NOT filter it.
+            // Drop gate.tid2eid — hash-layer token-to-expert lookup table (not yet implemented).
+            // Hash layers (0..numHashLayers-1) use deterministic routing; we fall back to
+            // the learned gate.weight for these layers instead.
+            if key.contains(".ffn.gate.tid2eid") { return false }
             return true
         }
     }
