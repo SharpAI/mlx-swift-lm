@@ -312,6 +312,59 @@ class DeepseekV4Attention: Module {
         )
     }
 
+    /// Grouped output projection matching the reference Python implementation.
+    /// For QuantizedLinear wo_a: slices weight rows per group, calls quantizedMM.
+    /// For plain Linear wo_a: uses batched matmul after weight reshape.
+    /// Input:  [B, L, n_heads, head_dim]
+    /// Output: [B, L, oGroups * oLoraRank]
+    private func groupedOutputProjection(_ out: MLXArray) -> MLXArray {
+        let B = out.dim(0), L = out.dim(1)
+        let groupFeat = numHeads * headDim / oGroups  // = nHeadsPerGroup * headDim
+
+        // Flatten to [B, L, n_heads * head_dim] for easy group slicing
+        let outFlat = out.reshaped(B, L, numHeads * headDim)
+
+        if let qLinear = woA as? QuantizedLinear {
+            var pieces: [MLXArray] = []
+            for g in 0 ..< oGroups {
+                let gStart = g * groupFeat
+                let gEnd   = (g + 1) * groupFeat
+                let rStart = g * oLoraRank
+                let rEnd   = (g + 1) * oLoraRank
+
+                // Per-group input: [B, L, groupFeat]
+                let groupInput = outFlat[0..., 0..., gStart ..< gEnd]
+                // Slice weight rows for this group
+                let wRows = qLinear.weight[rStart ..< rEnd]
+                let sRows = qLinear.scales[rStart ..< rEnd]
+                let bRows = qLinear.biases.map { $0[rStart ..< rEnd] }
+
+                // quantizedMM: [B, L, groupFeat] @ dequant(wRows)^T → [B, L, oLoraRank]
+                let y = quantizedMM(
+                    groupInput,
+                    wRows,
+                    scales: sRows,
+                    biases: bRows,
+                    transpose: true,
+                    groupSize: qLinear.groupSize,
+                    bits: qLinear.bits,
+                    mode: qLinear.mode
+                )
+                pieces.append(y)
+            }
+            return concatenated(pieces, axis: -1)  // [B, L, oGroups * oLoraRank]
+        } else {
+            // Non-quantized fallback: batch matmul
+            // weight [oGroups*oLoraRank, groupFeat] → [oGroups, oLoraRank, groupFeat]
+            let wa = woA.weight.reshaped(oGroups, oLoraRank, groupFeat)
+            // grouped: [B, L, oGroups, groupFeat]
+            let grouped = outFlat.reshaped(B, L, oGroups, groupFeat)
+            // matmul: [B, L, oGroups, groupFeat] @ [oGroups, groupFeat, oLoraRank] → [B, L, oGroups, oLoraRank]
+            let oLora = matmul(grouped, wa.transposed(0, 2, 1))
+            return oLora.reshaped(B, L, oGroups * oLoraRank)
+        }
+    }
+
     func callAsFunction(
         _ x: MLXArray,
         mask: MLXFast.ScaledDotProductAttentionMaskMode,
@@ -331,15 +384,10 @@ class DeepseekV4Attention: Module {
         let qNope = q[.ellipsis, ..<nopeHeadDim]          // [B, n_heads, L, nope_head_dim]
         var qRope = q[.ellipsis, nopeHeadDim...]           // [B, n_heads, L, rope_head_dim]
         qRope = applyRotaryPosition(rope, to: qRope, cache: cache)
+        let queries = concatenated([qNope, qRope], axis: -1) // [B, n_heads, L, head_dim]
 
-        // --- KV (unified: same projection for K and V) ---
+        // --- KV: k = v (reference: k = v = concat([k_nope, k_pe_roped])) ---
         let kv = kvNorm(wkv(x))                           // [B, L, head_dim]
-
-        // V: use the pre-RoPE kv vector (approximation of inverse-RoPE mechanism)
-        let v = kv.reshaped(B, L, 1, headDim)
-            .transposed(0, 2, 1, 3)                       // [B, 1, L, head_dim]
-
-        // K: apply RoPE to last rope_head_dim dims
         let kvNope = kv[.ellipsis, ..<nopeHeadDim]
             .reshaped(B, L, 1, nopeHeadDim)
             .transposed(0, 2, 1, 3)                       // [B, 1, L, nope_head_dim]
@@ -348,26 +396,15 @@ class DeepseekV4Attention: Module {
             .transposed(0, 2, 1, 3)                       // [B, 1, L, rope_head_dim]
         kvRope = applyRotaryPosition(rope, to: kvRope, cache: cache)
         let kFull = concatenated([kvNope, kvRope], axis: -1) // [B, 1, L, head_dim]
-
-        // Full Q
-        let queries = concatenated([qNope, qRope], axis: -1) // [B, n_heads, L, head_dim]
-
-        // --- KV cache ---
-        var keys: MLXArray
-        var values: MLXArray
-        if let cache {
-            (keys, values) = cache.update(keys: kFull, values: v)
-        } else {
-            keys = kFull
-            values = v
-        }
+        // In reference k = v = kFull: both K and V have rope applied to their rope dims.
+        // attentionWithCacheUpdate handles the KV cache update internally.
 
         // --- Attention ---
-        // keys/values: [B, 1, S_total, head_dim] → broadcast across n_heads
+        // Pass kFull as both keys and values; cache update happens inside.
         let output = attentionWithCacheUpdate(
             queries: queries,
-            keys: keys,
-            values: values,
+            keys: kFull,
+            values: kFull,
             cache: cache,
             scale: scale,
             mask: mask
@@ -376,21 +413,8 @@ class DeepseekV4Attention: Module {
         .reshaped(B, L, numHeads, headDim)               // [B, L, n_heads, head_dim]
 
         // --- Grouped output projection ---
-        // Reshape to groups: [B, L, oGroups, nHeadsPerGroup * headDim]
-        let oGrouped = output.reshaped(B, L, oGroups, nHeadsPerGroup * headDim)
-
-        // Grouped matmul: [B, L, oGroups, nHeadsPerGroup*headDim] @ [oGroups, oLoraRank, nHeadsPerGroup*headDim].T
-        // wo_a.weight: [oGroups*oLoraRank, nHeadsPerGroup*headDim] → view as [oGroups, oLoraRank, nHeadsPerGroup*headDim]
-        let wA = woA.weight.reshaped(oGroups, oLoraRank, nHeadsPerGroup * headDim)
-
-        // Batched matmul: [B, L, oGroups, 1, D] @ [oGroups, D, R] → [B, L, oGroups, 1, R] → [B, L, oGroups, R]
-        let oLora = matmul(
-            oGrouped.expandedDimensions(axis: -2),        // [B, L, oGroups, 1, D]
-            wA.transposed(0, 2, 1)                         // [oGroups, D, R]
-        ).squeezed(axis: -2)                              // [B, L, oGroups, R]
-
-        // Flatten groups and apply wo_b: [B, L, oGroups*oLoraRank] → [B, L, hidden_size]
-        return woB(oLora.reshaped(B, L, oGroups * oLoraRank))
+        let oLora = groupedOutputProjection(output)        // [B, L, oGroups * oLoraRank]
+        return woB(oLora)
     }
 }
 
