@@ -196,9 +196,9 @@ public class Qwen3MoEModelInner: Module, LayerPartitionable, StreamableMoE {
     // StreamableMoE
     public var streamExperts: Bool = false
     
-    @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
+    @ModuleInfo(key: "embed_tokens") public var embedTokens: Embedding
 
-    fileprivate let layers: [Qwen3MoeDecoderLayer]
+    public let layers: [Qwen3MoeDecoderLayer]
     let norm: RMSNorm
     let args: Qwen3MoEConfiguration
 
@@ -238,7 +238,7 @@ public class Qwen3MoEModel: Module, LLMModel, KVCacheDimensionProvider {
     public let model: Qwen3MoEModelInner
     let configuration: Qwen3MoEConfiguration
 
-    @ModuleInfo(key: "lm_head") var lmHead: Linear?
+    @ModuleInfo(key: "lm_head") public var lmHead: Linear?
 
     public init(_ args: Qwen3MoEConfiguration) {
         self.configuration = args
@@ -259,6 +259,21 @@ public class Qwen3MoEModel: Module, LLMModel, KVCacheDimensionProvider {
             out = model.embedTokens.asLinear(out)
         }
         return out
+    }
+
+    public func callCapturing(
+        _ inputs: MLXArray, cache: [KVCache?]? = nil, captureLayerIDs: Set<Int>
+    ) -> (MLXArray, [Int: MLXArray]) {
+        var h = model.embedTokens(inputs)
+        let kvCache = cache?.compactMap { $0 }
+        let mask = createAttentionMask(h: h, cache: kvCache?.first)
+        var captured: [Int: MLXArray] = [:]
+        for (i, layer) in model.layers.enumerated() {
+            h = layer(h, mask: mask, cache: kvCache?[i])
+            if captureLayerIDs.contains(i) { captured[i] = h }
+        }
+        h = model.norm(h)
+        return (h, captured)
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
