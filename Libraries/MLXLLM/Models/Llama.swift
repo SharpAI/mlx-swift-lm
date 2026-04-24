@@ -186,11 +186,19 @@ public class LlamaModel: Module, LLMModel, KVCacheDimensionProvider {
         _ inputs: MLXArray, cache: [KVCache?]? = nil, captureLayerIDs: Set<Int>
     ) -> (MLXArray, [Int: MLXArray]) {
         var h = model.embedTokens(inputs)
-        let kvCache = cache?.compactMap { $0 }
-        let mask = createAttentionMask(h: h, cache: kvCache?.first)
+        let layerCount = model.layers.count
+        let kvCache: [KVCache?] = {
+            guard let c = cache else { return Array(repeating: nil, count: layerCount) }
+            var normalized: [KVCache?] = Array(repeating: nil, count: layerCount)
+            for (i, v) in c.prefix(layerCount).enumerated() { normalized[i] = v }
+            return normalized
+        }()
+        let mask = createAttentionMask(h: h, cache: kvCache.first ?? nil)
         var captured: [Int: MLXArray] = [:]
         for (i, layer) in model.layers.enumerated() {
-            h = layer(h, mask: mask, cache: kvCache?[i])
+            h = partitionedLayerCall(index: i, gpuLayerCount: model.gpuLayerCount) {
+                layer(h, mask: mask, cache: kvCache[i])
+            }
             if captureLayerIDs.contains(i) { captured[i] = h }
         }
         h = model.norm(h)
