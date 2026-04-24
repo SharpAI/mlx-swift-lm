@@ -147,7 +147,7 @@ public class Qwen3ModelInner: Module, LayerPartitionable {
     public var totalLayerCount: Int { layers.count }
     @ModuleInfo(key: "embed_tokens") public var embedTokens: Embedding
 
-    public let layers: [Qwen3TransformerBlock]
+    let layers: [Qwen3TransformerBlock]
     let norm: RMSNorm
 
     public init(_ args: Qwen3Configuration) {

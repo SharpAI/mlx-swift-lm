@@ -198,7 +198,7 @@ public class Qwen3MoEModelInner: Module, LayerPartitionable, StreamableMoE {
     
     @ModuleInfo(key: "embed_tokens") public var embedTokens: Embedding
 
-    public let layers: [Qwen3MoeDecoderLayer]
+    let layers: [Qwen3MoeDecoderLayer]
     let norm: RMSNorm
     let args: Qwen3MoEConfiguration
 
