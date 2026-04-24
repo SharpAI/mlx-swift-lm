@@ -443,7 +443,12 @@ class DeepseekV4Attention: Module {
         // --- Attention ---
         // Pass kFull as both keys and values; cache update happens inside.
         // Apply attn_sink (per-head bias) to attention logits when non-zero.
-        let sinksToUse: MLXArray? = attn_sink.sum().item(Float.self) != 0 ? attn_sink : nil
+        // Cast to queries.dtype (bfloat16) — attn_sink may be loaded as float32 from the
+        // checkpoint, but MLXFast.scaledDotProductAttention requires sinks to promote to
+        // the output dtype (bfloat16); float32 does not satisfy this constraint.
+        let sinksToUse: MLXArray? = attn_sink.sum().item(Float.self) != 0
+            ? attn_sink.asType(queries.dtype)
+            : nil
         let output = deepseekAttentionWithSinks(
             queries: queries,
             keys: kFull,

@@ -127,3 +127,42 @@ let container = try await loadModelContainer(
     using: TokenizersLoader()
 )
 ```
+
+## Performance
+
+Benchmarks run on a **MacBook Pro M5 Pro, 64 GB unified memory** using the built-in automated profiler (`run_benchmark.sh → Test 1`).
+
+### DeepSeek-V4-Flash (126 GB, Q3-mixed-gs128-affine)
+
+Model: [`Thump604/DeepSeek-V4-Flash-MLX-Q3-mixed-gs128-affine`](https://huggingface.co/Thump604/DeepSeek-V4-Flash-MLX-Q3-mixed-gs128-affine)
+
+> Dense/Vanilla and TurboQuant (non-SSD) configurations are skipped automatically — the 126 GB model exceeds available physical RAM and would cause system instability.
+
+| Configuration | Context | TTFT | Speed | GPU Alloc (virtual) | GPU InUse peak (physical) |
+|---|---|---|---|---|---|
+| SSD Stream | 512 | 6.80 s | 4.65 tok/s | 28.4 GB | 16.7 GB |
+| SSD Stream | 40,000 | 565 s | 0.32 tok/s | 60.5 GB | 12.5 GB |
+| **SSD + TurboQuant** | **512** | **6.35 s** | **4.78 tok/s** | **29.5 GB** | **16.8 GB** |
+| **SSD + TurboQuant** | **40,000** | **364 s** | **4.16 tok/s** | **40.6 GB** | **16.8 GB** |
+| SSD + 16-Worker Prefetch | 512 | 5.84 s | 4.43 tok/s | 29.3 GB | 16.6 GB |
+| SSD + 16-Worker Prefetch | 40,000 | 566 s | 0.32 tok/s | 60.9 GB | 13.6 GB |
+
+**Key findings:**
+- **SSD + TurboQuant is the clear winner** — 4.2 tok/s at 40K context vs 0.32 tok/s for baseline SSD Stream (13× faster), and 36% lower GPU virtual allocation (40.6 GB vs 60.5 GB).
+- **GPU InUse (physical RAM)** is the peak physical RAM high-water mark, sampled every 0.5 s during prefill + generation. GPU Alloc is the total virtual GPU address space including SSD-backed pages — the true memory demand.
+- At 512-token context all three SSD configurations perform similarly (~4.4–4.8 tok/s). TurboQuant's advantage emerges strongly at long context where KV cache compression matters most.
+
+### Running the Benchmark Yourself
+
+```bash
+# Build the release binary first
+swift build -c release
+
+# Launch the interactive benchmark suite
+./run_benchmark.sh
+# → Select: 1) Test 1: Automated Context & Memory Profile
+# → Select: 11) Thump604/DeepSeek-V4-Flash-MLX-Q3-mixed-gs128-affine
+# → Context lengths: 512,40000
+```
+
+Results are saved to `docs/profiling/profiling_results_<hostname>.md`.
