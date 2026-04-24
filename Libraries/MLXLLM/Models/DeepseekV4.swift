@@ -199,6 +199,22 @@ private func hcPost(
     return (term1 + term2).asType(x.dtype)
 }
 
+// MARK: - HCParams Module
+
+/// Lightweight Module to hold the three Hyper-Connection tensors loaded from checkpoint.
+/// Key names (fn, base, scale) match the `hc_attn.*` / `hc_ffn.*` / `hc_head.*` paths.
+class HCParams: Module {
+    var fn: MLXArray
+    var base: MLXArray
+    var scale: MLXArray
+
+    init(fn: MLXArray, base: MLXArray, scale: MLXArray) {
+        self.fn = fn
+        self.base = base
+        self.scale = scale
+    }
+}
+
 /// Final HC head: reduce [B,S,hc,D] → [B,S,D] for lm_head.
 /// No Sinkhorn – just sigmoid + eps weighted sum.
 private func hcHead(
@@ -238,13 +254,13 @@ class DeepseekV4Attention: Module {
     let rope: RoPELayer
 
     // Q low-rank projections
-    @ModuleInfo(key: "q_a_proj") var qAProj: Linear
-    @ModuleInfo(key: "q_a_layernorm") var qALayerNorm: RMSNorm
-    @ModuleInfo(key: "q_b_proj") var qBProj: Linear
+    @ModuleInfo(key: "wq_a") var wqA: Linear
+    @ModuleInfo(key: "q_norm") var qNorm: RMSNorm
+    @ModuleInfo(key: "wq_b") var wqB: Linear
 
     // Unified KV projection (K and V share the same projection)
     @ModuleInfo(key: "wkv") var wkv: Linear
-    @ModuleInfo(key: "kv_a_layernorm") var kvALayerNorm: RMSNorm
+    @ModuleInfo(key: "kv_norm") var kvNorm: RMSNorm
 
     // Grouped output projection
     @ModuleInfo(key: "wo_a") var woA: Linear
@@ -267,13 +283,13 @@ class DeepseekV4Attention: Module {
         self.eps = config.rmsNormEps
 
         // Q projections
-        self._qAProj.wrappedValue = Linear(config.hiddenSize, config.qLoraRank, bias: false)
-        self._qALayerNorm.wrappedValue = RMSNorm(dimensions: config.qLoraRank, eps: config.rmsNormEps)
-        self._qBProj.wrappedValue = Linear(config.qLoraRank, config.numAttentionHeads * config.headDim, bias: false)
+        self._wqA.wrappedValue = Linear(config.hiddenSize, config.qLoraRank, bias: false)
+        self._qNorm.wrappedValue = RMSNorm(dimensions: config.qLoraRank, eps: config.rmsNormEps)
+        self._wqB.wrappedValue = Linear(config.qLoraRank, config.numAttentionHeads * config.headDim, bias: false)
 
         // Unified KV: single head, headDim dimensional
         self._wkv.wrappedValue = Linear(config.hiddenSize, config.headDim, bias: false)
-        self._kvALayerNorm.wrappedValue = RMSNorm(dimensions: config.headDim, eps: config.rmsNormEps)
+        self._kvNorm.wrappedValue = RMSNorm(dimensions: config.headDim, eps: config.rmsNormEps)
 
         // Grouped output projection
         // wo_a: Linear(nHeadsPerGroup * headDim, oGroups * oLoraRank) per group → stored as [oGroups*oLoraRank, nHeadsPerGroup*headDim]
@@ -305,7 +321,7 @@ class DeepseekV4Attention: Module {
 
         // --- Query ---
         // Low-rank Q: wq_a → q_norm → wq_b
-        var q = qBProj(qALayerNorm(qAProj(x)))           // [B, L, n_heads * head_dim]
+        var q = wqB(qNorm(wqA(x)))                       // [B, L, n_heads * head_dim]
         q = q.reshaped(B, L, numHeads, headDim)
             .transposed(0, 2, 1, 3)                       // [B, n_heads, L, head_dim]
         // Per-head RMS normalization (no learnable scale)
@@ -317,7 +333,7 @@ class DeepseekV4Attention: Module {
         qRope = applyRotaryPosition(rope, to: qRope, cache: cache)
 
         // --- KV (unified: same projection for K and V) ---
-        let kv = kvALayerNorm(wkv(x))                     // [B, L, head_dim]
+        let kv = kvNorm(wkv(x))                           // [B, L, head_dim]
 
         // V: use the pre-RoPE kv vector (approximation of inverse-RoPE mechanism)
         let v = kv.reshaped(B, L, 1, headDim)
@@ -370,7 +386,7 @@ class DeepseekV4Attention: Module {
         // Batched matmul: [B, L, oGroups, 1, D] @ [oGroups, D, R] → [B, L, oGroups, 1, R] → [B, L, oGroups, R]
         let oLora = matmul(
             oGrouped.expandedDimensions(axis: -2),        // [B, L, oGroups, 1, D]
-            wA.transposed(-2, -1)                          // [oGroups, D, R]
+            wA.transposed(0, 2, 1)                         // [oGroups, D, R]
         ).squeezed(axis: -2)                              // [B, L, oGroups, R]
 
         // Flatten groups and apply wo_b: [B, L, oGroups*oLoraRank] → [B, L, hidden_size]
@@ -513,41 +529,42 @@ class DeepseekV4MoE: Module, UnaryLayer {
 class DeepseekV4Block: Module {
     let config: DeepseekV4Configuration
 
-    @ModuleInfo(key: "self_attn") var selfAttn: DeepseekV4Attention
-    var mlp: UnaryLayer
-    @ModuleInfo(key: "input_layernorm") var inputLayerNorm: RMSNorm
-    @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayerNorm: RMSNorm
+    // Key "attn" matches checkpoint path `layers.{l}.attn.*`
+    @ModuleInfo(key: "attn") var selfAttn: DeepseekV4Attention
+    // Plain var: property name "ffn" matches checkpoint path `layers.{l}.ffn.*`
+    var ffn: DeepseekV4MoE
+    // Key names match checkpoint: `attn_norm`, `ffn_norm`
+    @ModuleInfo(key: "attn_norm") var attnNorm: RMSNorm
+    @ModuleInfo(key: "ffn_norm") var ffnNorm: RMSNorm
 
-    // Manifold-Constrained Hyper-Connection parameters (float32, no .weight suffix)
-    // Named with underscores to match HF checkpoint key names directly
-    var hc_attn_fn: MLXArray    // [mix_hc, hc*D]
-    var hc_ffn_fn: MLXArray     // [mix_hc, hc*D]
-    var hc_attn_base: MLXArray  // [mix_hc]
-    var hc_ffn_base: MLXArray   // [mix_hc]
-    var hc_attn_scale: MLXArray // [3]
-    var hc_ffn_scale: MLXArray  // [3]
+    // Hyper-Connection parameter bundles.
+    // Underscore names match checkpoint paths: `hc_attn.fn/base/scale`, `hc_ffn.fn/base/scale`
+    var hc_attn: HCParams
+    var hc_ffn: HCParams
 
     init(config: DeepseekV4Configuration) {
         self.config = config
 
         self._selfAttn.wrappedValue = DeepseekV4Attention(config: config)
-        self.mlp = DeepseekV4MoE(config: config)
+        self.ffn = DeepseekV4MoE(config: config)
 
-        self._inputLayerNorm.wrappedValue = RMSNorm(
+        self._attnNorm.wrappedValue = RMSNorm(
             dimensions: config.hiddenSize, eps: config.rmsNormEps)
-        self._postAttentionLayerNorm.wrappedValue = RMSNorm(
+        self._ffnNorm.wrappedValue = RMSNorm(
             dimensions: config.hiddenSize, eps: config.rmsNormEps)
 
         // Initialize HC parameters (will be overwritten by weight loading)
         let hc = config.hcMult
         let mixHc = (2 + hc) * hc
         let hcDim = hc * config.hiddenSize
-        self.hc_attn_fn = zeros([mixHc, hcDim])
-        self.hc_ffn_fn = zeros([mixHc, hcDim])
-        self.hc_attn_base = zeros([mixHc])
-        self.hc_ffn_base = zeros([mixHc])
-        self.hc_attn_scale = ones([3])
-        self.hc_ffn_scale = ones([3])
+        self.hc_attn = HCParams(
+            fn: zeros([mixHc, hcDim]),
+            base: zeros([mixHc]),
+            scale: ones([3]))
+        self.hc_ffn = HCParams(
+            fn: zeros([mixHc, hcDim]),
+            base: zeros([mixHc]),
+            scale: ones([3]))
     }
 
     func callAsFunction(
@@ -561,16 +578,16 @@ class DeepseekV4Block: Module {
         // HC pre for attention: [B,S,hc,D] → [B,S,D]
         let (xAttn, postAttn, combAttn) = hcPre(
             x: residualAttn,
-            hcFn: hc_attn_fn,
-            hcScale: hc_attn_scale,
-            hcBase: hc_attn_base,
+            hcFn: hc_attn.fn,
+            hcScale: hc_attn.scale,
+            hcBase: hc_attn.base,
             hcMult: config.hcMult,
             sinkhornIters: config.hcSinkhornIters,
             eps: config.hcEps
         )
 
         // Attention sublayer: [B,S,D] → [B,S,D]
-        let attnOut = selfAttn(inputLayerNorm(xAttn), mask: mask, cache: cache)
+        let attnOut = selfAttn(attnNorm(xAttn), mask: mask, cache: cache)
 
         // HC post for attention: [B,S,D] → [B,S,hc,D]
         let residualFfn = hcPost(x: attnOut, residual: residualAttn, post: postAttn, comb: combAttn)
@@ -578,16 +595,16 @@ class DeepseekV4Block: Module {
         // HC pre for FFN: [B,S,hc,D] → [B,S,D]
         let (xFfn, postFfn, combFfn) = hcPre(
             x: residualFfn,
-            hcFn: hc_ffn_fn,
-            hcScale: hc_ffn_scale,
-            hcBase: hc_ffn_base,
+            hcFn: hc_ffn.fn,
+            hcScale: hc_ffn.scale,
+            hcBase: hc_ffn.base,
             hcMult: config.hcMult,
             sinkhornIters: config.hcSinkhornIters,
             eps: config.hcEps
         )
 
         // FFN sublayer: [B,S,D] → [B,S,D]
-        let ffnOut = mlp(postAttentionLayerNorm(xFfn))
+        let ffnOut = ffn(ffnNorm(xFfn))
 
         // HC post for FFN: [B,S,D] → [B,S,hc,D]
         return hcPost(x: ffnOut, residual: residualFfn, post: postFfn, comb: combFfn)
@@ -603,10 +620,9 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
     var layers: [DeepseekV4Block]
     @ModuleInfo(key: "norm") var norm: RMSNorm
 
-    // HC head parameters for final reduction [B,S,hc,D] → [B,S,D]
-    var hc_head_fn: MLXArray     // [hc, hc*D]
-    var hc_head_base: MLXArray   // [hc]
-    var hc_head_scale: MLXArray  // [1]
+    // HC head parameter bundle for final reduction [B,S,hc,D] → [B,S,D]
+    // Underscore name matches checkpoint path `model.hc_head.fn/base/scale`
+    var hc_head: HCParams
 
     public var gpuLayerCount: Int? = nil
     public var streamExperts: Bool = false
@@ -616,16 +632,19 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
         self.config = config
         self._embedTokens.wrappedValue = Embedding(
             embeddingCount: config.vocabSize, dimensions: config.hiddenSize)
-        self.layers = (0 ..< config.numHiddenLayers).map {
+        // Exclude MTP (multi-token prediction) layers from the main transformer stack
+        let mainLayerCount = config.numHiddenLayers - config.numNextnPredictLayers
+        self.layers = (0 ..< mainLayerCount).map {
             _ in DeepseekV4Block(config: config)
         }
         self._norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
 
         // HC head parameters (will be overwritten by weight loading)
         let hc = config.hcMult
-        self.hc_head_fn = zeros([hc, hc * config.hiddenSize])
-        self.hc_head_base = zeros([hc])
-        self.hc_head_scale = ones([1])
+        self.hc_head = HCParams(
+            fn: zeros([hc, hc * config.hiddenSize]),
+            base: zeros([hc]),
+            scale: ones([1]))
     }
 
     func callAsFunction(_ x: MLXArray, cache: [KVCache]?) -> MLXArray {
@@ -655,8 +674,8 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
 
         // HC head: [B, S, hc, D] → [B, S, D]
         h = hcHead(
-            x: h, hcFn: hc_head_fn, hcScale: hc_head_scale,
-            hcBase: hc_head_base, eps: config.hcEps)
+            x: h, hcFn: hc_head.fn, hcScale: hc_head.scale,
+            hcBase: hc_head.base, eps: config.hcEps)
 
         return norm(h)
     }
@@ -674,7 +693,7 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
 
     init(_ args: DeepseekV4Configuration) {
         self.args = args
-        self.kvHeads = Array(repeating: 1, count: args.numHiddenLayers)
+        self.kvHeads = Array(repeating: 1, count: args.numHiddenLayers - args.numNextnPredictLayers)
         self.model = DeepseekV4ModelInner(config: args)
         self._lmHead.wrappedValue = Linear(args.hiddenSize, args.vocabSize, bias: false)
     }
@@ -710,20 +729,21 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
             }
         }
 
-        // 2. Stack per-expert weights into SwitchGLU format
-        for l in 0 ..< args.numHiddenLayers {
+        // 2. Stack per-expert weights into SwitchGLU format (for non-pre-stacked checkpoints)
+        // MLX quantized checkpoints already have stacked weights; this is a no-op for them.
+        let mainLayerCount = args.numHiddenLayers - args.numNextnPredictLayers
+        for l in 0 ..< mainLayerCount {
             let prefix = "model.layers.\(l)"
             for projName in ["gate_proj", "down_proj", "up_proj"] {
                 for key in ["weight", "scales", "biases"] {
-                    let firstKey = "\(prefix).mlp.experts.0.\(projName).\(key)"
+                    let firstKey = "\(prefix).ffn.experts.0.\(projName).\(key)"
                     if weights[firstKey] != nil {
                         let stacked = (0 ..< args.nRoutedExperts).map {
-                            weights["\(prefix).mlp.experts.\($0).\(projName).\(key)"]!
+                            weights["\(prefix).ffn.experts.\($0).\(projName).\(key)"]!
                         }
-                        newWeights["\(prefix).mlp.switch_mlp.\(projName).\(key)"] = MLX.stacked(stacked)
-                        // Remove individual expert keys
+                        newWeights["\(prefix).ffn.switch_mlp.\(projName).\(key)"] = MLX.stacked(stacked)
                         for j in 0 ..< args.nRoutedExperts {
-                            newWeights.removeValue(forKey: "\(prefix).mlp.experts.\(j).\(projName).\(key)")
+                            newWeights.removeValue(forKey: "\(prefix).ffn.experts.\(j).\(projName).\(key)")
                         }
                     }
                 }
@@ -731,13 +751,13 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         }
 
         // 3. Filter out MTP (multi-token prediction) layers and rotary_emb keys
-        let numMainLayers = args.numHiddenLayers
+        let numMainLayers = args.numHiddenLayers - args.numNextnPredictLayers
         return newWeights.filter { key, _ in
-            // Drop MTP layer weights (layers beyond numHiddenLayers - numNextnPredictLayers)
+            // Drop MTP layer weights (layers at index >= numMainLayers)
             if key.starts(with: "model.layers.") {
                 let parts = key.split(separator: ".")
                 if parts.count >= 3, let layerIdx = Int(parts[2]) {
-                    if layerIdx >= numMainLayers - args.numNextnPredictLayers {
+                    if layerIdx >= numMainLayers {
                         return false
                     }
                 }
