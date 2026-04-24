@@ -152,6 +152,27 @@ public class LlamaModelInner: Module, LayerPartitionable {
 
         return norm(h)
     }
+
+    public func callCapturing(
+        _ inputs: MLXArray, cache: [KVCache?]? = nil, captureLayerIDs: Set<Int>
+    ) -> (MLXArray, [Int: MLXArray]) {
+        var h = embedTokens(inputs)
+        let kvCache: [KVCache?] = {
+            guard let c = cache else { return Array(repeating: nil, count: layers.count) }
+            var normalized: [KVCache?] = Array(repeating: nil, count: layers.count)
+            for (i, v) in c.prefix(layers.count).enumerated() { normalized[i] = v }
+            return normalized
+        }()
+        let mask = createAttentionMask(h: h, cache: kvCache.first ?? nil)
+        var captured: [Int: MLXArray] = [:]
+        for (i, layer) in layers.enumerated() {
+            h = partitionedLayerCall(index: i, gpuLayerCount: gpuLayerCount) {
+                layer(h, mask: mask, cache: kvCache[i])
+            }
+            if captureLayerIDs.contains(i) { captured[i] = h }
+        }
+        return (norm(h), captured)
+    }
 }
 
 /// Model for Llama and Mistral model types.
@@ -180,29 +201,6 @@ public class LlamaModel: Module, LLMModel, KVCacheDimensionProvider {
         } else {
             return model.embedTokens.asLinear(out)
         }
-    }
-
-    public func callCapturing(
-        _ inputs: MLXArray, cache: [KVCache?]? = nil, captureLayerIDs: Set<Int>
-    ) -> (MLXArray, [Int: MLXArray]) {
-        var h = model.embedTokens(inputs)
-        let layerCount = model.layers.count
-        let kvCache: [KVCache?] = {
-            guard let c = cache else { return Array(repeating: nil, count: layerCount) }
-            var normalized: [KVCache?] = Array(repeating: nil, count: layerCount)
-            for (i, v) in c.prefix(layerCount).enumerated() { normalized[i] = v }
-            return normalized
-        }()
-        let mask = createAttentionMask(h: h, cache: kvCache.first ?? nil)
-        var captured: [Int: MLXArray] = [:]
-        for (i, layer) in model.layers.enumerated() {
-            h = partitionedLayerCall(index: i, gpuLayerCount: model.gpuLayerCount) {
-                layer(h, mask: mask, cache: kvCache[i])
-            }
-            if captureLayerIDs.contains(i) { captured[i] = h }
-        }
-        h = model.norm(h)
-        return (h, captured)
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
