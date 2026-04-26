@@ -543,16 +543,25 @@ final class Qwen35DecoderLayer: Module {
         // ─────────────────────────────────────────────────────────────────────
         // FLUSH-LOAD-EXECUTE ARCHITECTURE: Phase 1 (Flush & Split)
         // ─────────────────────────────────────────────────────────────────────
-        // If we are processing a Mixture of Experts layer, we explicitly evaluate
-        // the attention subgraph (`h`) and synchronize the Metal GPU queue here.
-        // 
-        // THIS IS VITAL FOR TWO REASONS:
-        // 1. FRESH COMMAND BUFFER (Streaming): When SSD Expert Streaming evaluates
-        //    the `mlp` custom op, it performs a highly latency-sensitive `load_sync` 
-        //    (blocking the CPU). Ensuring the previous GPU work is committed and completed
-        //    means the expert GEMM executes on an isolated, empty Metal Command Buffer.
+        // If we are processing a Mixture of Experts layer AND SSD expert streaming
+        // is active, we explicitly evaluate the attention subgraph (`h`) and
+        // synchronize the Metal GPU queue here.
+        //
+        // THIS IS VITAL FOR SSD STREAMING: When SSD Expert Streaming evaluates
+        // the `mlp` custom op, it performs a highly latency-sensitive `load_sync`
+        // (blocking the CPU). Ensuring the previous GPU work is committed and
+        // completed means the expert GEMM executes on an isolated, empty Metal
+        // Command Buffer.
+        //
+        // GATING: The flush is ONLY needed when streaming experts from SSD. With
+        // experts resident in RAM (default 35B-A3B path), these two per-layer
+        // syncs drain the Metal command queue 2x per layer x 32 layers = 64 hard
+        // CPU<->GPU syncs per token, capping GPU utilization well below 100% and
+        // serializing kernel launches that MLX would otherwise pipeline.
         // ─────────────────────────────────────────────────────────────────────
-        if let _ = self.mlp as? Qwen35SparseMoeBlock {
+        let needsMoeFlush = (self.mlp is Qwen35SparseMoeBlock)
+            && ExpertStreamingConfig.shared.isEnabled
+        if needsMoeFlush {
             if let cacheState = cache {
                 eval([h] + cacheState.innerState())
             } else {
@@ -560,10 +569,10 @@ final class Qwen35DecoderLayer: Module {
             }
             Stream.gpu.synchronize()
         }
-        
+
         let mlpOutput = (self.mlp as! UnaryLayer)(postAttentionLayerNorm(h))
         let finalH = h + mlpOutput
-        if let _ = self.mlp as? Qwen35SparseMoeBlock {
+        if needsMoeFlush {
             eval(finalH)
             Stream.gpu.synchronize()
         }
