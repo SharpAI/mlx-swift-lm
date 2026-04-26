@@ -54,6 +54,21 @@ public class SwitchGLU: Module, @unchecked Sendable {
     // Previous token's expert routing per layer for speculative prefetch.
     private var _previousExpertIds: [Int]?
 
+    // ── Cache-slot tunable (env-tunable via `MLX_MOE_CACHE_SLOTS=N`) ──
+    // Number of resident expert slots used by SSD-streaming paths that keep
+    // experts cached across tokens. Default 16 is a good balance for top-k=8
+    // routing on Apple Silicon: enough slack for prev-token spec prefetch +
+    // current-token misses without over-pressuring the unified-memory
+    // allocator. Larger values trade RAM for hit-rate. Minimum is 6 (must
+    // accommodate top-k plus a small eviction margin).
+    static let MAX_CACHE_SLOTS: Int = {
+        if let v = ProcessInfo.processInfo.environment["MLX_MOE_CACHE_SLOTS"],
+           let n = Int(v), n >= 6 {
+            return n
+        }
+        return 16
+    }()
+
     public init(
         inputDims: Int,
         hiddenDims: Int,
