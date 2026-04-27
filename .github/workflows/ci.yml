@@ -123,6 +123,12 @@ jobs:
           # Replace the local submodule with the actively checked out code
           rm -rf mlx-swift-lm
           cp -r ../mlx-swift-lm .
+
+      - name: Update mlx-swift submodule to latest main
+        run: |
+          cd SwiftLM/mlx-swift
+          git fetch origin main
+          git checkout origin/main
           
       - name: Build SwiftLM
         run: |
