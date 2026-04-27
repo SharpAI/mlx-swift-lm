@@ -33,6 +33,14 @@ jobs:
           mkdir -p SwiftLM/mlx-swift-lm
           find . -mindepth 1 -maxdepth 1 ! -name "SwiftLM" -exec cp -r {} SwiftLM/mlx-swift-lm/ \;
 
+      - name: Update mlx-swift submodule to latest main
+        # SwiftLM's mlx-swift submodule pin may lag behind main.
+        # Pull latest so new APIs are available for the build.
+        run: |
+          cd SwiftLM/mlx-swift
+          git fetch origin main
+          git checkout origin/main
+
       - name: Install Metal Toolchain
         run: xcodebuild -downloadComponent MetalToolchain || true
 
