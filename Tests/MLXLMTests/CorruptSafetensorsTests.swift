@@ -33,12 +33,17 @@ struct CorruptSafetensorsTests {
 
         let dst = MLXArray.zeros([256, 1024])
         dst.eval()
+        
+        struct SendableArray: @unchecked Sendable {
+            let array: MLXArray
+        }
+        let sendableDst = SendableArray(array: dst)
 
         let errState = ThreadSafeError()
 
         DispatchQueue.concurrentPerform(iterations: 16) { i in
             errState.catchError {
-                MLXFast.preadIntoOffset(dst, safetensorsPath: path, tensorName: "weight", expertIndex: UInt32(i), dstOffset: i * 1024 * 4)
+                MLXFast.preadIntoOffset(sendableDst.array, safetensorsPath: path, tensorName: "weight", expertIndex: UInt32(i), dstOffset: i * 1024 * 4)
             }
         }
 
