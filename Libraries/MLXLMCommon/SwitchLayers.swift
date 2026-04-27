@@ -713,6 +713,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
 
                         var usedSlots = Set<Int>()
                         var missInfo = [(rangeIdx: Int, expertId: Int, bufferSlot: Int)]()
+                        var slotExhausted = false
 
                         for (ri, r) in ranges.enumerated() {
                             if let slot = prevSlotMap[r.id], !usedSlots.contains(slot) {
@@ -723,7 +724,12 @@ public class SwitchGLU: Module, @unchecked Sendable {
                                 usedSlots.insert(slot)
                             } else {
                                 // MISS: find a free slot
-                                let freeSlot = (0..<maxBuffers).first { !usedSlots.contains($0) }!
+                                guard let freeSlot = (0..<maxBuffers).first(where: { !usedSlots.contains($0) }) else {
+                                    // All buffer slots exhausted — fall through to
+                                    // full-pread path below (Issue #87)
+                                    slotExhausted = true
+                                    break
+                                }
                                 usedGate.append(_persistentGate![freeSlot])
                                 usedUp.append(_persistentUp![freeSlot])
                                 usedDown.append(_persistentDown![freeSlot])
@@ -733,7 +739,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                         }
 
                         // Pread only misses (~30% of experts, ~6 reads at QD=6)
-                        if !missInfo.isEmpty {
+                        if !slotExhausted && !missInfo.isEmpty {
                             let totalMissReads = missInfo.count * 3
                             let errState = ThreadSafeError()
                             DispatchQueue.concurrentPerform(iterations: totalMissReads) { [missInfo] i in
@@ -762,8 +768,13 @@ public class SwitchGLU: Module, @unchecked Sendable {
                             }
                             errState.check()
                         }
-                    } else {
-                        // No predictions available — full pread fallback
+                    }
+
+                    // Slot exhaustion or no predictions — full pread fallback
+                    if usedGate.count != ranges.count {
+                        usedGate.removeAll()
+                        usedUp.removeAll()
+                        usedDown.removeAll()
                         for i in 0..<ranges.count {
                             usedGate.append(_persistentGate![i])
                             usedUp.append(_persistentUp![i])
