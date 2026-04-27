@@ -272,7 +272,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
         if !specTargets.isEmpty {
             let bpe = _stackedBytesPerExpert
             let downBpe = _stackedDownBytesPerExpert
+            let errState = ThreadSafeError()
             DispatchQueue.concurrentPerform(iterations: specTargets.count * 3) { [specTargets] i in
+                errState.catchError {
                 let mIdx = i / 3
                 let proj = i % 3
                 let info = specTargets[mIdx]
@@ -301,7 +303,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     MLXFast.preadIntoOffset(self._stackedDown!, safetensorsPath: downSSD.path,
                                             tensorName: downSSD.tensorName, expertIndex: UInt32(info.expertId), dstOffset: info.slot * downBpe)
                 }
+                }
             }
+            errState.check()
         }
 
         if idx.size == 0 {
@@ -372,7 +376,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
         if !missesNeedingPread.isEmpty {
             let bpe = _stackedBytesPerExpert
             let downBpe = _stackedDownBytesPerExpert
+            let errState = ThreadSafeError()
             DispatchQueue.concurrentPerform(iterations: missesNeedingPread.count * 3) { [missesNeedingPread] i in
+                errState.catchError {
                 let mIdx = i / 3
                 let proj = i % 3
                 let info = missesNeedingPread[mIdx]
@@ -399,7 +405,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     MLXFast.preadIntoOffset(self._stackedDown!, safetensorsPath: downSSD.path,
                                             tensorName: downSSD.tensorName, expertIndex: UInt32(info.expertId), dstOffset: info.slot * downBpe)
                 }
+                }
             }
+            errState.check()
         }
         _previousExpertIds = ranges.map { $0.id }
 
@@ -596,7 +604,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
 
                     // Full concurrent pread (baseline path)
                     let totalReads = ranges.count * 3
+                    let errState = ThreadSafeError()
                     DispatchQueue.concurrentPerform(iterations: totalReads) { [ranges] i in
+                        errState.catchError {
                         let expertIdx = i / 3
                         let projIdx = i % 3
                         let r = ranges[expertIdx]
@@ -611,7 +621,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
                             MLXFast.preadInto(self._persistentDown![expertIdx], safetensorsPath: downSSD.path,
                                               tensorName: downSSD.tensorName, expertIndex: UInt32(r.id))
                         }
+                        }
                     }
+                    errState.check()
 
                     // Store routing for next token's predictions
                     _previousExpertIds = ranges.map { $0.id }
@@ -640,7 +652,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     if let prevIds = _previousExpertIds {
                         let specCount = min(prevIds.count, maxBuffers)
                         let specReads = specCount * 3
+                        let errState = ThreadSafeError()
                         DispatchQueue.concurrentPerform(iterations: specReads) { i in
+                            errState.catchError {
                             let slot = i / 3
                             let proj = i % 3
                             let expertId = prevIds[slot]
@@ -655,7 +669,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
                                 MLXFast.preadInto(self._persistentDown![slot], safetensorsPath: downSSD.path,
                                                   tensorName: downSSD.tensorName, expertIndex: UInt32(expertId))
                             }
+                            }
                         }
+                        errState.check()
                     }
 
                     // Sync on idx (blocks until GPU finishes attention + router)
@@ -719,7 +735,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
                         // Pread only misses (~30% of experts, ~6 reads at QD=6)
                         if !missInfo.isEmpty {
                             let totalMissReads = missInfo.count * 3
+                            let errState = ThreadSafeError()
                             DispatchQueue.concurrentPerform(iterations: totalMissReads) { [missInfo] i in
+                                errState.catchError {
                                 let mIdx = i / 3
                                 let proj = i % 3
                                 let info = missInfo[mIdx]
@@ -740,7 +758,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
                                                       tensorName: downSSD.tensorName,
                                                       expertIndex: UInt32(info.expertId))
                                 }
+                                }
                             }
+                            errState.check()
                         }
                     } else {
                         // No predictions available — full pread fallback
@@ -750,7 +770,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
                             usedDown.append(_persistentDown![i])
                         }
                         let totalReads = ranges.count * 3
+                        let errState = ThreadSafeError()
                         DispatchQueue.concurrentPerform(iterations: totalReads) { [ranges] i in
+                            errState.catchError {
                             let expertIdx = i / 3
                             let projIdx = i % 3
                             let r = ranges[expertIdx]
@@ -765,7 +787,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
                                 MLXFast.preadInto(self._persistentDown![expertIdx], safetensorsPath: downSSD.path,
                                                   tensorName: downSSD.tensorName, expertIndex: UInt32(r.id))
                             }
+                            }
                         }
+                        errState.check()
                     }
 
                     // Update routing for next token's predictions
@@ -814,7 +838,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
 
                 // Concurrent pread (same as fast path)
                 let totalReads = ranges.count * 3
+                let errState = ThreadSafeError()
                 DispatchQueue.concurrentPerform(iterations: totalReads) { [ranges] i in
+                    errState.catchError {
                     let expertIdx = i / 3
                     let projIdx = i % 3
                     let r = ranges[expertIdx]
@@ -829,7 +855,9 @@ public class SwitchGLU: Module, @unchecked Sendable {
                         MLXFast.preadInto(downBuffers[expertIdx], safetensorsPath: downSSD.path,
                                           tensorName: downSSD.tensorName, expertIndex: UInt32(r.id))
                     }
+                    }
                 }
+                errState.check()
 
                 // Lazy compute (no eval — next layer forces it)
                 let xGate = qGate.computeExperts(x, buffers: gateBuffers, ranges: ranges)
