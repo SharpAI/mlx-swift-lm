@@ -102,6 +102,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
     private var _tokenCounter: Int = 0
     // Bytes per expert slab in a stacked buffer; computed once on cold init.
     private var _stackedBytesPerExpert: Int = 0
+    private var _stackedDownBytesPerExpert: Int = 0
 
     // ── Fused gate+up SwiGLU mode (env-gated MLX_MOE_FUSE_GATEUP=1) ──
     // SwiGLU MLP is `silu(gate(x)) * up(x)`; gate and up are independent
@@ -204,7 +205,8 @@ public class SwitchGLU: Module, @unchecked Sendable {
                 if let cb = _combinedGateUpBiases { coldEvalList.append(cb) }
                 MLX.eval(coldEvalList)
                 _stackedGateUpBytesPerProj = _stackedGateUp!.nbytes / CACHE_SLOTS / 2
-                _stackedBytesPerExpert = _stackedGateUpBytesPerProj  // shared with down
+                _stackedBytesPerExpert = _stackedGateUpBytesPerProj
+                _stackedDownBytesPerExpert = _stackedDown!.nbytes / CACHE_SLOTS
             } else {
                 _stackedGate = MLXArray.zeros(
                     [CACHE_SLOTS, qGate.weight.dim(1), qGate.weight.dim(2)]
@@ -220,6 +222,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                 _tokenCounter = 0
                 MLX.eval([idx, _stackedGate!, _stackedUp!, _stackedDown!])
                 _stackedBytesPerExpert = _stackedGate!.nbytes / CACHE_SLOTS
+                _stackedDownBytesPerExpert = _stackedDown!.nbytes / CACHE_SLOTS
             }
         } else {
             // Warm path: kick off GPU work asynchronously while we
@@ -268,6 +271,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
         }
         if !specTargets.isEmpty {
             let bpe = _stackedBytesPerExpert
+            let downBpe = _stackedDownBytesPerExpert
             DispatchQueue.concurrentPerform(iterations: specTargets.count * 3) { [specTargets] i in
                 let mIdx = i / 3
                 let proj = i % 3
@@ -295,7 +299,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     }
                 default:
                     MLXFast.preadIntoOffset(self._stackedDown!, safetensorsPath: downSSD.path,
-                                            tensorName: downSSD.tensorName, expertIndex: UInt32(info.expertId), dstOffset: info.slot * bpe)
+                                            tensorName: downSSD.tensorName, expertIndex: UInt32(info.expertId), dstOffset: info.slot * downBpe)
                 }
             }
         }
@@ -367,6 +371,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
         // ── Pread misses into stacked-buffer slots ──
         if !missesNeedingPread.isEmpty {
             let bpe = _stackedBytesPerExpert
+            let downBpe = _stackedDownBytesPerExpert
             DispatchQueue.concurrentPerform(iterations: missesNeedingPread.count * 3) { [missesNeedingPread] i in
                 let mIdx = i / 3
                 let proj = i % 3
@@ -392,7 +397,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
                     }
                 default:
                     MLXFast.preadIntoOffset(self._stackedDown!, safetensorsPath: downSSD.path,
-                                            tensorName: downSSD.tensorName, expertIndex: UInt32(info.expertId), dstOffset: info.slot * bpe)
+                                            tensorName: downSSD.tensorName, expertIndex: UInt32(info.expertId), dstOffset: info.slot * downBpe)
                 }
             }
         }
@@ -1183,8 +1188,8 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
     /// single dispatch over the full stacked weight buffer.
     ///
     /// - Parameters:
-    ///   - x: input activations, shape `[totalTokens, ..., hidden]`.
-    ///   - stackedBuffer: weight buffer, shape `[CACHE_SLOTS, intermediate, hidden]`.
+    ///   - x: input activations, shape `[totalTokens, ..., inputDims]`.
+    ///   - stackedBuffer: weight buffer, shape `[CACHE_SLOTS, outputDims, inputDims]`.
     ///       Slots are populated externally via `MLXFast.preadIntoOffset`.
     ///   - slotPerToken: uint32 array mapping each token (along axis 0 of `x`)
     ///       to a slot index in `stackedBuffer`. Built from the routing.
@@ -1198,7 +1203,7 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
     ) -> MLXArray {
         let slotExpertsMLX = MLXArray(slotExperts).asType(.uint32)
         // Gather scales/biases for the experts currently in our slots.
-        // Result shape: [N_slots, intermediate, hidden / groupSize].
+        // Result shape: [N_slots, outputDims, inputDims / groupSize].
         let stackedScales = MLX.take(self.scales, slotExpertsMLX, axis: 0)
         var stackedBiases: MLXArray? = nil
         if let b = self.biases { stackedBiases = MLX.take(b, slotExpertsMLX, axis: 0) }
@@ -1214,8 +1219,8 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
 
         // Optional per-token bias add (gathered from per-slot bias).
         if let bias = self.bias {
-            let stackedBias = MLX.take(bias, slotExpertsMLX, axis: 0)             // [N_slots, intermediate]
-            let perTokenBias = MLX.take(stackedBias, slotPerToken, axis: 0)       // [tokens, intermediate]
+            let stackedBias = MLX.take(bias, slotExpertsMLX, axis: 0)             // [N_slots, outputDims]
+            let perTokenBias = MLX.take(stackedBias, slotPerToken, axis: 0)       // [tokens, outputDims]
             output = output + MLX.expandedDimensions(perTokenBias, axis: -2)
         }
 
