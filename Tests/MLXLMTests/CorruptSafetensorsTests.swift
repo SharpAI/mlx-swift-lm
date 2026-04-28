@@ -6,6 +6,32 @@ import Testing
 @Suite
 struct CorruptSafetensorsTests {
     @Test
+    func testThreadSafeErrorCheckPublishesToActiveLatch() throws {
+        let latch = SSDStreamingErrorLatch()
+
+        SSDStreamingErrorLatch.withActive(latch) {
+            let errState = ThreadSafeError()
+            errState.catchError {
+                throw NSError(domain: "CorruptSafetensorsTests", code: 13, userInfo: [
+                    NSLocalizedDescriptionKey: "truncated shard"
+                ])
+            }
+
+            let latched = errState.check()
+            #expect(latched != nil)
+        }
+
+        do {
+            try latch.throwIfSet()
+            Issue.record("Expected latch.throwIfSet() to surface an SSDStreamingError")
+        } catch let error as SSDStreamingError {
+            #expect(error.localizedDescription.contains("truncated shard"))
+        } catch {
+            Issue.record("Unexpected error type: \(error)")
+        }
+    }
+
+    @Test
     func testDeadlock() throws {
         let tempDir = FileManager.default.temporaryDirectory
         let pathUrl = tempDir.appendingPathComponent("dummy_corrupt_\(UUID().uuidString).safetensors")

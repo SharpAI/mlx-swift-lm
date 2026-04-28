@@ -502,6 +502,7 @@ protocol TokenIteratorProtocol: Sequence, IteratorProtocol where Element == Int 
     var maxTokens: Int? { get }
     var tokenCount: Int { get }
     var promptPrefillTime: TimeInterval { get }
+    var streamingError: SSDStreamingError? { get }
 }
 
 /// Generator of tokens.
@@ -546,6 +547,8 @@ public struct TokenIterator: TokenIteratorProtocol {
 
     // Internal metrics
     var promptPrefillTime: TimeInterval = 0.0
+    var streamingError: SSDStreamingError?
+    let ssdErrorLatch = SSDStreamingErrorLatch()
 
     /// Initialize a `TokenIterator` with the given tokens. Note: this has been
     /// replaced with ``init(input:model:cache:parameters:)``.
@@ -646,16 +649,25 @@ public struct TokenIterator: TokenIteratorProtocol {
     mutating func prepare(input: LMInput, windowSize: Int? = nil) throws {
         processor?.prompt(input.text.tokens)
 
-        switch try model.prepare(input, cache: cache, windowSize: windowSize) {
+        let preparation = try SSDStreamingErrorLatch.withActive(ssdErrorLatch) {
+            try model.prepare(input, cache: cache, windowSize: windowSize)
+        }
+
+        switch preparation {
         case .tokens(let tokens):
             y = tokens
 
+            try ssdErrorLatch.throwIfSet()
+
             // evaluate the remainder of the prompt -- this primes the pump
-            let token = step(previous: y)
+            let token = try step(previous: y)
+
             y = .init(tokens: token)
             asyncEval(y.tokens)
 
         case .logits(let result):
+            try ssdErrorLatch.throwIfSet()
+
             y = .init(tokens: convertToToken(logits: result.logits))
             asyncEval(y.tokens)
 
@@ -677,10 +689,13 @@ public struct TokenIterator: TokenIteratorProtocol {
     }
 
     /// Evaluate the next token and return the new token (y), updating cache state
-    mutating func step(previous: LMInput.Text) -> MLXArray {
-        let result = model(
-            previous[text: .newAxis], cache: cache.isEmpty ? nil : cache, state: state)
+    mutating func step(previous: LMInput.Text) throws -> MLXArray {
+        let result = SSDStreamingErrorLatch.withActive(ssdErrorLatch) {
+            model(previous[text: .newAxis], cache: cache.isEmpty ? nil : cache, state: state)
+        }
         self.state = result.state
+
+        try ssdErrorLatch.throwIfSet()
 
         // Apply dynamic cache quantization after each step
         maybeQuantizeKVCache(
@@ -694,6 +709,10 @@ public struct TokenIterator: TokenIteratorProtocol {
     }
 
     mutating public func next() -> Int? {
+        if streamingError != nil {
+            return nil
+        }
+
         if let maxTokens, tokenCount >= maxTokens {
             return nil
         }
@@ -702,7 +721,17 @@ public struct TokenIterator: TokenIteratorProtocol {
         let previousY = y
 
         // compute the next state and async eval the next token
-        let token = step(previous: previousY)
+        let token: MLXArray
+        do {
+            token = try step(previous: previousY)
+        } catch let error as SSDStreamingError {
+            streamingError = error
+            return nil
+        } catch {
+            streamingError = SSDStreamingError(underlyingError: error)
+            return nil
+        }
+
         y = .init(tokens: token)
         asyncEval(token)
 
@@ -746,6 +775,7 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
     let draftModel: any LanguageModel
 
     var mainState: LMOutput.State?
+    public let streamingError: SSDStreamingError? = nil
     var mainCache: [KVCache]
     var draftCache: [KVCache]
     let quantizeKVCache: (inout [KVCache]) -> Void
@@ -1685,7 +1715,7 @@ private func generateLoopTask<Handler: TokenLoopHandler>(
     // Launch a Task to perform iteration asynchronously.
     let task = Task {
         let performIteration = {
-            let iterator = iterator.consume()
+            var iterator = iterator.consume()
             var handler = handler.consume()
 
             var start = Date.timeIntervalSinceReferenceDate
@@ -1698,7 +1728,7 @@ private func generateLoopTask<Handler: TokenLoopHandler>(
                 tokenizer: tokenizer
             )
 
-            for token in iterator {
+            while let token = iterator.next() {
                 // Check for cancellation on every loop iteration.
                 if Task.isCancelled {
                     stopReason = .cancelled
@@ -1732,7 +1762,7 @@ private func generateLoopTask<Handler: TokenLoopHandler>(
             }
 
             if stopReason == nil {
-                if Task.isCancelled {
+                if Task.isCancelled || iterator.streamingError != nil {
                     stopReason = .cancelled
                 } else if let maxTokens = iterator.maxTokens, tokenCount >= maxTokens {
                     stopReason = .length
