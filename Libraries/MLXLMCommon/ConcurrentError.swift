@@ -23,6 +23,7 @@ private enum SSDStreamingErrorLatchContext {
 /// `callAsFunction` paths. A generation installs its own active latch around
 /// model execution so concurrent sessions do not cross-contaminate each other.
 public final class SSDStreamingErrorLatch: @unchecked Sendable {
+    public static let shared = SSDStreamingErrorLatch()
     private let lock = NSLock()
     private var _error: Error?
 
@@ -105,6 +106,7 @@ package final class ThreadSafeError: @unchecked Sendable {
         if let error = error {
             let streamingError = SSDStreamingError(underlyingError: error)
             latch?.set(streamingError)
+            SSDStreamingErrorLatch.shared.set(streamingError)
             return streamingError
         }
         return nil

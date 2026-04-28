@@ -1159,9 +1159,7 @@ private func runSynchronousGenerationLoop(
 
     // If the iterator ends naturally, the max-token limit was reached.
     if stopReason == nil {
-        if iterator.streamingError != nil {
-            stopReason = .error
-        } else if let maxTokens = iterator.maxTokens, iterator.tokenCount >= maxTokens {
+        if let maxTokens = iterator.maxTokens, iterator.tokenCount >= maxTokens {
             stopReason = .length
         } else {
             stopReason = .cancelled
@@ -1764,9 +1762,7 @@ private func generateLoopTask<Handler: TokenLoopHandler>(
             }
 
             if stopReason == nil {
-                if iterator.streamingError != nil {
-                    stopReason = .error
-                } else if Task.isCancelled {
+                if Task.isCancelled || iterator.streamingError != nil {
                     stopReason = .cancelled
                 } else if let maxTokens = iterator.maxTokens, tokenCount >= maxTokens {
                     stopReason = .length
@@ -1834,9 +1830,6 @@ public enum GenerateStopReason: Sendable {
 
     /// Generation stopped due to explicit task cancellation or early stream termination.
     case cancelled
-
-    /// Generation stopped because model evaluation failed.
-    case error
 }
 
 /// Represents metadata and statistics related to token generation.
