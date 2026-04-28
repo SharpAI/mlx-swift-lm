@@ -650,12 +650,24 @@ public struct TokenIterator: TokenIteratorProtocol {
         case .tokens(let tokens):
             y = tokens
 
+            // Check for SSD streaming errors that occurred during prefill.
+            // The MoE expert pread path uses a non-throwing callAsFunction,
+            // so errors are posted to the global latch instead.
+            try SSDStreamingErrorLatch.shared.throwIfSet()
+
             // evaluate the remainder of the prompt -- this primes the pump
             let token = step(previous: y)
+
+            // Check again after step() which also runs through MoE layers
+            try SSDStreamingErrorLatch.shared.throwIfSet()
+
             y = .init(tokens: token)
             asyncEval(y.tokens)
 
         case .logits(let result):
+            // Check for SSD streaming errors during logits computation
+            try SSDStreamingErrorLatch.shared.throwIfSet()
+
             y = .init(tokens: convertToToken(logits: result.logits))
             asyncEval(y.tokens)
 
@@ -1701,6 +1713,15 @@ private func generateLoopTask<Handler: TokenLoopHandler>(
             for token in iterator {
                 // Check for cancellation on every loop iteration.
                 if Task.isCancelled {
+                    stopReason = .cancelled
+                    break
+                }
+
+                // Check for SSD streaming errors (truncated/corrupted safetensors).
+                // These are set by ThreadSafeError.check() inside SwitchGLU's non-throwing
+                // callAsFunction path via the global error latch.
+                if let ssdError = SSDStreamingErrorLatch.shared.consume() {
+                    print("[MLXLMCommon] SSD streaming error detected: \(ssdError.localizedDescription)")
                     stopReason = .cancelled
                     break
                 }
