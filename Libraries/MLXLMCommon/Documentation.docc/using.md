@@ -243,8 +243,8 @@ You can use the <doc:#MLXHuggingFace-Macros> like this:
 or one of the integration packages:
 
 ```swift
-.package(url: "https://github.com/DePasqualeOrg/swift-tokenizers-mlx", from: "0.1.0"),
-.package(url: "https://github.com/DePasqualeOrg/swift-hf-api-mlx", from: "0.1.0"),
+.package(url: "https://github.com/DePasqualeOrg/swift-tokenizers-mlx", from: "0.2.0", traits: ["Swift"]),
+.package(url: "https://github.com/DePasqualeOrg/swift-hf-api-mlx", from: "0.2.0"),
 ```
 
 ```swift
@@ -253,6 +253,6 @@ or one of the integration packages:
     dependencies: [
         .product(name: "MLXLLM", package: "mlx-swift-lm"),
         .product(name: "MLXLMTokenizers", package: "swift-tokenizers-mlx"),
-        .product(name: "MLXLMHuggingFace", package: "swift-hf-api-mlx"),
+        .product(name: "MLXLMHFAPI", package: "swift-hf-api-mlx"),
     ]),
 ```
