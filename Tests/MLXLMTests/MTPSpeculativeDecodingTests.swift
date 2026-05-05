@@ -50,6 +50,36 @@ private func makeQwen35TextConfig(
     return try JSONDecoder().decode(Qwen35TextConfiguration.self, from: Data(json.utf8))
 }
 
+/// Builds a minimal DeepseekV4Configuration
+private func makeDeepseekV4Config(
+    numMTPLayers: Int = 0,
+    numHiddenLayers: Int = 4,
+    hiddenSize: Int = 64,
+    vocabSize: Int = 100
+) throws -> DeepseekV4Configuration {
+    let json = """
+    {
+        "model_type": "deepseek_v4",
+        "hidden_size": \(hiddenSize),
+        "num_hidden_layers": \(numHiddenLayers),
+        "intermediate_size": 128,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "rms_norm_eps": 1e-6,
+        "vocab_size": \(vocabSize),
+        "rope_theta": 10000.0,
+        "max_position_embeddings": 512,
+        "num_nextn_predict_layers": \(numMTPLayers),
+        "n_routed_experts": 2,
+        "num_experts_per_tok": 1,
+        "n_shared_experts": 1,
+        "hc_mult": 2,
+        "moe_intermediate_size": 64
+    }
+    """
+    return try JSONDecoder().decode(DeepseekV4Configuration.self, from: Data(json.utf8))
+}
+
 // MARK: - Phase 1: MTPConfig & protocol
 
 extension MLXTestingSuite {
@@ -185,6 +215,35 @@ extension MLXTestingSuite {
             let asLanguageModel: any LanguageModel = model
             let castedOpt = asLanguageModel as? (any MTPLanguageModel)
             #expect(castedOpt != nil, "Qwen35TextModel must satisfy MTPLanguageModel at runtime")
+        }
+
+        // 2.5 — DeepseekV4Model MTP array conditionally allocated
+        @Test("DeepseekV4Model.mtpLayers is empty without MTP env var")
+        func testDeepseekMTPArrayEmptyWithoutEnvVar() throws {
+            guard ProcessInfo.processInfo.environment["SWIFTLM_MTP_ENABLE"] != "1" else {
+                return
+            }
+            let config = try makeDeepseekV4Config(numMTPLayers: 2)
+            let model = DeepseekV4Model(config)
+            #expect(model.model.mtpLayers.isEmpty,
+                    "DeepseekV4Model.mtpLayers must be empty when SWIFTLM_MTP_ENABLE is not set")
+        }
+
+        // 2.6 — DeepseekV4 callMTP fallback returns single tensor
+        @Test("DeepseekV4 callMTP with no heads returns exactly main logits")
+        func testDeepseekCallMTPFallback() throws {
+            let vocabSize = 100
+            let config = try makeDeepseekV4Config(numMTPLayers: 0, vocabSize: vocabSize)
+            let model = DeepseekV4Model(config)
+
+            let inputs = MLXArray([1, 2]).reshaped(1, 2)
+            let results = model.callMTP(inputs, cache: nil as [KVCache]?)
+
+            #expect(results.count == 1, "Expected exactly 1 tensor")
+            let logits = results[0]
+            #expect(logits.shape[0] == 1)
+            #expect(logits.shape[1] == 2)
+            #expect(logits.shape[2] == vocabSize)
         }
     }
 }

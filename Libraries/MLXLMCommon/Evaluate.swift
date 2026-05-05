@@ -1011,6 +1011,7 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
     var state: LMOutput.State?
     public let streamingError: SSDStreamingError? = nil
     var cache: [KVCache]
+    var mtpCaches: [[KVCache]]
     let quantizeKVCache: (inout [KVCache]) -> Void
 
     var processor: LogitProcessor?
@@ -1043,6 +1044,7 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         self.y = input.text
         self.model = model
         self.cache = cache ?? model.newCache(parameters: parameters)
+        self.mtpCaches = model.makeMTPCaches(parameters: parameters)
         
         guard canTrimPromptCache(self.cache) else {
             throw KVCacheError(message: "MTP Speculative decoding requires trimmable KV caches.")
@@ -1110,7 +1112,7 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
 
         // If no draft tokens were generated (e.g. first step), fallback to regular generation
         if draftTokens.isEmpty {
-            let mtpResult = model.callMTP(y.tokens, cache: cache)
+            let mtpResult = model.callMTP(y.tokens, cache: cache, mtpCaches: mtpCaches)
             guard !mtpResult.isEmpty else { return }
 
             let mainLogits = mtpResult[0]
@@ -1136,7 +1138,7 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         let verifyInput = LMInput.Text(tokens: concatenated(verifyTokens))
         let verifyStart = verifyInput.tokens.dim(0) - (draftTokens.count + 1)
         
-        let mtpResult = model.callMTP(verifyInput.tokens, cache: cache)
+        let mtpResult = model.callMTP(verifyInput.tokens, cache: cache, mtpCaches: mtpCaches)
         guard !mtpResult.isEmpty else { return }
         
         let mainLogits = mtpResult[0]
@@ -1179,7 +1181,11 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         pendingTokens.append(mainTokensList[accepted])
 
         // Rewind caches for rejected tokens
-        trimPromptCache(cache, numTokens: draftTokens.count - accepted)
+        let rejectedCount = draftTokens.count - accepted
+        trimPromptCache(cache, numTokens: rejectedCount)
+        for mtpCache in mtpCaches {
+            trimPromptCache(mtpCache, numTokens: rejectedCount)
+        }
 
         // Apply dynamic cache quantization after rewind
         quantizeKVCache(&cache)

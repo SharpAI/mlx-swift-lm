@@ -612,7 +612,7 @@ class DeepseekV4MoE: Module, UnaryLayer {
 
 // MARK: - Decoder Block (with mHC Hyper-Connections)
 
-class DeepseekV4Block: Module {
+public class DeepseekV4Block: Module {
     let config: DeepseekV4Configuration
 
     // Key "attn" matches checkpoint path `layers.{l}.attn.*`
@@ -704,6 +704,7 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
 
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
     var layers: [DeepseekV4Block]
+    public var mtpLayers: [DeepseekV4Block]
     @ModuleInfo(key: "norm") var norm: RMSNorm
 
     // HC head parameter bundle for final reduction [B,S,hc,D] → [B,S,D]
@@ -722,6 +723,13 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
         let mainLayerCount = config.numHiddenLayers - config.numNextnPredictLayers
         self.layers = (0 ..< mainLayerCount).map {
             _ in DeepseekV4Block(config: config)
+        }
+        
+        self.mtpLayers = []
+        if MTPConfig.retainMTPWeights && config.numNextnPredictLayers > 0 {
+            self.mtpLayers = (0 ..< config.numNextnPredictLayers).map {
+                _ in DeepseekV4Block(config: config)
+            }
         }
         self._norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
 
@@ -777,7 +785,7 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
     public var model: DeepseekV4ModelInner
     @ModuleInfo(key: "lm_head") var lmHead: Linear
 
-    init(_ args: DeepseekV4Configuration) {
+    public init(_ args: DeepseekV4Configuration) {
         self.args = args
         self.kvHeads = Array(repeating: 1, count: args.numHiddenLayers - args.numNextnPredictLayers)
         self.model = DeepseekV4ModelInner(config: args)
@@ -841,32 +849,34 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         // 3. Filter out MTP (multi-token prediction) layers and rotary_emb keys
         // Also drop compressor/indexer sub-module keys (not yet implemented)
         let numMainLayers = args.numHiddenLayers - args.numNextnPredictLayers
-        return newWeights.filter { key, _ in
-            // Drop MTP layer weights (layers at index >= numMainLayers)
-            if key.starts(with: "model.layers.") && !MTPConfig.retainMTPWeights {
+        var finalWeights = [String: MLXArray]()
+        for (key, value) in newWeights {
+            // Drop rotary embedding precomputed frequencies
+            if key.contains("rotary_emb.inv_freq") { continue }
+            // Drop compressor/indexer sub-module weights
+            // TODO: implement DeepseekV4Compressor and DeepseekV4Indexer modules.
+            if key.contains(".attn.compressor.") || key.contains(".attn.indexer.") { continue }
+            // Drop gate.tid2eid
+            if key.contains(".ffn.gate.tid2eid") { continue }
+
+            var newKey = key
+            if key.starts(with: "model.layers.") {
                 let parts = key.split(separator: ".")
                 if parts.count >= 3, let layerIdx = Int(parts[2]) {
                     if layerIdx >= numMainLayers {
-                        return false
+                        if !MTPConfig.retainMTPWeights { continue }
+                        // Remap from `model.layers.{numMain+i}` to `model.mtpLayers.{i}`
+                        let mtpIdx = layerIdx - numMainLayers
+                        var newParts = parts
+                        newParts[1] = "mtpLayers"
+                        newParts[2] = Substring(String(mtpIdx))
+                        newKey = newParts.joined(separator: ".")
                     }
                 }
             }
-            // Drop rotary embedding precomputed frequencies
-            if key.contains("rotary_emb.inv_freq") { return false }
-            // Drop compressor/indexer sub-module weights — these implement long-range
-            // compressed attention and are not yet implemented in this Swift port.
-            // Affected layers are those with compress_ratio != 0 (layers 2+).
-            // TODO: implement DeepseekV4Compressor and DeepseekV4Indexer modules.
-            if key.contains(".attn.compressor.") || key.contains(".attn.indexer.") {
-                return false
-            }
-            // Note: .attn.attn_sink is a valid model parameter — do NOT filter it.
-            // Drop gate.tid2eid — hash-layer token-to-expert lookup table (not yet implemented).
-            // Hash layers (0..numHashLayers-1) use deterministic routing; we fall back to
-            // the learned gate.weight for these layers instead.
-            if key.contains(".ffn.gate.tid2eid") { return false }
-            return true
+            finalWeights[newKey] = value
         }
+        return finalWeights
     }
 
     public var loraLayers: [Module] {
@@ -881,9 +891,8 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
 /// They share the same architecture as the main blocks but operate on the final hidden state.
 /// The main `lm_head` is reused for all MTP depth projections.
 extension DeepseekV4Model: MTPLanguageModel {
-    public func callMTP(_ inputs: MLXArray, cache: [KVCache]?) -> [MLXArray] {
-        let numMain = args.numHiddenLayers - args.numNextnPredictLayers
-        guard MTPConfig.retainMTPWeights, args.numNextnPredictLayers > 0 else {
+    public func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray] {
+        guard MTPConfig.retainMTPWeights, !model.mtpLayers.isEmpty else {
             return [callAsFunction(inputs, cache: cache)]
         }
 
@@ -893,13 +902,36 @@ extension DeepseekV4Model: MTPLanguageModel {
         let mainLogits = lmHead(mainHidden)
         var result = [mainLogits]
 
-        // Chain MTP blocks stored in `model.layers` beyond numMain.
-        // Note: DeepseekV4ModelInner.layers only contains the first numMain layers.
-        // The MTP layer weights land in the weight dict as model.layers.{numMain+i}.*
-        // but are not currently allocated as Module objects inside DeepseekV4ModelInner.
-        // Phase 2 completion: allocate a separate `mtpLayers: [DeepseekV4Block]` array
-        // in DeepseekV4ModelInner when MTPConfig.retainMTPWeights is true.
-        // For now, return only the main logits (safe fallback).
+        // Chain MTP blocks stored in `model.mtpLayers`
+        var prevHidden = mainHidden
+        let B = prevHidden.dim(0), S = prevHidden.dim(1)
+        let hc = args.hcMult
+        for (i, mtpLayer) in model.mtpLayers.enumerated() {
+            let mtpCache = mtpCaches?[i]
+            // Expand [B, S, D] -> [B, S, hc, D]
+            var h = prevHidden.expandedDimensions(axis: 2)
+            h = repeated(h, count: hc, axis: 2)
+
+            let hForMask = h.reshaped([B, S, hc * args.hiddenSize])
+            let attentionMask = createAttentionMask(h: hForMask, cache: mtpCache?.first)
+            
+            h = mtpLayer(h, mask: attentionMask, cache: mtpCache?.first)
+            
+            // Reduce back to [B, S, D]
+            prevHidden = hcHead(
+                x: h, hcFn: model.hc_head.fn, hcScale: model.hc_head.scale,
+                hcBase: model.hc_head.base, eps: args.hcEps)
+                
+            let mtpLogits = lmHead(model.norm(prevHidden))
+            result.append(mtpLogits)
+        }
+
         return result
+    }
+
+    public func makeMTPCaches(parameters: GenerateParameters?) -> [[KVCache]] {
+        return model.mtpLayers.map { _ in
+            [KVCacheSimple()]
+        }
     }
 }

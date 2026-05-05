@@ -253,10 +253,36 @@ extension LanguageModel where Self: KVCacheDimensionProvider {
 
 /// Interface for Language Models that support Multi-Token Prediction (MTP) for speculative decoding.
 public protocol MTPLanguageModel: LanguageModel {
-    /// Returns the logits from the model's MTP (Multi-Token Prediction) heads.
+    /// Returns logits from the model's main trunk **and** each MTP head in a single pass.
+    ///
     /// - Parameters:
-    ///   - inputs: The token inputs
-    ///   - cache: The KV cache
-    /// - Returns: An array of logits from the internal MTP heads, ordered by prediction depth.
-    func callMTP(_ inputs: MLXArray, cache: [KVCache]?) -> [MLXArray]
+    ///   - inputs: Token input IDs  [B, S]
+    ///   - cache: Main model KV cache (one entry per main layer)
+    ///   - mtpCaches: Per-depth MTP head KV caches (one `[KVCache]` per MTP head).
+    ///     **Persisted across speculation rounds** to prevent recursive depth collapse
+    ///     (the key insight from the MTPLX analysis: vLLM persists MTP KV history;
+    ///     resetting per cycle causes acceptance to collapse from 91% → 17% at depth 5).
+    /// - Returns: `[main_logits, mtp_0_logits, mtp_1_logits, …]`
+    func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray]
+
+    /// Allocate one `[KVCache]` array per MTP head so the iterator can persist
+    /// attention history between speculation rounds.
+    func makeMTPCaches(parameters: GenerateParameters?) -> [[KVCache]]
+}
+
+extension MTPLanguageModel {
+    /// Default: call the two-argument overload with no MTP caches.
+    /// Models that don't override `makeMTPCaches` get a zero-element array.
+    public func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray] {
+        callMTP(inputs, cache: cache)
+    }
+
+    /// Shim for backward compat — calls the three-argument form with nil mtpCaches.
+    public func callMTP(_ inputs: MLXArray, cache: [KVCache]?) -> [MLXArray] {
+        callMTP(inputs, cache: cache, mtpCaches: nil)
+    }
+
+    public func makeMTPCaches(parameters: GenerateParameters?) -> [[KVCache]] {
+        return []  // Default: no persistent MTP caches
+    }
 }

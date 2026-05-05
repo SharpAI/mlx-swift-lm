@@ -873,7 +873,7 @@ public class Qwen35MTPLayer: Module {
 extension Qwen35TextModel: MTPLanguageModel {
     /// Forward pass through the main model **and** all MTP heads.
     /// Returns: [main_logits, mtp_head_0_logits, mtp_head_1_logits, ...]
-    public func callMTP(_ inputs: MLXArray, cache: [KVCache]?) -> [MLXArray] {
+    public func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray] {
         guard !mtp.isEmpty else {
             // Fallback: no MTP heads loaded; return only main logits
             return [callAsFunction(inputs, cache: cache)]
@@ -894,20 +894,25 @@ extension Qwen35TextModel: MTPLanguageModel {
         // MTP heads — each refines the previous hidden state
         var result = [mainLogits]
         var prevHidden = mainHidden
-        for mtpLayer in mtp {
-            let faMask = createAttentionMask(h: prevHidden, cache: nil as KVCache?)
+        for (i, mtpLayer) in mtp.enumerated() {
+            let mtpCache: [KVCache]? = mtpCaches?[i]
+            let faMask = createAttentionMask(h: prevHidden, cache: mtpCache?.first)
             let mtpLogits = mtpLayer(
                 prevHidden, embedding: embedding,
-                attentionMask: faMask, ssmMask: nil, cache: nil
+                attentionMask: faMask, ssmMask: nil, cache: mtpCache?.first
             )
             result.append(mtpLogits)
             prevHidden = mtpLogits
         }
         return result
     }
+
+    /// Allocate persistent KVCache arrays for each MTP head
+    public func makeMTPCaches(parameters: GenerateParameters?) -> [[KVCache]] {
+        return mtp.map { mtpLayer in
+            // Each MTP layer contains a single DecoderLayer which needs one KVCache
+            [KVCacheSimple()]
+        }
+    }
 }
 
-/// Lazily-vended MTP head array (fileprivate accessor used in old stub — now replaced by @ModuleInfo)
-fileprivate extension Qwen35TextModel {
-    var mtpHeads: [Qwen35MTPLayer]? { mtp.isEmpty ? nil : mtp }
-}
