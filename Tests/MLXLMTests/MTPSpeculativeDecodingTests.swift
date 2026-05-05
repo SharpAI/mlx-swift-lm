@@ -10,7 +10,7 @@
 
 import Foundation
 import MLX
-import MLXLLM
+@testable import MLXLLM
 import MLXLMCommon
 import MLXNN
 import Testing
@@ -225,8 +225,8 @@ extension MLXTestingSuite {
             }
             let config = try makeDeepseekV4Config(numMTPLayers: 2)
             let model = DeepseekV4Model(config)
-            #expect(model.model.mtpLayers.isEmpty,
-                    "DeepseekV4Model.mtpLayers must be empty when SWIFTLM_MTP_ENABLE is not set")
+            #expect(model.model.layers.count == config.numHiddenLayers - config.numNextnPredictLayers,
+                    "DeepseekV4Model.layers count should exclude MTP layers when SWIFTLM_MTP_ENABLE is not set")
         }
 
         // 2.6 — DeepseekV4 callMTP fallback returns single tensor

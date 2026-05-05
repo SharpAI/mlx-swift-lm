@@ -704,7 +704,6 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
 
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
     var layers: [DeepseekV4Block]
-    public var mtpLayers: [DeepseekV4Block]
     @ModuleInfo(key: "norm") var norm: RMSNorm
 
     // HC head parameter bundle for final reduction [B,S,hc,D] → [B,S,D]
@@ -713,23 +712,16 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
 
     public var gpuLayerCount: Int? = nil
     public var streamExperts: Bool = false
-    public var totalLayerCount: Int { layers.count }
+    public var totalLayerCount: Int { layers.count - (MTPConfig.retainMTPWeights ? config.numNextnPredictLayers : 0) }
 
     init(config: DeepseekV4Configuration) {
         self.config = config
         self._embedTokens.wrappedValue = Embedding(
             embeddingCount: config.vocabSize, dimensions: config.hiddenSize)
-        // Exclude MTP (multi-token prediction) layers from the main transformer stack
-        let mainLayerCount = config.numHiddenLayers - config.numNextnPredictLayers
-        self.layers = (0 ..< mainLayerCount).map {
+        let retainMTP = MTPConfig.retainMTPWeights && config.numNextnPredictLayers > 0
+        let totalCount = config.numHiddenLayers - (retainMTP ? 0 : config.numNextnPredictLayers)
+        self.layers = (0 ..< totalCount).map {
             _ in DeepseekV4Block(config: config)
-        }
-        
-        self.mtpLayers = []
-        if MTPConfig.retainMTPWeights && config.numNextnPredictLayers > 0 {
-            self.mtpLayers = (0 ..< config.numNextnPredictLayers).map {
-                _ in DeepseekV4Block(config: config)
-            }
         }
         self._norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
 
@@ -758,7 +750,7 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
         let hForMask = h.reshaped([B, S, hc * config.hiddenSize])  // [B, S, hc*D]
         let attentionMask = createAttentionMask(h: hForMask, cache: cache?.first)
 
-        for (i, layer) in layers.enumerated() {
+        for (i, layer) in layers.prefix(totalLayerCount).enumerated() {
             h = partitionedLayerCall(
                 index: i, gpuLayerCount: gpuLayerCount, stream: streamExperts
             ) {
@@ -859,22 +851,15 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
             // Drop gate.tid2eid
             if key.contains(".ffn.gate.tid2eid") { continue }
 
-            var newKey = key
             if key.starts(with: "model.layers.") {
                 let parts = key.split(separator: ".")
                 if parts.count >= 3, let layerIdx = Int(parts[2]) {
-                    if layerIdx >= numMainLayers {
-                        if !MTPConfig.retainMTPWeights { continue }
-                        // Remap from `model.layers.{numMain+i}` to `model.mtpLayers.{i}`
-                        let mtpIdx = layerIdx - numMainLayers
-                        var newParts = parts
-                        newParts[1] = "mtpLayers"
-                        newParts[2] = Substring(String(mtpIdx))
-                        newKey = newParts.joined(separator: ".")
+                    if layerIdx >= numMainLayers && !MTPConfig.retainMTPWeights {
+                        continue
                     }
                 }
             }
-            finalWeights[newKey] = value
+            finalWeights[key] = value
         }
         return finalWeights
     }
@@ -892,7 +877,8 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
 /// The main `lm_head` is reused for all MTP depth projections.
 extension DeepseekV4Model: MTPLanguageModel {
     public func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray] {
-        guard MTPConfig.retainMTPWeights, !model.mtpLayers.isEmpty else {
+        let mtpLayers = model.layers.suffix(args.numNextnPredictLayers)
+        guard MTPConfig.retainMTPWeights, !mtpLayers.isEmpty else {
             return [callAsFunction(inputs, cache: cache)]
         }
 
@@ -906,7 +892,7 @@ extension DeepseekV4Model: MTPLanguageModel {
         var prevHidden = mainHidden
         let B = prevHidden.dim(0), S = prevHidden.dim(1)
         let hc = args.hcMult
-        for (i, mtpLayer) in model.mtpLayers.enumerated() {
+        for (i, mtpLayer) in mtpLayers.enumerated() {
             let mtpCache = mtpCaches?[i]
             // Expand [B, S, D] -> [B, S, hc, D]
             var h = prevHidden.expandedDimensions(axis: 2)
@@ -930,7 +916,7 @@ extension DeepseekV4Model: MTPLanguageModel {
     }
 
     public func makeMTPCaches(parameters: GenerateParameters?) -> [[KVCache]] {
-        return model.mtpLayers.map { _ in
+        return (0 ..< args.numNextnPredictLayers).map { _ in
             [KVCacheSimple()]
         }
     }

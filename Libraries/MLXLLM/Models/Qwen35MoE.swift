@@ -69,6 +69,28 @@ public class Qwen35MoEModel: Qwen35Model {
                 }
             }
         }
+        
+        for l in 0 ..< languageModel.configuration.numNextnPredictLayers {
+            let prefixes = [
+                "language_model.mtp.\(l).layers.0.mlp",
+                "language_model.mtp.layers.0.mlp"
+            ]
+            for prefix in prefixes {
+                let gateUpKey = "\(prefix).experts.gate_up_proj"
+                if let gateUp = newWeights[gateUpKey] {
+                    newWeights[gateUpKey] = nil
+                    let mid = gateUp.dim(-2) / 2
+                    newWeights["\(prefix).switch_mlp.gate_proj.weight"] =
+                        gateUp[.ellipsis, ..<mid, 0...]
+                    newWeights["\(prefix).switch_mlp.up_proj.weight"] =
+                        gateUp[.ellipsis, mid..., 0...]
+                    if let downProj = newWeights["\(prefix).experts.down_proj"] {
+                        newWeights["\(prefix).experts.down_proj"] = nil
+                        newWeights["\(prefix).switch_mlp.down_proj.weight"] = downProj
+                    }
+                }
+            }
+        }
 
         return languageModel.sanitize(weights: newWeights)
     }

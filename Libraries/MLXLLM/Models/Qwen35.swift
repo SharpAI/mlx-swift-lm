@@ -53,6 +53,7 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
 
     // MTP fields
     public var numNextnPredictLayers: Int = 0
+    public var mtpNumHiddenLayers: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type"
@@ -83,6 +84,7 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
         case moeIntermediateSize = "moe_intermediate_size"
         case normTopkProb = "norm_topk_prob"
         case numNextnPredictLayers = "num_nextn_predict_layers"
+        case mtpNumHiddenLayers = "mtp_num_hidden_layers"
     }
 
     public init(from decoder: Decoder) throws {
@@ -135,8 +137,9 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
         self.moeIntermediateSize =
             try container.decodeIfPresent(Int.self, forKey: .moeIntermediateSize) ?? 0
         self.normTopkProb = try container.decodeIfPresent(Bool.self, forKey: .normTopkProb) ?? true
-        self.numNextnPredictLayers =
-            try container.decodeIfPresent(Int.self, forKey: .numNextnPredictLayers) ?? 0
+        
+        let mtpLayers = try container.decodeIfPresent(Int.self, forKey: .mtpNumHiddenLayers) ?? 0
+        self.numNextnPredictLayers = try container.decodeIfPresent(Int.self, forKey: .numNextnPredictLayers) ?? mtpLayers
 
         let ropeContainer = try decoder.container(keyedBy: RopeParametersCodingKey.self)
         let ropeParameters = try ropeContainer.decodeIfPresent(
@@ -756,15 +759,26 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
 
         for k in Array(weights.keys) {
             guard let v = weights[k] else { continue }
-            if k.contains("conv1d.weight") && v.dim(-1) != 1 {
-                weights[k] = v.movedAxis(source: 2, destination: 1)
+            
+            // Map community MTP checkpoint keys (e.g. language_model.mtp.fc) to array indices (language_model.mtp.0.fc)
+            // Some checkpoints use .mtp.fc instead of the array index .mtp.0.fc
+            let updatedKey = k.contains(".mtp.") && !k.contains(".mtp.0.") ? k.replacingOccurrences(of: ".mtp.", with: ".mtp.0.") : k
+            let updatedVal = v
+            
+            if updatedKey != k {
+                weights.removeValue(forKey: k)
+                weights[updatedKey] = v
+            }
+            
+            if updatedKey.contains("conv1d.weight") && updatedVal.dim(-1) != 1 {
+                weights[updatedKey] = updatedVal.movedAxis(source: 2, destination: 1)
                 continue
             }
             if shouldShiftNormWeights
-                && normKeys.contains(where: { k.hasSuffix($0) })
-                && v.ndim == 1
+                && normKeys.contains(where: { updatedKey.hasSuffix($0) })
+                && updatedVal.ndim == 1
             {
-                weights[k] = v + MLXArray(1, dtype: v.dtype)
+                weights[updatedKey] = updatedVal + MLXArray(1, dtype: updatedVal.dtype)
             }
         }
 
@@ -830,29 +844,27 @@ extension Qwen35Model: LoRAModel {
 
 // MARK: - MTP Module
 
-/// A single MTP (Multi-Token Prediction) head for Qwen3.5.
-/// Architecture mirrors the Python reference:
-///   enorm: RMSNorm on the embedded token
-///   hnorm: RMSNorm on the hidden state
-///   eh_proj: Linear that combines enorm(embed) + hnorm(h) -> hidden_size
-///   linear: One Qwen35DecoderLayer for extra context
-///   shared_head: Linear(hidden_size, vocab_size) – weight-tied to lm_head at load time
+/// A single MTP (Multi-Token Prediction) head for Qwen3.6.
+/// Architecture mirrors the official schema:
+///   pre_fc_norm_embedding: RMSNorm on the embedded token
+///   pre_fc_norm_hidden: RMSNorm on the hidden state
+///   fc: Linear that combines enorm(embed) + hnorm(h) -> hidden_size
+///   layers: Array of Qwen35DecoderLayer for extra context
+///   norm: Final RMSNorm on the MTP output
 public class Qwen35MTPLayer: Module {
-    @ModuleInfo(key: "enorm") var enorm: MathRMSNorm
-    @ModuleInfo(key: "hnorm") var hnorm: MathRMSNorm
-    @ModuleInfo(key: "eh_proj") var ehProj: Linear
-    // The sub-decoder block
-    @ModuleInfo(key: "linear") var linear: Qwen35DecoderLayer
-    // Vocabulary projection (weight-shared with main lm_head in full checkpoints)
-    @ModuleInfo(key: "shared_head") var sharedHead: Linear
+    @ModuleInfo(key: "pre_fc_norm_embedding") var preFCNormEmbedding: MathRMSNorm
+    @ModuleInfo(key: "pre_fc_norm_hidden") var preFCNormHidden: MathRMSNorm
+    @ModuleInfo(key: "fc") var fc: Linear
+    @ModuleInfo(key: "layers") var layers: [Qwen35DecoderLayer]
+    @ModuleInfo(key: "norm") var norm: MathRMSNorm
 
     init(_ args: Qwen35TextConfiguration, layerIdx: Int) {
-        _enorm.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
-        _hnorm.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
-        // eh_proj maps concatenated [enorm(embed) ; hnorm(h)] -> hidden_size
-        _ehProj.wrappedValue = Linear(args.hiddenSize * 2, args.hiddenSize, bias: false)
-        _linear.wrappedValue = Qwen35DecoderLayer(args, layerIdx: layerIdx)
-        _sharedHead.wrappedValue = Linear(args.hiddenSize, args.vocabularySize, bias: false)
+        _preFCNormEmbedding.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
+        _preFCNormHidden.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
+        _fc.wrappedValue = Linear(args.hiddenSize * 2, args.hiddenSize, bias: false)
+        // MTP layers in Qwen3.6 use full attention. Force this by passing a full attention layerIdx.
+        _layers.wrappedValue = [Qwen35DecoderLayer(args, layerIdx: args.fullAttentionInterval - 1)]
+        _norm.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
     }
 
     func callAsFunction(
@@ -862,9 +874,11 @@ public class Qwen35MTPLayer: Module {
         ssmMask: MLXArray?,
         cache: KVCache?
     ) -> MLXArray {
-        let h = ehProj(concatenated([enorm(embedding), hnorm(hiddenState)], axis: -1))
-        let out = linear(h, attentionMask: attentionMask, ssmMask: ssmMask, cache: cache)
-        return sharedHead(out)
+        var h = fc(concatenated([preFCNormEmbedding(embedding), preFCNormHidden(hiddenState)], axis: -1))
+        for layer in layers {
+            h = layer(h, attentionMask: attentionMask, ssmMask: ssmMask, cache: cache)
+        }
+        return norm(h)
     }
 }
 
@@ -897,12 +911,20 @@ extension Qwen35TextModel: MTPLanguageModel {
         for (i, mtpLayer) in mtp.enumerated() {
             let mtpCache: [KVCache]? = mtpCaches?[i]
             let faMask = createAttentionMask(h: prevHidden, cache: mtpCache?.first)
-            let mtpLogits = mtpLayer(
+            let mtpHidden = mtpLayer(
                 prevHidden, embedding: embedding,
                 attentionMask: faMask, ssmMask: nil, cache: mtpCache?.first
             )
-            result.append(mtpLogits)
-            prevHidden = mtpLogits
+            
+            // Project the MTP hidden state to vocabulary logits using the shared lm_head
+            if let head = lmHead {
+                result.append(head(mtpHidden))
+            } else {
+                result.append(model.embedTokens.asLinear(mtpHidden))
+            }
+            
+            // The hidden state is passed to the next MTP layer
+            prevHidden = mtpHidden
         }
         return result
     }
