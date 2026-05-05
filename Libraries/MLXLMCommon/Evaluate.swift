@@ -1001,6 +1001,231 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
     }
 }
 
+/// An iterator that generates tokens using Multi-Token Prediction (MTP) for speculative decoding.
+/// It uses internal MTP heads of the main model instead of an external draft model.
+public struct MTPTokenIterator: TokenIteratorProtocol {
+
+    var y: LMInput.Text
+    let model: any MTPLanguageModel
+
+    var state: LMOutput.State?
+    public let streamingError: SSDStreamingError? = nil
+    var cache: [KVCache]
+    let quantizeKVCache: (inout [KVCache]) -> Void
+
+    var processor: LogitProcessor?
+    let sampler: LogitSampler
+
+    var tokenCount = 0
+    let maxTokens: Int?
+
+    // Number of tokens the MTP heads predict (k)
+    let numMTPTokens: Int
+
+    // Logits from the previous step's MTP heads
+    var mtpLogits: [MLXArray]?
+
+    // Buffer of accepted tokens from the current speculation round
+    private var pendingTokens = [Int]()
+    private var pendingIndex = 0
+
+    // Internal metrics
+    var promptPrefillTime: TimeInterval = 0.0
+
+    /// Initialize a `MTPTokenIterator` with the given input.
+    public init(
+        input: LMInput,
+        model: any MTPLanguageModel,
+        cache: [KVCache]? = nil,
+        parameters: GenerateParameters,
+        numMTPTokens: Int = 1
+    ) throws {
+        self.y = input.text
+        self.model = model
+        self.cache = cache ?? model.newCache(parameters: parameters)
+        
+        guard canTrimPromptCache(self.cache) else {
+            throw KVCacheError(message: "MTP Speculative decoding requires trimmable KV caches.")
+        }
+
+        self.sampler = parameters.sampler()
+        self.processor = parameters.processor()
+
+        self.maxTokens = parameters.maxTokens
+        self.numMTPTokens = numMTPTokens
+
+        self.quantizeKVCache = { cache in
+            maybeQuantizeKVCache(
+                cache: &cache,
+                kvBits: parameters.kvBits,
+                kvGroupSize: parameters.kvGroupSize,
+                quantizedKVStart: parameters.quantizedKVStart
+            )
+        }
+
+        self.promptPrefillTime = try measure {
+            try prepare(input: input, windowSize: parameters.prefillStepSize)
+        }
+    }
+
+    /// Prefill the main model with the prompt, priming caches for generation
+    mutating func prepare(input: LMInput, windowSize: Int? = nil) throws {
+        processor?.prompt(input.text.tokens)
+
+        // Prefill main model
+        switch try model.prepare(input, cache: cache, windowSize: windowSize) {
+        case .tokens(let tokens):
+            y = tokens
+        case .logits(let result):
+            var logits = result.logits[0..., -1, 0...]
+            logits = processor?.process(logits: logits) ?? logits
+            let token = sampler.sample(logits: logits)
+            processor?.didSample(token: token)
+            y = .init(tokens: token)
+            state = result.state
+        }
+    }
+
+    /// Run one round of MTP speculative decoding: draft from MTP heads, verify via main, accept/reject
+    mutating func speculateRound() {
+        let remaining = maxTokens.map { $0 - tokenCount } ?? numMTPTokens
+        let numDraft = Swift.min(remaining, numMTPTokens)
+        guard numDraft > 0 else {
+            return
+        }
+
+        // Draft generation: Use MTP logits from the previous step
+        var draftTokens = [MLXArray]()
+        if let previousMTP = mtpLogits, !previousMTP.isEmpty {
+            let countToSample = Swift.min(numDraft, previousMTP.count)
+            var draftProcessor = processor
+            for i in 0 ..< countToSample {
+                var draftLogit = previousMTP[i]
+                draftLogit = draftProcessor?.process(logits: draftLogit) ?? draftLogit
+                let draftToken = sampler.sample(logits: draftLogit)
+                draftProcessor?.didSample(token: draftToken)
+                draftTokens.append(draftToken)
+            }
+        }
+
+        // If no draft tokens were generated (e.g. first step), fallback to regular generation
+        if draftTokens.isEmpty {
+            let mtpResult = model.callMTP(y.tokens, cache: cache)
+            guard !mtpResult.isEmpty else { return }
+
+            let mainLogits = mtpResult[0]
+            var logits = mainLogits[0..., -1, 0...]
+            logits = processor?.process(logits: logits) ?? logits
+            let token = sampler.sample(logits: logits)
+            processor?.didSample(token: token)
+
+            pendingTokens.append(token.item(Int.self))
+            y = .init(tokens: token)
+
+            // Save future MTP logits for next iteration
+            self.mtpLogits = mtpResult.count > 1 ? Array(mtpResult.dropFirst()) : nil
+            return
+        }
+
+        // Verification: main model processes proposals in one pass
+        for layer in cache {
+            if let mamba = layer as? MambaCache { mamba.checkpoint() }
+        }
+
+        let verifyTokens = [y.tokens] + draftTokens
+        let verifyInput = LMInput.Text(tokens: concatenated(verifyTokens))
+        let verifyStart = verifyInput.tokens.dim(0) - (draftTokens.count + 1)
+        
+        let mtpResult = model.callMTP(verifyInput.tokens, cache: cache)
+        guard !mtpResult.isEmpty else { return }
+        
+        let mainLogits = mtpResult[0]
+
+        let mainTokens: MLXArray
+        if var verifyProcessor = processor {
+            // Process sequentially
+            var sampled = [MLXArray]()
+            for i in 0 ..< (draftTokens.count + 1) {
+                var logits = mainLogits[0..., verifyStart + i, 0...]
+                logits = verifyProcessor.process(logits: logits)
+                let token = sampler.sample(logits: logits)
+                verifyProcessor.didSample(token: token)
+                sampled.append(token)
+            }
+            mainTokens = concatenated(sampled)
+        } else {
+            // Batch sample
+            let verifyLogits = mainLogits[0..., verifyStart..., 0...].squeezed(axis: 0)
+            mainTokens = sampler.sample(logits: verifyLogits)
+        }
+
+        // Compare and accept proposed tokens
+        eval(mainTokens, draftTokens)
+        let mainTokensList = mainTokens.asArray(Int.self)
+        let draftTokensList = concatenated(draftTokens).asArray(Int.self)
+        var accepted = 0
+        for i in 0 ..< draftTokens.count {
+            guard mainTokensList[i] == draftTokensList[i] else {
+                break
+            }
+            processor?.didSample(token: draftTokens[i])
+            pendingTokens.append(mainTokensList[i])
+            accepted += 1
+        }
+
+        // Always emit the main model's token at position `accepted`
+        let finalToken = mainTokens[accepted ... accepted]
+        processor?.didSample(token: finalToken)
+        pendingTokens.append(mainTokensList[accepted])
+
+        // Rewind caches for rejected tokens
+        trimPromptCache(cache, numTokens: draftTokens.count - accepted)
+
+        // Apply dynamic cache quantization after rewind
+        quantizeKVCache(&cache)
+
+        // Set y for the next round
+        y = .init(tokens: finalToken)
+
+        // Save future MTP logits if available
+        if mtpResult.count > 1 {
+            self.mtpLogits = mtpResult.dropFirst().map { 
+                $0[0..., verifyStart + accepted, 0...] 
+            }
+        } else {
+            self.mtpLogits = nil
+        }
+    }
+
+    mutating public func next() -> Int? {
+        if let maxTokens, tokenCount >= maxTokens {
+            return nil
+        }
+
+        // Drain the pending buffer first
+        if pendingIndex < pendingTokens.count {
+            let token = pendingTokens[pendingIndex]
+            pendingIndex += 1
+            tokenCount += 1
+            return token
+        }
+
+        // Run a new speculation round
+        pendingTokens.removeAll(keepingCapacity: true)
+        pendingIndex = 0
+        speculateRound()
+
+        if pendingTokens.isEmpty {
+            return nil
+        }
+
+        let token = pendingTokens[pendingIndex]
+        pendingIndex += 1
+        tokenCount += 1
+        return token
+    }
+}
+
 /// Result of a call to a deprecated callback-based generate function.
 public struct GenerateResult {
 

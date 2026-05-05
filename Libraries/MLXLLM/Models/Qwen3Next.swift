@@ -546,9 +546,11 @@ public class Qwen3NextModel: Module, LLMModel, KVCacheDimensionProvider {
             sanitizedWeights["lm_head.weight"] = nil
         }
 
-        let mtpKeys = sanitizedWeights.keys.filter { $0.contains("mtp.") }
-        for key in mtpKeys {
-            sanitizedWeights[key] = nil
+        if !MTPConfig.retainMTPWeights {
+            let mtpKeys = sanitizedWeights.keys.filter { $0.contains("mtp.") }
+            for key in mtpKeys {
+                sanitizedWeights[key] = nil
+            }
         }
 
         if sanitizedWeights["model.layers.0.mlp.experts.0.up_proj.weight"] == nil {

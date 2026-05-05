@@ -250,3 +250,13 @@ extension LanguageModel where Self: KVCacheDimensionProvider {
         }
     }
 }
+
+/// Interface for Language Models that support Multi-Token Prediction (MTP) for speculative decoding.
+public protocol MTPLanguageModel: LanguageModel {
+    /// Returns the logits from the model's MTP (Multi-Token Prediction) heads.
+    /// - Parameters:
+    ///   - inputs: The token inputs
+    ///   - cache: The KV cache
+    /// - Returns: An array of logits from the internal MTP heads, ordered by prediction depth.
+    func callMTP(_ inputs: MLXArray, cache: [KVCache]?) -> [MLXArray]
+}

@@ -843,7 +843,7 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         let numMainLayers = args.numHiddenLayers - args.numNextnPredictLayers
         return newWeights.filter { key, _ in
             // Drop MTP layer weights (layers at index >= numMainLayers)
-            if key.starts(with: "model.layers.") {
+            if key.starts(with: "model.layers.") && !MTPConfig.retainMTPWeights {
                 let parts = key.split(separator: ".")
                 if parts.count >= 3, let layerIdx = Int(parts[2]) {
                     if layerIdx >= numMainLayers {
