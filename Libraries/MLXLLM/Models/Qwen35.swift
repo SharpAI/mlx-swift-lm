@@ -52,7 +52,7 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
     var normTopkProb: Bool = true
 
     // MTP fields
-    var numNextnPredictLayers: Int = 0
+    public var numNextnPredictLayers: Int = 0
 
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type"
@@ -692,7 +692,7 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
 
     // MTP heads — loaded only when SWIFTLM_MTP_ENABLE=1 and the checkpoint retains them.
     // Key path: "mtp.{i}.{subkey}" maps into mtp[i].
-    @ModuleInfo(key: "mtp") var mtp: [Qwen35MTPLayer]
+    @ModuleInfo(key: "mtp") public var mtp: [Qwen35MTPLayer]
 
     public init(_ args: Qwen35TextConfiguration) {
         self.configuration = args
@@ -837,7 +837,7 @@ extension Qwen35Model: LoRAModel {
 ///   eh_proj: Linear that combines enorm(embed) + hnorm(h) -> hidden_size
 ///   linear: One Qwen35DecoderLayer for extra context
 ///   shared_head: Linear(hidden_size, vocab_size) – weight-tied to lm_head at load time
-class Qwen35MTPLayer: Module {
+public class Qwen35MTPLayer: Module {
     @ModuleInfo(key: "enorm") var enorm: MathRMSNorm
     @ModuleInfo(key: "hnorm") var hnorm: MathRMSNorm
     @ModuleInfo(key: "eh_proj") var ehProj: Linear
@@ -895,7 +895,7 @@ extension Qwen35TextModel: MTPLanguageModel {
         var result = [mainLogits]
         var prevHidden = mainHidden
         for mtpLayer in mtp {
-            let faMask = createAttentionMask(h: prevHidden, cache: nil)
+            let faMask = createAttentionMask(h: prevHidden, cache: nil as KVCache?)
             let mtpLogits = mtpLayer(
                 prevHidden, embedding: embedding,
                 attentionMask: faMask, ssmMask: nil, cache: nil
