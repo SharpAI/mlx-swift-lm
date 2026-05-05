@@ -1112,7 +1112,7 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
 
         // If no draft tokens were generated (e.g. first step), fallback to regular generation
         if draftTokens.isEmpty {
-            let mtpResult = model.callMTP(y.tokens, cache: cache, mtpCaches: mtpCaches)
+            let mtpResult = model.callMTP(y.tokens[.newAxis], cache: cache, mtpCaches: mtpCaches)
             guard !mtpResult.isEmpty else { return }
 
             let mainLogits = mtpResult[0]
@@ -1126,6 +1126,8 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
 
             // Save future MTP logits for next iteration
             self.mtpLogits = mtpResult.count > 1 ? Array(mtpResult.dropFirst()) : nil
+            
+            quantizeKVCache(&cache)
             return
         }
 
@@ -1138,7 +1140,7 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         let verifyInput = LMInput.Text(tokens: concatenated(verifyTokens))
         let verifyStart = verifyInput.tokens.dim(0) - (draftTokens.count + 1)
         
-        let mtpResult = model.callMTP(verifyInput.tokens, cache: cache, mtpCaches: mtpCaches)
+        let mtpResult = model.callMTP(verifyInput.tokens[.newAxis], cache: cache, mtpCaches: mtpCaches)
         guard !mtpResult.isEmpty else { return }
         
         let mainLogits = mtpResult[0]
