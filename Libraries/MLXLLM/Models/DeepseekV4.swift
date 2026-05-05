@@ -873,3 +873,33 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         model.layers
     }
 }
+
+// MARK: - MTPLanguageModel Conformance for DeepseekV4Model
+
+/// DeepSeek V4 uses a different MTP scheme: the MTP layers are the last
+/// `numNextnPredictLayers` standard transformer blocks (`model.layers[numMainLayers...]`).
+/// They share the same architecture as the main blocks but operate on the final hidden state.
+/// The main `lm_head` is reused for all MTP depth projections.
+extension DeepseekV4Model: MTPLanguageModel {
+    public func callMTP(_ inputs: MLXArray, cache: [KVCache]?) -> [MLXArray] {
+        let numMain = args.numHiddenLayers - args.numNextnPredictLayers
+        guard MTPConfig.retainMTPWeights, args.numNextnPredictLayers > 0 else {
+            return [callAsFunction(inputs, cache: cache)]
+        }
+
+        // Run the main model body (excludes MTP layers \u2014 DeepseekV4ModelInner only
+        // instantiates `numMain` blocks, so this is the standard forward pass)
+        let mainHidden = model(inputs, cache: cache)
+        let mainLogits = lmHead(mainHidden)
+        var result = [mainLogits]
+
+        // Chain MTP blocks stored in `model.layers` beyond numMain.
+        // Note: DeepseekV4ModelInner.layers only contains the first numMain layers.
+        // The MTP layer weights land in the weight dict as model.layers.{numMain+i}.*
+        // but are not currently allocated as Module objects inside DeepseekV4ModelInner.
+        // Phase 2 completion: allocate a separate `mtpLayers: [DeepseekV4Block]` array
+        // in DeepseekV4ModelInner when MTPConfig.retainMTPWeights is true.
+        // For now, return only the main logits (safe fallback).
+        return result
+    }
+}

@@ -51,6 +51,9 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
     var moeIntermediateSize: Int = 0
     var normTopkProb: Bool = true
 
+    // MTP fields
+    var numNextnPredictLayers: Int = 0
+
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type"
         case hiddenSize = "hidden_size"
@@ -79,6 +82,7 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
         case sharedExpertIntermediateSize = "shared_expert_intermediate_size"
         case moeIntermediateSize = "moe_intermediate_size"
         case normTopkProb = "norm_topk_prob"
+        case numNextnPredictLayers = "num_nextn_predict_layers"
     }
 
     public init(from decoder: Decoder) throws {
@@ -131,6 +135,8 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
         self.moeIntermediateSize =
             try container.decodeIfPresent(Int.self, forKey: .moeIntermediateSize) ?? 0
         self.normTopkProb = try container.decodeIfPresent(Bool.self, forKey: .normTopkProb) ?? true
+        self.numNextnPredictLayers =
+            try container.decodeIfPresent(Int.self, forKey: .numNextnPredictLayers) ?? 0
 
         let ropeContainer = try decoder.container(keyedBy: RopeParametersCodingKey.self)
         let ropeParameters = try ropeContainer.decodeIfPresent(
@@ -684,6 +690,10 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
 
     @ModuleInfo(key: "lm_head") public var lmHead: Linear?
 
+    // MTP heads — loaded only when SWIFTLM_MTP_ENABLE=1 and the checkpoint retains them.
+    // Key path: "mtp.{i}.{subkey}" maps into mtp[i].
+    @ModuleInfo(key: "mtp") var mtp: [Qwen35MTPLayer]
+
     public init(_ args: Qwen35TextConfiguration) {
         self.configuration = args
         self.vocabularySize = args.vocabularySize
@@ -692,6 +702,12 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
 
         if !args.tieWordEmbeddings {
             _lmHead.wrappedValue = Linear(args.hiddenSize, args.vocabularySize, bias: false)
+        }
+
+        // Allocate MTP head modules (populated by weight loader if SWIFTLM_MTP_ENABLE=1)
+        let numMTP = MTPConfig.retainMTPWeights ? args.numNextnPredictLayers : 0
+        _mtp.wrappedValue = (0 ..< numMTP).map { i in
+            Qwen35MTPLayer(args, layerIdx: args.hiddenLayers + i)
         }
     }
 
@@ -810,4 +826,88 @@ extension Qwen35Model: LoRAModel {
     public var loraLayers: [Module] {
         languageModel.model.layers
     }
+}
+
+// MARK: - MTP Module
+
+/// A single MTP (Multi-Token Prediction) head for Qwen3.5.
+/// Architecture mirrors the Python reference:
+///   enorm: RMSNorm on the embedded token
+///   hnorm: RMSNorm on the hidden state
+///   eh_proj: Linear that combines enorm(embed) + hnorm(h) -> hidden_size
+///   linear: One Qwen35DecoderLayer for extra context
+///   shared_head: Linear(hidden_size, vocab_size) – weight-tied to lm_head at load time
+class Qwen35MTPLayer: Module {
+    @ModuleInfo(key: "enorm") var enorm: MathRMSNorm
+    @ModuleInfo(key: "hnorm") var hnorm: MathRMSNorm
+    @ModuleInfo(key: "eh_proj") var ehProj: Linear
+    // The sub-decoder block
+    @ModuleInfo(key: "linear") var linear: Qwen35DecoderLayer
+    // Vocabulary projection (weight-shared with main lm_head in full checkpoints)
+    @ModuleInfo(key: "shared_head") var sharedHead: Linear
+
+    init(_ args: Qwen35TextConfiguration, layerIdx: Int) {
+        _enorm.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
+        _hnorm.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
+        // eh_proj maps concatenated [enorm(embed) ; hnorm(h)] -> hidden_size
+        _ehProj.wrappedValue = Linear(args.hiddenSize * 2, args.hiddenSize, bias: false)
+        _linear.wrappedValue = Qwen35DecoderLayer(args, layerIdx: layerIdx)
+        _sharedHead.wrappedValue = Linear(args.hiddenSize, args.vocabularySize, bias: false)
+    }
+
+    func callAsFunction(
+        _ hiddenState: MLXArray,
+        embedding: MLXArray,
+        attentionMask: MLXFast.ScaledDotProductAttentionMaskMode,
+        ssmMask: MLXArray?,
+        cache: KVCache?
+    ) -> MLXArray {
+        let h = ehProj(concatenated([enorm(embedding), hnorm(hiddenState)], axis: -1))
+        let out = linear(h, attentionMask: attentionMask, ssmMask: ssmMask, cache: cache)
+        return sharedHead(out)
+    }
+}
+
+// MARK: - MTPLanguageModel Conformance for Qwen35TextModel
+
+extension Qwen35TextModel: MTPLanguageModel {
+    /// Forward pass through the main model **and** all MTP heads.
+    /// Returns: [main_logits, mtp_head_0_logits, mtp_head_1_logits, ...]
+    public func callMTP(_ inputs: MLXArray, cache: [KVCache]?) -> [MLXArray] {
+        guard !mtp.isEmpty else {
+            // Fallback: no MTP heads loaded; return only main logits
+            return [callAsFunction(inputs, cache: cache)]
+        }
+
+        // Embed tokens — needed as the MTP layer input alongside main hidden state
+        let embedding = model.embedTokens(inputs)   // [B, S, D]
+        let mainHidden = model(inputs, cache: cache) // [B, S, D] (normed)
+
+        // Main logits
+        let mainLogits: MLXArray
+        if let head = lmHead {
+            mainLogits = head(mainHidden)
+        } else {
+            mainLogits = model.embedTokens.asLinear(mainHidden)
+        }
+
+        // MTP heads — each refines the previous hidden state
+        var result = [mainLogits]
+        var prevHidden = mainHidden
+        for mtpLayer in mtp {
+            let faMask = createAttentionMask(h: prevHidden, cache: nil)
+            let mtpLogits = mtpLayer(
+                prevHidden, embedding: embedding,
+                attentionMask: faMask, ssmMask: nil, cache: nil
+            )
+            result.append(mtpLogits)
+            prevHidden = mtpLogits
+        }
+        return result
+    }
+}
+
+/// Lazily-vended MTP head array (fileprivate accessor used in old stub — now replaced by @ModuleInfo)
+fileprivate extension Qwen35TextModel {
+    var mtpHeads: [Qwen35MTPLayer]? { mtp.isEmpty ? nil : mtp }
 }

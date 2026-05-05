@@ -1715,6 +1715,54 @@ public func generate(
     return stream
 }
 
+/// Generates text asynchronously using MTP (Multi-Token Prediction) internal speculative decoding.
+///
+/// Uses the model's built-in MTP heads to draft `numMTPTokens` candidate tokens per round and
+/// verify them in one batched forward pass — targeting 2x+ throughput with no extra VRAM.
+///
+/// - Parameters:
+///   - input: The input for the language model.
+///   - cache: optional ``KVCache``
+///   - parameters: The configuration options for token generation.
+///   - context: The model context (model must conform to ``MTPLanguageModel``).
+///   - numMTPTokens: Number of tokens the MTP heads draft per speculation round (default: 1).
+///   - wiredMemoryTicket: Optional wired memory ticket for policy-based coordination.
+/// - Returns: An `AsyncStream` that emits `Generation` values.
+/// - Throws: An error if the iterator initialization fails.
+public func generateMTP(
+    input: LMInput,
+    cache: [KVCache]? = nil,
+    parameters: GenerateParameters,
+    context: ModelContext,
+    numMTPTokens: Int = 1,
+    wiredMemoryTicket: WiredMemoryTicket? = nil
+) throws -> AsyncStream<Generation> {
+    guard let mtpModel = context.model as? (any MTPLanguageModel) else {
+        // Graceful fallback: model doesn't support MTP — use standard iterator
+        return try generate(input: input, cache: cache, parameters: parameters, context: context,
+                            wiredMemoryTicket: wiredMemoryTicket)
+    }
+    let iterator = try MTPTokenIterator(
+        input: input,
+        model: mtpModel,
+        cache: cache,
+        parameters: parameters,
+        numMTPTokens: numMTPTokens
+    )
+    let (stream, _) = generateLoopTask(
+        promptTokenCount: input.text.tokens.size,
+        modelConfiguration: context.configuration,
+        tokenizer: context.tokenizer,
+        iterator: iterator,
+        wiredMemoryTicket: wiredMemoryTicket,
+        handler: TextToolTokenLoopHandler(
+            tokenizer: context.tokenizer,
+            format: context.configuration.toolCallFormat ?? .json
+        )
+    )
+    return stream
+}
+
 @available(
     *, deprecated,
     message: "use a higher level generate() call or use generateTask() for fine grained control"
