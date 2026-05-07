@@ -179,8 +179,8 @@ Add your preferred tokenizer and downloader adapters:
 
 // After (3.x) – core + adapters
 .package(url: "https://github.com/ml-explore/mlx-swift-lm/", from: "3.0.0"),
-.package(url: "https://github.com/DePasqualeOrg/swift-tokenizers-mlx/", from: "0.1.0"),
-.package(url: "https://github.com/DePasqualeOrg/swift-hf-api-mlx/", from: "0.1.0"),
+.package(url: "https://github.com/DePasqualeOrg/swift-tokenizers-mlx/", from: "0.2.0", traits: ["Swift"]),
+.package(url: "https://github.com/DePasqualeOrg/swift-hf-api-mlx/", from: "0.2.0"),
 ```
 
 And add their products to your target:
