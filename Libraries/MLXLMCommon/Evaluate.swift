@@ -1124,16 +1124,13 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
             pendingTokens.append(token.item(Int.self))
             y = .init(tokens: token)
 
-            // Save future MTP logits for next iteration
-            self.mtpLogits = mtpResult.count > 1 ? Array(mtpResult.dropFirst()) : nil
+            // Save future MTP logits for next iteration (slice to single position)
+            self.mtpLogits = mtpResult.count > 1 ? mtpResult.dropFirst().map { $0[0..., -1, 0...] } : nil
 
             // Force evaluation of MTP state to prevent graph collapse
             var evalArrays = [token]
             if let mtpLogits = self.mtpLogits { evalArrays.append(contentsOf: mtpLogits) }
             eval(evalArrays)
-
-            pendingTokens.append(token.item(Int.self))
-            y = .init(tokens: token)
 
             quantizeKVCache(&cache)
             for i in mtpCaches.indices {
