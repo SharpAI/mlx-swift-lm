@@ -89,14 +89,41 @@ public func loadWeights(
         // and fall back to the bare path if none match.
         let knownPrefixes = ["language_model.", "model.language_model.", ""]
         for (path, module) in model.leafModules().flattened() {
-            if let qsl = module as? QuantizedSwitchLinear {
+            if let sl = module as? SwitchLinear {
                 let bareName = "\(path).weight"
-                // Find the original key that exists in the shard index
+                
+                // First, check for unstacked format (e.g. Qwen FP8: "experts.N.gate_proj")
+                if bareName.contains(".switch_mlp.") {
+                    let unstackedBaseName = bareName.replacingOccurrences(of: ".switch_mlp.", with: ".experts.")
+                    // Try to find expert 0 to confirm unstacked format
+                    let expert0Name = unstackedBaseName.replacingOccurrences(of: ".experts.", with: ".experts.0.")
+                    
+                    var foundUnstacked = false
+                    for prefix in knownPrefixes {
+                        if ExpertStreamerManager.shared?.getFile(for: prefix + expert0Name) != nil {
+                            foundUnstacked = true
+                            var map = [Int: (path: String, tensorName: String)]()
+                            for i in 0 ..< sl.numExperts {
+                                let expertName = unstackedBaseName.replacingOccurrences(of: ".experts.", with: ".experts.\(i).")
+                                let fullKey = prefix + expertName
+                                if let file = ExpertStreamerManager.shared?.getFile(for: fullKey),
+                                   let dir = ExpertStreamingConfig.shared.modelDirectory {
+                                    map[i] = (dir.appendingPathComponent(file).path, fullKey)
+                                }
+                            }
+                            sl.unstackedSSDMap = map
+                            break
+                        }
+                    }
+                    if foundUnstacked { continue }
+                }
+
+                // Normal stacked format
                 let originalKey = knownPrefixes.lazy
                     .map { $0 + bareName }
                     .first { ExpertStreamerManager.shared?.getFile(for: $0) != nil }
-                    ?? bareName  // fallback: use bare name (works when model has no VLM wrapper)
-                qsl.tensorName = originalKey
+                    ?? bareName  // fallback: use bare name
+                sl.tensorName = originalKey
             }
         }
     }

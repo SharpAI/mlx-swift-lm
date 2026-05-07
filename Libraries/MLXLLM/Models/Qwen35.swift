@@ -832,6 +832,35 @@ public class Qwen35Model: Module, LLMModel, KVCacheDimensionProvider {
             sanitized[key] = value
         }
 
+        // FP8 block-wise dequantization for Qwen3.6-27B-FP8 (dense checkpoint).
+        // Official FP8 checkpoints ship each weight tensor alongside a
+        // "weight_scale_inv" tensor with shape [outFeatures/128, inFeatures/128].
+        // We dequantize eagerly here (dense model fits in 64 GB without lazy streaming).
+        var processed = [String: MLXArray]()
+        for (key, value) in sanitized {
+            if key.hasSuffix(".weight_scale_inv") {
+                let wKey = key.replacingOccurrences(of: "_scale_inv", with: "")
+                if let w = sanitized[wKey], processed[wKey] == nil {
+                    // Block-wise: scale_inv is [outBlocks, inBlocks], w is [outDim, inDim]
+                    // Swift MLX maps F8_E4M3 → uint8; fromFp8 gives the same signed
+                    // [-448,448] range that Python mx.load() produces automatically.
+                    let wFp: MLXArray = MLXFast.fromFp8(w, dtype: .bfloat16)
+                    let bs = 128
+                    let (m, n) = (wFp.dim(0), wFp.dim(1))
+                    let padBottom = (bs - m % bs) % bs
+                    let padSide   = (bs - n % bs) % bs
+                    var padded = MLX.padded(wFp, widths: [[0, padBottom], [0, padSide]])
+                    padded = padded.reshaped([(m + padBottom) / bs, bs, (n + padSide) / bs, bs])
+                    let scaled = padded * value[0..., .newAxis, 0..., .newAxis]
+                    let dequant = scaled.reshaped([m + padBottom, n + padSide])[0 ..< m, 0 ..< n]
+                    processed[wKey] = dequant.asType(.bfloat16)
+                }
+            } else if processed[key] == nil {
+                processed[key] = value
+            }
+        }
+        if !processed.isEmpty { sanitized = processed }
+
         return languageModel.sanitize(weights: sanitized)
     }
 }

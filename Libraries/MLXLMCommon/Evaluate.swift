@@ -1126,8 +1126,19 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
 
             // Save future MTP logits for next iteration
             self.mtpLogits = mtpResult.count > 1 ? Array(mtpResult.dropFirst()) : nil
-            
+
+            // Force evaluation of MTP state to prevent graph collapse
+            var evalArrays = [token]
+            if let mtpLogits = self.mtpLogits { evalArrays.append(contentsOf: mtpLogits) }
+            eval(evalArrays)
+
+            pendingTokens.append(token.item(Int.self))
+            y = .init(tokens: token)
+
             quantizeKVCache(&cache)
+            for i in mtpCaches.indices {
+                quantizeKVCache(&mtpCaches[i])
+            }
             return
         }
 
@@ -1163,8 +1174,7 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
             mainTokens = sampler.sample(logits: verifyLogits)
         }
 
-        // Compare and accept proposed tokens
-        eval(mainTokens, draftTokens)
+        // We defer eval() until after we compute mtpLogits to force the graph
         let mainTokensList = mainTokens.asArray(Int.self)
         let draftTokensList = concatenated(draftTokens).asArray(Int.self)
         var accepted = 0
@@ -1191,6 +1201,9 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
 
         // Apply dynamic cache quantization after rewind
         quantizeKVCache(&cache)
+        for i in mtpCaches.indices {
+            quantizeKVCache(&mtpCaches[i])
+        }
 
         // Set y for the next round
         y = .init(tokens: finalToken)
@@ -1203,6 +1216,11 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         } else {
             self.mtpLogits = nil
         }
+
+        // Force evaluation of MTP state to prevent graph collapse
+        var evalArrays = [mainTokens] + draftTokens
+        if let mtpLogits = self.mtpLogits { evalArrays.append(contentsOf: mtpLogits) }
+        eval(evalArrays)
     }
 
     mutating public func next() -> Int? {
