@@ -51,6 +51,10 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
     var moeIntermediateSize: Int = 0
     var normTopkProb: Bool = true
 
+    // MTP fields
+    public var numNextnPredictLayers: Int = 0
+    public var mtpNumHiddenLayers: Int? = nil
+
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type"
         case hiddenSize = "hidden_size"
@@ -79,6 +83,8 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
         case sharedExpertIntermediateSize = "shared_expert_intermediate_size"
         case moeIntermediateSize = "moe_intermediate_size"
         case normTopkProb = "norm_topk_prob"
+        case numNextnPredictLayers = "num_nextn_predict_layers"
+        case mtpNumHiddenLayers = "mtp_num_hidden_layers"
     }
 
     public init(from decoder: Decoder) throws {
@@ -131,6 +137,9 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
         self.moeIntermediateSize =
             try container.decodeIfPresent(Int.self, forKey: .moeIntermediateSize) ?? 0
         self.normTopkProb = try container.decodeIfPresent(Bool.self, forKey: .normTopkProb) ?? true
+        
+        let mtpLayers = try container.decodeIfPresent(Int.self, forKey: .mtpNumHiddenLayers) ?? 0
+        self.numNextnPredictLayers = try container.decodeIfPresent(Int.self, forKey: .numNextnPredictLayers) ?? mtpLayers
 
         let ropeContainer = try decoder.container(keyedBy: RopeParametersCodingKey.self)
         let ropeParameters = try ropeContainer.decodeIfPresent(
@@ -684,6 +693,10 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
 
     @ModuleInfo(key: "lm_head") public var lmHead: Linear?
 
+    // MTP heads — loaded only when SWIFTLM_MTP_ENABLE=1 and the checkpoint retains them.
+    // Key path: "mtp.{i}.{subkey}" maps into mtp[i].
+    @ModuleInfo(key: "mtp") public var mtp: [Qwen35MTPLayer]
+
     public init(_ args: Qwen35TextConfiguration) {
         self.configuration = args
         self.vocabularySize = args.vocabularySize
@@ -692,6 +705,12 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
 
         if !args.tieWordEmbeddings {
             _lmHead.wrappedValue = Linear(args.hiddenSize, args.vocabularySize, bias: false)
+        }
+
+        // Allocate MTP head modules (populated by weight loader if SWIFTLM_MTP_ENABLE=1)
+        let numMTP = MTPConfig.retainMTPWeights ? args.numNextnPredictLayers : 0
+        _mtp.wrappedValue = (0 ..< numMTP).map { i in
+            Qwen35MTPLayer(args, layerIdx: args.hiddenLayers + i)
         }
     }
 
@@ -721,7 +740,10 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
         }
         let shouldShiftNormWeights = hasMTPWeights || hasUnsanitizedConv1d
 
-        var weights = weights.filter { !$0.key.contains("mtp.") }
+        var weights = weights
+        if !MTPConfig.retainMTPWeights {
+            weights = weights.filter { !$0.key.contains("mtp.") }
+        }
 
         if configuration.tieWordEmbeddings {
             weights["lm_head.weight"] = nil
@@ -737,15 +759,26 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
 
         for k in Array(weights.keys) {
             guard let v = weights[k] else { continue }
-            if k.contains("conv1d.weight") && v.dim(-1) != 1 {
-                weights[k] = v.movedAxis(source: 2, destination: 1)
+            
+            // Map community MTP checkpoint keys (e.g. language_model.mtp.fc) to array indices (language_model.mtp.0.fc)
+            // Some checkpoints use .mtp.fc instead of the array index .mtp.0.fc
+            let updatedKey = k.contains(".mtp.") && !k.contains(".mtp.0.") ? k.replacingOccurrences(of: ".mtp.", with: ".mtp.0.") : k
+            let updatedVal = v
+            
+            if updatedKey != k {
+                weights.removeValue(forKey: k)
+                weights[updatedKey] = v
+            }
+            
+            if updatedKey.contains("conv1d.weight") && updatedVal.dim(-1) != 1 {
+                weights[updatedKey] = updatedVal.movedAxis(source: 2, destination: 1)
                 continue
             }
             if shouldShiftNormWeights
-                && normKeys.contains(where: { k.hasSuffix($0) })
-                && v.ndim == 1
+                && normKeys.contains(where: { updatedKey.hasSuffix($0) })
+                && updatedVal.ndim == 1
             {
-                weights[k] = v + MLXArray(1, dtype: v.dtype)
+                weights[updatedKey] = updatedVal + MLXArray(1, dtype: updatedVal.dtype)
             }
         }
 
@@ -799,6 +832,35 @@ public class Qwen35Model: Module, LLMModel, KVCacheDimensionProvider {
             sanitized[key] = value
         }
 
+        // FP8 block-wise dequantization for Qwen3.6-27B-FP8 (dense checkpoint).
+        // Official FP8 checkpoints ship each weight tensor alongside a
+        // "weight_scale_inv" tensor with shape [outFeatures/128, inFeatures/128].
+        // We dequantize eagerly here (dense model fits in 64 GB without lazy streaming).
+        var processed = [String: MLXArray]()
+        for (key, value) in sanitized {
+            if key.hasSuffix(".weight_scale_inv") {
+                let wKey = key.replacingOccurrences(of: "_scale_inv", with: "")
+                if let w = sanitized[wKey], processed[wKey] == nil {
+                    // Block-wise: scale_inv is [outBlocks, inBlocks], w is [outDim, inDim]
+                    // Swift MLX maps F8_E4M3 → uint8; fromFp8 gives the same signed
+                    // [-448,448] range that Python mx.load() produces automatically.
+                    let wFp: MLXArray = MLXFast.fromFp8(w, dtype: .bfloat16)
+                    let bs = 128
+                    let (m, n) = (wFp.dim(0), wFp.dim(1))
+                    let padBottom = (bs - m % bs) % bs
+                    let padSide   = (bs - n % bs) % bs
+                    var padded = MLX.padded(wFp, widths: [[0, padBottom], [0, padSide]])
+                    padded = padded.reshaped([(m + padBottom) / bs, bs, (n + padSide) / bs, bs])
+                    let scaled = padded * value[0..., .newAxis, 0..., .newAxis]
+                    let dequant = scaled.reshaped([m + padBottom, n + padSide])[0 ..< m, 0 ..< n]
+                    processed[wKey] = dequant.asType(.bfloat16)
+                }
+            } else if processed[key] == nil {
+                processed[key] = value
+            }
+        }
+        if !processed.isEmpty { sanitized = processed }
+
         return languageModel.sanitize(weights: sanitized)
     }
 }
@@ -808,3 +870,100 @@ extension Qwen35Model: LoRAModel {
         languageModel.model.layers
     }
 }
+
+// MARK: - MTP Module
+
+/// A single MTP (Multi-Token Prediction) head for Qwen3.6.
+/// Architecture mirrors the official schema:
+///   pre_fc_norm_embedding: RMSNorm on the embedded token
+///   pre_fc_norm_hidden: RMSNorm on the hidden state
+///   fc: Linear that combines enorm(embed) + hnorm(h) -> hidden_size
+///   layers: Array of Qwen35DecoderLayer for extra context
+///   norm: Final RMSNorm on the MTP output
+public class Qwen35MTPLayer: Module {
+    @ModuleInfo(key: "pre_fc_norm_embedding") var preFCNormEmbedding: MathRMSNorm
+    @ModuleInfo(key: "pre_fc_norm_hidden") var preFCNormHidden: MathRMSNorm
+    @ModuleInfo(key: "fc") var fc: Linear
+    @ModuleInfo(key: "layers") var layers: [Qwen35DecoderLayer]
+    @ModuleInfo(key: "norm") var norm: MathRMSNorm
+
+    init(_ args: Qwen35TextConfiguration, layerIdx: Int) {
+        _preFCNormEmbedding.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
+        _preFCNormHidden.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
+        _fc.wrappedValue = Linear(args.hiddenSize * 2, args.hiddenSize, bias: false)
+        // MTP layers in Qwen3.6 use full attention. Force this by passing a full attention layerIdx.
+        _layers.wrappedValue = [Qwen35DecoderLayer(args, layerIdx: args.fullAttentionInterval - 1)]
+        _norm.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
+    }
+
+    func callAsFunction(
+        _ hiddenState: MLXArray,
+        embedding: MLXArray,
+        attentionMask: MLXFast.ScaledDotProductAttentionMaskMode,
+        ssmMask: MLXArray?,
+        cache: KVCache?
+    ) -> MLXArray {
+        var h = fc(concatenated([preFCNormEmbedding(embedding), preFCNormHidden(hiddenState)], axis: -1))
+        for layer in layers {
+            h = layer(h, attentionMask: attentionMask, ssmMask: ssmMask, cache: cache)
+        }
+        return norm(h)
+    }
+}
+
+// MARK: - MTPLanguageModel Conformance for Qwen35TextModel
+
+extension Qwen35TextModel: MTPLanguageModel {
+    /// Forward pass through the main model **and** all MTP heads.
+    /// Returns: [main_logits, mtp_head_0_logits, mtp_head_1_logits, ...]
+    public func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray] {
+        guard !mtp.isEmpty else {
+            // Fallback: no MTP heads loaded; return only main logits
+            return [callAsFunction(inputs, cache: cache)]
+        }
+
+        // Embed tokens — needed as the MTP layer input alongside main hidden state
+        let embedding = model.embedTokens(inputs)   // [B, S, D]
+        let mainHidden = model(inputs, cache: cache) // [B, S, D] (normed)
+
+        // Main logits
+        let mainLogits: MLXArray
+        if let head = lmHead {
+            mainLogits = head(mainHidden)
+        } else {
+            mainLogits = model.embedTokens.asLinear(mainHidden)
+        }
+
+        // MTP heads — each refines the previous hidden state
+        var result = [mainLogits]
+        var prevHidden = mainHidden
+        for (i, mtpLayer) in mtp.enumerated() {
+            let mtpCache: [KVCache]? = mtpCaches?[i]
+            let faMask = createAttentionMask(h: prevHidden, cache: mtpCache?.first)
+            let mtpHidden = mtpLayer(
+                prevHidden, embedding: embedding,
+                attentionMask: faMask, ssmMask: nil, cache: mtpCache?.first
+            )
+            
+            // Project the MTP hidden state to vocabulary logits using the shared lm_head
+            if let head = lmHead {
+                result.append(head(mtpHidden))
+            } else {
+                result.append(model.embedTokens.asLinear(mtpHidden))
+            }
+            
+            // The hidden state is passed to the next MTP layer
+            prevHidden = mtpHidden
+        }
+        return result
+    }
+
+    /// Allocate persistent KVCache arrays for each MTP head
+    public func makeMTPCaches(parameters: GenerateParameters?) -> [[KVCache]] {
+        return mtp.map { mtpLayer in
+            // Each MTP layer contains a single DecoderLayer which needs one KVCache
+            [KVCacheSimple()]
+        }
+    }
+}
+

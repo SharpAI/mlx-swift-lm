@@ -193,7 +193,8 @@ public class MiMoModel: Module, LLMModel, KVCacheDimensionProvider {
 
         // Remove unused precomputed rotary freqs and mtp_layers
         return weights.filter { key, _ in
-            !key.contains("self_attn.rotary_emb.inv_freq") && !key.hasPrefix("model.mtp_layers.")
+            let keepMTP = MTPConfig.retainMTPWeights ? true : !key.hasPrefix("model.mtp_layers.")
+            return !key.contains("self_attn.rotary_emb.inv_freq") && keepMTP
         }
     }
 }

@@ -459,7 +459,7 @@ public class MiMoV2FlashModel: Module, LLMModel, KVCacheDimensionProvider {
         }
 
         return sanitizedWeights.filter { key, _ in
-            !key.hasPrefix("model.mtp")
+            MTPConfig.retainMTPWeights ? true : !key.hasPrefix("model.mtp")
         }
     }
 

@@ -1223,7 +1223,10 @@ public class Qwen35: Module, VLMModel {
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
-        var weights = weights.filter { !$0.key.contains("mtp.") }
+        var weights = weights
+        if !MTPConfig.retainMTPWeights {
+            weights = weights.filter { !$0.key.contains("mtp.") }
+        }
 
         if config.textConfiguration.tieWordEmbeddings {
             weights["lm_head.weight"] = nil
