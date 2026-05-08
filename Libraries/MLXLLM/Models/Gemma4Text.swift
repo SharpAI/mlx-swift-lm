@@ -494,7 +494,7 @@ private class Gemma4MLP: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        downProj(geluApproximate(gateProj(x)) * upProj(x))
+        downProj(safeGeluApproximate(gateProj(x)) * upProj(x))
     }
 }
 
@@ -558,7 +558,7 @@ private class Gemma4TextExperts: Module {
             inputDims: config.hiddenSize,
             hiddenDims: moeIntermediateSize,
             numExperts: numExperts,
-            activation: geluApproximate,
+            activation: safeGeluApproximate,
             bias: false
         )
         super.init()
@@ -700,7 +700,7 @@ private class Gemma4DecoderLayer: Module {
         {
             let residual3 = out
             var g = gate(out)
-            g = geluApproximate(g)
+            g = safeGeluApproximate(g)
             g = g * perLayerInput
             g = proj(g)
             g = norm(g)
@@ -784,7 +784,7 @@ private class Gemma4TextModelInner: Module {
         cache: [KVCache]? = nil
     ) -> MLXArray {
         let inputEmbeddings = embedTokens(inputs)
-        var h = inputEmbeddings * embedScale
+        var h = inputEmbeddings * MLXArray(embedScale, dtype: inputEmbeddings.dtype)
 
         // Compute per-layer inputs (PLE)
         var perLayerInputs: [MLXArray?]
@@ -796,7 +796,7 @@ private class Gemma4TextModelInner: Module {
             // Token-based PLE
             let tokenPLE =
                 embedPerLayer(inputs)
-                * Float(config.hiddenSizePerLayerInput).squareRoot()
+                * MLXArray(Float(config.hiddenSizePerLayerInput).squareRoot(), dtype: h.dtype)
 
             // [B, L, numLayers * hiddenSizePerLayerInput] -> [B, L, numLayers, hiddenSizePerLayerInput]
             let reshapedTokenPLE = tokenPLE.reshaped(
@@ -810,7 +810,7 @@ private class Gemma4TextModelInner: Module {
             let normedModelPLE = projNorm(modelPLE)
 
             // Combine: (model_proj + token_embed) * 2^{-0.5}
-            let perLayerInputScale = pow(Float(2.0), -0.5)
+            let perLayerInputScale = MLXArray(pow(Float(2.0), -0.5), dtype: h.dtype)
             let combined = (normedModelPLE + reshapedTokenPLE) * perLayerInputScale
 
             perLayerInputs = (0 ..< config.numHiddenLayers).map { i in
@@ -900,7 +900,8 @@ public class Gemma4TextModel: Module, LLMModel, KVCacheDimensionProvider {
         } else {
             out = model.embedTokens.asLinear(out)
         }
-        out = tanh(out / config.finalLogitSoftcapping) * config.finalLogitSoftcapping
+        let cap = MLXArray(config.finalLogitSoftcapping, dtype: out.dtype)
+        out = compiledSoftcap(x: out, cap: cap)
         return out
     }
 
