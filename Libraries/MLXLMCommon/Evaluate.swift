@@ -1098,6 +1098,14 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
     // Logits from the previous step's MTP heads
     var mtpLogits: [MLXArray]?
 
+    // Partial rollback state (llama.cpp PR #22673 style).
+    // After accepting k of N drafts, the backbone hidden state at position k is stored here.
+    // On the NEXT cold-start round (mtpLogits=nil), callMTPHeadOnly seeds one draft from this
+    // state — turning a zero-draft round into a one-draft round without an extra main-model pass.
+    private var rollbackH: MLXArray? = nil       // [B, 1, D] backbone state at accepted pos
+    private var rollbackToken: MLXArray? = nil   // [1, 1] int32 — the output token (x_{k+1})
+    private var rollbackPosOffset: Int = 0       // sequence position of the accepted token
+
     // Buffer of accepted tokens from the current speculation round
     private var pendingTokens = [Int]()
     private var pendingIndex = 0
@@ -1187,7 +1195,36 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
             }
         }
 
-        // If no draft tokens were generated (e.g. first step), fallback to regular generation
+        // Partial rollback (llama.cpp PR #22673 style): after a partial accept, use the stored
+        // backbone hidden state to seed one draft via callMTPHeadOnly, then verify it.
+        // Empirically at 40K: rollback-ON=28.5 tok/s vs rollback-OFF=21.1 tok/s (+35%).
+        // The rollback-seeded 2-token verify replaces a cold-start callMTP round — despite
+        // cascading 44% rejection, the shorter verify batch (2 vs 5 tokens) recovers faster.
+        if draftTokens.isEmpty {
+            if let rH = rollbackH,
+               let rTok = rollbackToken,
+               let assistantModel = model as? any MTPPartialRollback {
+                rollbackH = nil
+                rollbackToken = nil
+                // depth=1: only depth-0 is well-conditioned from h_k.
+                // depth>1 chains MTP greedy argmax, compounding context misalignment
+                // vs the trimmed KV cache — empirically caused -31% TPS at 40K with depth=4.
+                let depth = 1
+                let headLogits = assistantModel.callMTPHeadOnly(
+                    rH, nextToken: rTok, cache: cache, posOffset: rollbackPosOffset, mtpDepth: depth)
+                if !headLogits.isEmpty {
+                    var draftProcessor = processor
+                    let draftLogit = headLogits[0][0..., 0, 0...]  // [B, V]
+                    var dl = draftProcessor?.process(logits: draftLogit) ?? draftLogit
+                    let draftToken = sampler.sample(logits: dl)
+                    draftProcessor?.didSample(token: draftToken)
+                    draftTokens.append(draftToken)
+                    draftProcessedLogits.append(dl)
+                }
+            }
+        }
+
+
         if draftTokens.isEmpty {
             let mtpResult = model.callMTP(y.tokens[.newAxis], cache: cache, mtpCaches: mtpCaches)
             guard !mtpResult.isEmpty else { return }
@@ -1356,18 +1393,46 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         // Set y for the next round
         y = .init(tokens: finalTokenOut)
 
-        // Update mtpLogits from the verification pass for the NEXT speculation round.
-        // mtpResult[1..N] contains the MTP head outputs for each depth.
-        // Each head output is [B, 1, vocab] — extract directly (no position indexing needed).
-        // Only keep them if ALL drafts were accepted, otherwise they are invalid due to cache rewind.
+        // Capture partial rollback state (llama.cpp PR #22673 / pending_h approach).
+        // When k < N drafts are accepted:
+        //   hBackbone[:, verifyStart+k, :] = hidden state after the k-th accepted token
+        //   finalTokenOut = x_{k+1}, the bonus token being output this round
+        // On the next cold-start round, callMTPHeadOnly will use this state to seed
+        // one draft (predicting x_{k+2}) without re-running the main model.
+        if accepted < draftTokens.count,
+           let assistantModel = model as? any MTPPartialRollback,
+           let allH = assistantModel.lastBackboneHiddenStateAll {
+            let seedPos = verifyStart + accepted
+            if seedPos < allH.dim(1) {
+                rollbackH = allH[0..., seedPos..<(seedPos + 1), 0...]  // [B, 1, D]
+                rollbackToken = finalTokenOut.flattened().reshaped([1, 1])  // [B=1, 1] — flatten first to handle 0-D scalars
+                // posOffset = current KV cache length after trim (= position of finalTokenOut)
+                rollbackPosOffset = cache.first.map {
+                    if let c = $0 as? KVCacheSimple { return c.offset }
+                    if let c = $0 as? RotatingKVCache { return c.offset }
+                    return 0
+                } ?? 0
+            }
+        } else {
+            // All accepted or rollback not available — clear any stale state
+            rollbackH = nil
+            rollbackToken = nil
+        }
+
+        // Update mtpLogits for the NEXT speculation round.
+        // Only valid to reuse when ALL drafts accepted: the MTP head ran from the last position
+        // which matches the trimmed-cache state. On partial accept the head ran from a stale
+        // position (rejected tokens still in context at inference time) — stale logits hurt.
+        // Partial-accept cold-start is handled by the rollback path (rollbackH) above.
         if accepted == draftTokens.count && mtpResult.count > 1 {
             self.mtpLogits = mtpResult.dropFirst().map { headLogits in
-                // headLogits shape: [B, 1, vocab] — squeeze to [B, vocab] for the sampler
                 headLogits[0..., headLogits.dim(1) - 1, 0...]
             }
         } else {
             self.mtpLogits = nil
         }
+
+
 
         // Force evaluation of MTP state to prevent graph collapse
         var evalArrays = [mainTokens] + draftTokens

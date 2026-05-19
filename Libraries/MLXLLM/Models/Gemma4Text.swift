@@ -990,7 +990,7 @@ extension Gemma4TextModel: LoRAModel {
 
 // MARK: - Assistant
 
-public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimensionProvider {
+public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, MTPPartialRollback, KVCacheDimensionProvider {
     public let vocabularySize: Int
     public let kvHeads: [Int]
 
@@ -1015,6 +1015,16 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
 
     // Reference to the main model so we can call it inside callMTP
     public var mainModelRef: (any BaseLanguageModel)? = nil
+
+    /// Full [B, S, D] backbone hidden state from the most recent callMTP verification pass.
+    /// Stored so MTPTokenIterator can extract the hidden state at the accepted position
+    /// for partial rollback (re-seeding the MTP head without re-running the main model).
+    public var lastBackboneHiddenStateAll: MLXArray? = nil
+
+    /// Number of draft tokens to produce per MTP head call.
+    /// depth=2: each pass costs 24% overhead (2 × ~12% per assistant layer pass at 40K).
+    /// depth=4: costs 48% overhead — empirically worse due to Metal kernel launch cost per depth.
+    public var numMTPDraftTokens: Int = 2
 
     public init(_ fullConfig: Gemma4Configuration) {
         let config = fullConfig.textConfig
@@ -1116,7 +1126,7 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
         // Use mlx scatter via the __setitem__ approach:
         let scatterIdx2D = selectedCanonicalShaped.reshaped([B * S, totalCandidates]).asType(.int32)
         let selectedLogits2D = selectedLogits.reshaped([B * S, totalCandidates])
-        var output2D = output.reshaped([B * S, vocabSize])
+        let output2D = output.reshaped([B * S, vocabSize])
         let rowIndices = MLXArray.arange(B * S).asType(.int32).reshaped([B * S, 1])
         output2D[rowIndices, scatterIdx2D] = selectedLogits2D
         output = output2D.reshaped([B, S, vocabSize])
@@ -1134,6 +1144,179 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
         return model.embedTokens.asLinear(h)
     }
 
+    /// Override prefill to delegate to the main model, not the assistant layers.
+    ///
+    /// The inherited LLMModel.prepare runs `self(input, cache, state)` which calls
+    /// `callAsFunction` — i.e. the 4-layer assistant transformer.  That writes into
+    /// indices [0..3] of the *main model's* 30-layer KVCache, leaving all 30 layers
+    /// uninitialized for the main model.  When callMTP subsequently runs the main
+    /// model it finds a cold cache, producing garbage logits, so mtpLogits is never
+    /// seeded and speculateRound can never produce draft tokens.
+    ///
+    /// Fix: run the MAIN MODEL's prepare() instead, populating all 30 KV layers correctly.
+    /// The assistant model is only invoked during the MTP head phase (callMTP/callMTPHeadOnly).
+    public func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
+        guard let mainModel = mainModelRef as? any LLMModel else {
+            // mainModelRef not set yet — fall through to token-by-token (no prefill cache warming)
+            return .tokens(input.text)
+        }
+        return try mainModel.prepare(input, cache: cache, windowSize: windowSize)
+    }
+
+    // MARK: - MTP Head Loop (shared by callMTP and callMTPHeadOnly)
+
+    /// Run the iterative MTP head loop.
+    /// - Parameters:
+    ///   - hLast: [B, 1, backboneDim] — initial backbone hidden state
+    ///   - eEmbed: [B, 1, backboneDim] — embedding of the first "next" token
+    ///   - posOffset: fixed position offset for assistant RoPE
+    ///   - backboneDim: dimension of backbone hidden state
+    ///   - cache: main model KV cache (for cross-attention in assistant layers)
+    ///   - depth: how many MTP outputs to produce
+    /// - Returns: [depth-0 logits, depth-1 logits, ...] each [B, 1, V]
+    private func runMTPHead(
+        hLast hLastIn: MLXArray,
+        eEmbed eEmbedIn: MLXArray,
+        posOffset: Gemma4PositionOffset,
+        backboneDim: Int,
+        cache: [KVCache]?,
+        depth: Int
+    ) -> [MLXArray] {
+        var hLast = hLastIn
+        var eEmbed = eEmbedIn
+        var results = [MLXArray]()
+
+        for _ in 0 ..< depth {
+            let hConcat = concatenated([eEmbed, hLast], axis: -1)
+            var hAssistant: MLXArray
+            if let w = preProjectionWeight {
+                hAssistant = matmul(hConcat, w.T)
+            } else {
+                hAssistant = hConcat
+                if hAssistant.dim(-1) != config.hiddenSize {
+                    hAssistant = hAssistant[.ellipsis, ..<config.hiddenSize]
+                }
+            }
+
+            for i in 0 ..< config.numHiddenLayers {
+                let layer = model.layers[i]
+                var sharedKV: (MLXArray, MLXArray)? = nil
+                if let fullCache = cache {
+                    let layerType = model.layers[i].layerType
+                    let mainIdx = layerType == "sliding_attention" ? fullCache.count - 2 : fullCache.count - 1
+                    if mainIdx >= 0 {
+                        // Cap shared-KV cross-attention to the last N backbone positions.
+                        // The backbone hLast already encodes the full history; the assistant
+                        // only needs local conditioning. Capping to 16 positions reduces
+                        // cross-attention bandwidth from O(T) → O(16) at long contexts,
+                        // eliminating the 2× slowdown at 40K–100K without hurting short-ctx.
+                        let maxSharedKV = 16
+                        let cacheElement = fullCache[mainIdx]
+                        if let c = cacheElement as? KVCacheSimple, let k = c.keys, let v = c.values {
+                            let seqLen = min(c.offset, k.dim(2))
+                            let startPos = max(0, seqLen - maxSharedKV)
+                            let validK = k[0..., 0..., startPos ..< seqLen, 0...]
+                            let validV = v[0..., 0..., startPos ..< seqLen, 0...]
+                            sharedKV = (validK, validV)
+                        } else if let c = cacheElement as? RotatingKVCache, let k = c.keys, let v = c.values {
+                            let seqLen = min(c.offset, k.dim(2))
+                            let startPos = max(0, seqLen - maxSharedKV)
+                            let validK = k[0..., 0..., startPos ..< seqLen, 0...]
+                            let validV = v[0..., 0..., startPos ..< seqLen, 0...]
+                            sharedKV = (validK, validV)
+                        }
+                    }
+                }
+
+                let (out, _, _) = layer(hAssistant, mask: nil, cache: nil, perLayerInput: nil, sharedKV: sharedKV, positionOffset: posOffset)
+                hAssistant = out
+            }
+
+            let hNormed = model.norm(hAssistant)
+            let logits: MLXArray
+            if _centroidWeight != nil {
+                logits = maskedEmbedderLogits(hNormed)
+            } else {
+                logits = model.embedTokens.asLinear(hNormed)
+            }
+            results.append(logits)
+
+            if let w = postProjectionWeight {
+                hLast = matmul(hNormed, w.T)
+            } else {
+                hLast = hNormed
+                if hLast.dim(-1) != backboneDim {
+                    if hLast.dim(-1) > backboneDim {
+                        hLast = hLast[.ellipsis, ..<backboneDim]
+                    } else {
+                        let pad = MLX.zeros([hLast.dim(0), hLast.dim(1), backboneDim - hLast.dim(-1)]).asType(hLast.dtype)
+                        hLast = concatenated([hLast, pad], axis: -1)
+                    }
+                }
+            }
+
+            let lastLogits = logits[0..., logits.dim(1)-1, 0...]
+            let nextTokenScalar = argMax(lastLogits, axis: -1)
+            let nextTokenReshaped = nextTokenScalar.reshaped([1, 1])
+            if let g4tm = mainModelRef as? Gemma4TextModel {
+                let emb = g4tm.model.embedTokens(nextTokenReshaped)
+                eEmbed = emb * MLXArray(g4tm.model.embedScale, dtype: emb.dtype)
+            } else if let g4m = mainModelRef as? Gemma4Model {
+                let emb = g4m.languageModel.model.embedTokens(nextTokenReshaped)
+                eEmbed = emb * MLXArray(g4m.languageModel.model.embedScale, dtype: emb.dtype)
+            } else {
+                let emb = model.embedTokens(nextTokenReshaped)
+                eEmbed = emb * MLXArray(model.embedScale, dtype: emb.dtype)
+            }
+        }
+        return results
+    }
+
+    /// Run only the MTP head from a pre-computed backbone hidden state.
+    /// Used for partial rollback: after accepting k of N drafts, this re-seeds the
+    /// MTP head from h_k (stored from the verification pass) without re-running
+    /// the main model. The main model still runs on y in the normal callMTP call;
+    /// the draft from callMTPHeadOnly is passed in as the single draft token to verify.
+    ///
+    /// - Parameters:
+    ///   - h: [B, 1, backboneDim] — backbone hidden state at the accepted position
+    ///   - nextToken: [B, 1] int32 — the token output after the accepted position (x_{k+1})
+    ///   - cache: main model KV cache (post-trim, for cross-attention)
+    ///   - posOffset: sequence position of the accepted token
+    ///   - mtpDepth: how many draft logits to produce
+    /// - Returns: [depth-0 logits, ...] each [B, 1, V] — NO main logits prefix
+    public func callMTPHeadOnly(
+        _ h: MLXArray,
+        nextToken: MLXArray,
+        cache: [KVCache]?,
+        posOffset: Int,
+        mtpDepth: Int
+    ) -> [MLXArray] {
+        let backboneDim = h.dim(-1)
+        let assistantPosOffset = Gemma4PositionOffset.scalar(posOffset)
+
+        var eEmbed: MLXArray
+        if let g4tm = mainModelRef as? Gemma4TextModel {
+            let emb = g4tm.model.embedTokens(nextToken)
+            eEmbed = emb * MLXArray(g4tm.model.embedScale, dtype: emb.dtype)
+        } else if let g4m = mainModelRef as? Gemma4Model {
+            let emb = g4m.languageModel.model.embedTokens(nextToken)
+            eEmbed = emb * MLXArray(g4m.languageModel.model.embedScale, dtype: emb.dtype)
+        } else {
+            let emb = model.embedTokens(nextToken)
+            eEmbed = emb * MLXArray(model.embedScale, dtype: emb.dtype)
+        }
+
+        return runMTPHead(
+            hLast: h,
+            eEmbed: eEmbed,
+            posOffset: assistantPosOffset,
+            backboneDim: backboneDim,
+            cache: cache,
+            depth: mtpDepth
+        )
+    }
+
     public func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray] {
         guard let mainModel = mainModelRef else {
             fatalError("mainModelRef must be set on Gemma4AssistantModel before calling callMTP")
@@ -1141,13 +1324,11 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
 
         let posOffset = cache?.first.map { gemma4CapturePositionOffset(from: $0) }
 
-        // 1. Run the main model to get main logits and backbone hidden state
         guard let llmMain = mainModel as? any LLMModel else {
             fatalError("mainModelRef must be an LLMModel")
         }
         let mainLogits = llmMain(inputs, cache: cache)
 
-        // Extract the NORMALIZED hidden state from the backbone
         var hBackbone: MLXArray
         if let g4m = mainModel as? Gemma4Model, let lhs = g4m.lastHiddenState {
             hBackbone = lhs
@@ -1157,41 +1338,30 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
             fatalError("[MTP] Could not extract normalized hidden state from main model")
         }
 
-        var allLogits = [mainLogits]
+        // Store the full [B, S, D] hidden state so MTPTokenIterator can extract
+        // the accepted-position's state for partial rollback.
+        self.lastBackboneHiddenStateAll = hBackbone
 
-        // pre_projection: [256, 3072] — expects concat(hBackbone, embedToken) both 1536-dim → 3072
-        // post_projection: [1536, 256] — maps assistant 256-dim state back to 1536 backbone dim
-
-        // For depth=0, we don't have a draft token yet — we use the LAST token from inputs as the "current" token.
-        // hBackbone[..., -1:, ...] is the hidden state after the last real token.
-        // We embed the last input token to form the first concatenation.
-        let backboneDim = hBackbone.dim(-1)  // 1536
-
-        // Get the last hidden state (the one that will predict the next token)
+        let backboneDim = hBackbone.dim(-1)
         let seqLen = hBackbone.dim(1)
-        var hLast = hBackbone[0..., (seqLen-1)..<seqLen, 0...]  // [B, 1, D=1536]
+        let hLast = hBackbone[0..., (seqLen-1)..<seqLen, 0...]
 
         let inputLen = inputs.dim(1)
-        // The assistant predicts x_{t+2} using h_t and embed(x_{t+1}).
-        // x_{t+1} is the token predicted by the main model's logits at the last position.
-        let mainLogitsLast = mainLogits[0..., -1, 0...][.newAxis]  // [B, 1, V]
-        let predictedToken = argMax(mainLogitsLast, axis: -1)      // [B, 1]
-        let lastToken = predictedToken
+        let mainLogitsLast = mainLogits[0..., -1, 0...][.newAxis]
+        let predictedToken = argMax(mainLogitsLast, axis: -1)
+
         var eEmbed: MLXArray
         if let g4tm = mainModel as? Gemma4TextModel {
-            eEmbed = g4tm.model.embedTokens(lastToken)
+            eEmbed = g4tm.model.embedTokens(predictedToken)
             eEmbed = eEmbed * MLXArray(g4tm.model.embedScale, dtype: eEmbed.dtype)
         } else if let g4m = mainModel as? Gemma4Model {
-            eEmbed = g4m.languageModel.model.embedTokens(lastToken)
+            eEmbed = g4m.languageModel.model.embedTokens(predictedToken)
             eEmbed = eEmbed * MLXArray(g4m.languageModel.model.embedScale, dtype: eEmbed.dtype)
         } else {
-            eEmbed = model.embedTokens(lastToken)
+            eEmbed = model.embedTokens(predictedToken)
             eEmbed = eEmbed * MLXArray(model.embedScale, dtype: eEmbed.dtype)
         }
 
-        // The assistant uses the FIXED position of the last seen token for ALL draft steps.
-        // HF reference: position_ids = torch.tensor([[input_ids.shape[1] - 1]]) — set once, never incremented.
-        // This is (posOffset_before_main_fwd + inputLen - 1) = index of the last input token.
         let assistantPosOffset: Gemma4PositionOffset
         switch posOffset ?? .scalar(0) {
         case .scalar(let off):
@@ -1200,115 +1370,20 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
             assistantPosOffset = .batch(offArr + inputLen - 1)
         }
 
-        // Run as many depth iterations as needed for numDraftTokens + 1 (the accepted token's head)
-        // For numDraft=2 we need 2 MTP heads (depth 0 and 1 give us draft 1 and draft 2).
-        // Running only what we need avoids extra compute.
-        let mtpDepth = (mtpCaches?.count ?? 0) + 2  // fallback: 2 depths for 2 draft tokens
+        // Use numMTPDraftTokens (default 4) so we generate 4 draft predictions per pass.
+        // Previously this was (mtpCaches?.count ?? 0) + 2 = 0 + 2 = 2, meaning only 2 drafts
+        // were ever generated despite numMTPTokens=4 in MTPTokenIterator — a 2x deficit.
+        let mtpDepth = numMTPDraftTokens
 
-        for _ in 0 ..< mtpDepth {
-            // Step A: Concatenate token embedding + backbone hidden state → [B, 1, 3072]
-            // HF does torch.cat([last_token_embedding, last_hidden_state], dim=-1)
-            let hConcat = concatenated([eEmbed, hLast], axis: -1)  // [B, 1, 3072]
-
-            // Step B: Pre-projection → [B, 1, 256]
-            var hAssistant: MLXArray
-            if let preProjWeight = preProjectionWeight {
-                hAssistant = matmul(hConcat, preProjWeight.T)  // [B, 1, 256]
-            } else {
-                hAssistant = hConcat
-                if hAssistant.dim(-1) != config.hiddenSize {
-                    hAssistant = hAssistant[.ellipsis, ..<config.hiddenSize]
-                }
-            }
-
-            // Step C: Run all 4 assistant transformer layers
-            for i in 0 ..< config.numHiddenLayers {
-                let layer = model.layers[i]
-                
-                // Pass main model KV cache as sharedKV for cross-attention
-                var sharedKV: (MLXArray, MLXArray)? = nil
-                if let fullCache = cache {
-                    let layerType = model.layers[i].layerType
-                    // Assistant layers attend to the main model's last SWA or FA cache
-                    // Full-attention layers use the last full-attention cache; SWA uses last SWA cache
-                    let mainIdx = layerType == "sliding_attention" ? fullCache.count - 2 : fullCache.count - 1
-                    if mainIdx >= 0 {
-                        let cacheElement = fullCache[mainIdx]
-                        if let c = cacheElement as? KVCacheSimple, let k = c.keys, let v = c.values {
-                            // Slice to valid offset (avoid zero-padded buffer positions)
-                            let validK = k[0..., 0..., 0..<c.offset, 0...]  // [B, nKVH, S, headDim]
-                            let validV = v[0..., 0..., 0..<c.offset, 0...]
-                            sharedKV = (validK, validV)
-                        } else if let c = cacheElement as? RotatingKVCache, let k = c.keys, let v = c.values {
-                            let validLen = min(c.offset, k.dim(2))
-                            let validK = k[0..., 0..., 0..<validLen, 0...]
-                            let validV = v[0..., 0..., 0..<validLen, 0...]
-                            sharedKV = (validK, validV)
-                        }
-                    }
-                }
-                let (out, _, _) = layer(hAssistant, mask: nil, cache: nil, perLayerInput: nil, sharedKV: sharedKV, positionOffset: assistantPosOffset)
-                hAssistant = out
-            }
-
-            // Step D: Final norm
-            let hNormed = model.norm(hAssistant)  // [B, 1, 256]
-            // Step E: Compute logits.
-            // The masked embedder scatters logits at CANONICAL positions directly using token_ordering as scatter index.
-            // Output is already in canonical space — NO inv_ordering remapping needed.
-            // See: modeling_gemma4_assistant.py Gemma4AssistantMaskedEmbedder.forward() lines 79-87.
-            let logits: MLXArray
-            if _centroidWeight != nil {
-                logits = maskedEmbedderLogits(hNormed)  // [B, 1, vocab] in canonical space already
-            } else {
-                // Fallback: simple linear projection (no ordered embeddings)
-                logits = model.embedTokens.asLinear(hNormed)
-            }
-
-            // Note: MTP head logits are [B, 1, vocab] (single position, no padding needed).
-            // Evaluate.swift extracts the last position when reading from mtpResult[1...].
-
-            allLogits.append(logits)
-
-            // Step F: Post-projection → get new backbone-dim hidden state for next depth concat
-            if let postProjWeight = postProjectionWeight {
-                hLast = matmul(hNormed, postProjWeight.T)  // [B, 1, 1536]
-            } else {
-                hLast = hNormed
-                if hLast.dim(-1) != backboneDim {
-                    // Pad or slice to match backbone dim for the next iteration's concat
-                    if hLast.dim(-1) > backboneDim {
-                        hLast = hLast[.ellipsis, ..<backboneDim]
-                    } else if hLast.dim(-1) < backboneDim {
-                        let pad = MLX.zeros([hLast.dim(0), hLast.dim(1), backboneDim - hLast.dim(-1)]).asType(hLast.dtype)
-                        hLast = concatenated([hLast, pad], axis: -1)
-                    }
-                }
-            }
-
-            // Step G: The next depth's token embedding is sampled from the logits we just produced.
-            // Use greedy sampling here (temp=0 equivalent) for the chain.
-            // logits is [B, S, vocab]; take last position
-            let lastLogits = logits[0..., logits.dim(1)-1, 0...]  // [B, vocab]
-            let nextTokenScalar = argMax(lastLogits, axis: -1)  // [B]
-            // Reshape to [B, 1] for embedding
-            let nextTokenReshaped = nextTokenScalar.reshaped([1, 1])  // [1, 1] for batch=1
-            if let g4tm = mainModel as? Gemma4TextModel {
-                eEmbed = g4tm.model.embedTokens(nextTokenReshaped)  // [1, 1, 1536]
-                eEmbed = eEmbed * MLXArray(g4tm.model.embedScale, dtype: eEmbed.dtype)
-            } else if let g4m = mainModel as? Gemma4Model {
-                eEmbed = g4m.languageModel.model.embedTokens(nextTokenReshaped)  // [1, 1, 1536]
-                eEmbed = eEmbed * MLXArray(g4m.languageModel.model.embedScale, dtype: eEmbed.dtype)
-            } else {
-                eEmbed = model.embedTokens(nextTokenReshaped)
-                eEmbed = eEmbed * MLXArray(model.embedScale, dtype: eEmbed.dtype)
-            }
-            
-            // NOTE: position_ids stays FIXED — do NOT increment it between draft steps.
-            // (Matches HF SinglePositionMultiTokenCandidateGenerator.get_candidates)
-        }
-
-        return allLogits
+        let headLogits = runMTPHead(
+            hLast: hLast,
+            eEmbed: eEmbed,
+            posOffset: assistantPosOffset,
+            backboneDim: backboneDim,
+            cache: cache,
+            depth: mtpDepth
+        )
+        return [mainLogits] + headLogits
     }
 
     public func makeMTPCaches(parameters: GenerateParameters?) -> [[KVCache]] {

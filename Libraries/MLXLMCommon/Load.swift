@@ -126,12 +126,10 @@ public func loadWeights(
                     let allPrefixes = ["", "model.", "language_model.", "model.language_model."]
                     let candidates = [expert0Name, stripped0Name, strippedMtpName] + allPrefixes.map { $0 + stripped0Name } + allPrefixes.map { $0 + strippedMtpName }
                     var foundUnstacked = false
-                    var matchedCandidate = ""
                     
                     for candidate in candidates {
                         if ExpertStreamerManager.shared?.getFile(for: candidate) != nil {
                             foundUnstacked = true
-                            matchedCandidate = candidate
                             var map = [Int: (path: String, tensorName: String)]()
                             for i in 0 ..< sl.numExperts {
                                 let c = candidate.replacingOccurrences(of: ".experts.0.", with: ".experts.\(i).")

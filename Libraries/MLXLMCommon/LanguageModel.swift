@@ -277,6 +277,24 @@ public protocol DualModelMTP: MTPLanguageModel {
     var mainModelRef: (any BaseLanguageModel)? { get set }
 }
 
+/// Protocol for MTP models that support partial rollback (llama.cpp PR #22673 style).
+/// After accepting k of N drafts, the model can run just the MTP head from a stored
+/// backbone hidden state — generating one draft without re-running the full main model.
+public protocol MTPPartialRollback: MTPLanguageModel {
+    /// The full [B, S, D] backbone hidden state from the most recent callMTP pass.
+    var lastBackboneHiddenStateAll: MLXArray? { get }
+
+    /// Run only the MTP head from a stored backbone hidden state.
+    /// - Parameters:
+    ///   - h: [B, 1, D] backbone hidden state at the accepted position
+    ///   - nextToken: [B, 1] int32 — the output token (x_{k+1})
+    ///   - cache: main model KV cache (post-trim, for cross-attention)
+    ///   - posOffset: sequence position of the accepted token
+    ///   - mtpDepth: how many draft logits to produce
+    /// - Returns: [depth-0 logits, ...] each [B, 1, V] — NO main logits prefix
+    func callMTPHeadOnly(_ h: MLXArray, nextToken: MLXArray, cache: [KVCache]?, posOffset: Int, mtpDepth: Int) -> [MLXArray]
+}
+
 extension MTPLanguageModel {
     /// Default: call the two-argument overload with no MTP caches.
     /// Models that don't override `makeMTPCaches` get a zero-element array.

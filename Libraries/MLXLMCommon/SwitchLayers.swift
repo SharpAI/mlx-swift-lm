@@ -316,10 +316,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
             var outShape = x.shape
             outShape[outShape.count - 1] = downProj.outputDims
             let result = MLXArray.zeros(outShape).asType(.float16)
-            if doSort {
-                return MLX.squeezed(scatterUnsort(x: result, invOrder: inverseOrder, shape: indices.shape), axis: -2)
-            }
-            return MLX.squeezed(result, axis: -2)
+            return MLX.squeezed(scatterUnsort(x: result, invOrder: inverseOrder, shape: indices.shape), axis: -2)
         }
 
         // Parse routing — `idx.asArray()` is the actual sync point on GPU.
