@@ -283,8 +283,12 @@ public struct Gemma4TextConfiguration: Codable, Sendable {
         vocabularySizePerLayerInput =
             try c.decodeIfPresent(Int.self, forKey: CodingKeys.vocabularySizePerLayerInput)
             ?? vocabularySize
+        // An absent key must mean "no KV sharing": this value now decides whether K/V
+        // projections are built at all, so defaulting to 20 would silently drop K/V
+        // weights for the last 20 layers of any config that omits the key — and drive
+        // the boundary negative for models shorter than that.
         numKVSharedLayers =
-            try c.decodeIfPresent(Int.self, forKey: CodingKeys.numKVSharedLayers) ?? 20
+            try c.decodeIfPresent(Int.self, forKey: CodingKeys.numKVSharedLayers) ?? 0
         hiddenSizePerLayerInput =
             try c.decodeIfPresent(Int.self, forKey: CodingKeys.hiddenSizePerLayerInput) ?? 256
         slidingWindow = try c.decodeIfPresent(Int.self, forKey: CodingKeys.slidingWindow) ?? 512
@@ -632,6 +636,9 @@ private final class QuantizedGemma4ScaledLinear: Gemma4ScaledLinear, Quantized {
         self._scales.wrappedValue = scales
         self._biases.wrappedValue = biases
         super.init(weight: quantizedWeight, scalar: other.scalar)
+        // Packed integer weights must not surface as trainable parameters, matching
+        // QuantizedLinear and QuantizedSwitchLinear.
+        self.freeze()
     }
 
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -1108,12 +1115,15 @@ private final class Gemma4TextBackbone: Module, LayerPartitionable, StreamableMo
                 } else {
                     nil
                 }
+            // Shared state must reach KV-shared layers on every forward, cache or not:
+            // those layers no longer build their own k_proj/v_proj (they have no
+            // weights for them), so a nil here is not "compute locally" but a trap.
+            // intermediates[] is populated by every non-shared layer regardless of
+            // whether an explicit cache was passed.
             let sharedKVForLayer: Gemma4SharedKVState? =
-                hasExplicitCache && idx >= firstKVSharedLayerIdx
-                    ? intermediates[sourceIdx].kv : nil
+                idx >= firstKVSharedLayerIdx ? intermediates[sourceIdx].kv : nil
             let sharedOffsetForLayer: Int? =
-                hasExplicitCache && idx >= firstKVSharedLayerIdx
-                    ? intermediates[sourceIdx].offset : nil
+                idx >= firstKVSharedLayerIdx ? intermediates[sourceIdx].offset : nil
             let (output, kvState, attentionOffset) = partitionedLayerCall(
                 index: idx, gpuLayerCount: gpuLayerCount, stream: streamExperts
             ) {

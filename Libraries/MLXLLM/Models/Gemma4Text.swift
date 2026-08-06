@@ -47,7 +47,7 @@ public struct Gemma4TextConfiguration: Codable, Sendable {
     var vocabSizePerLayerInput: Int = 262144
     var numKeyValueHeads: Int = 1
     var numGlobalKeyValueHeads: Int?
-    var numKvSharedLayers: Int = 20
+    var numKvSharedLayers: Int = 0
     var hiddenSizePerLayerInput: Int = 256
     var slidingWindow: Int = 512
     var slidingWindowPattern: Int = 5
@@ -125,8 +125,12 @@ public struct Gemma4TextConfiguration: Codable, Sendable {
             try container.decodeIfPresent(Int.self, forKey: .numKeyValueHeads) ?? 1
         self.numGlobalKeyValueHeads =
             try container.decodeIfPresent(Int.self, forKey: .numGlobalKeyValueHeads)
+        // An absent key must mean "no KV sharing": this value now decides whether K/V
+        // projections are built at all (see hasKv in Gemma4TextAttention.init), so a
+        // default of 20 would silently drop K/V for the last 20 layers of any config
+        // that omits the key.
         self.numKvSharedLayers =
-            try container.decodeIfPresent(Int.self, forKey: .numKvSharedLayers) ?? 20
+            try container.decodeIfPresent(Int.self, forKey: .numKvSharedLayers) ?? 0
         self.hiddenSizePerLayerInput =
             try container.decodeIfPresent(Int.self, forKey: .hiddenSizePerLayerInput) ?? 256
         self.slidingWindow = try container.decodeIfPresent(Int.self, forKey: .slidingWindow) ?? 512
@@ -250,6 +254,9 @@ private final class QuantizedScaledLinear: ScaledLinear, Quantized {
         self._scales.wrappedValue = scales
         self._biases.wrappedValue = biases
         super.init(weight: quantizedWeight, scalar: other.scalar)
+        // Packed integer weights must not surface as trainable parameters, matching
+        // QuantizedLinear and QuantizedSwitchLinear.
+        self.freeze()
     }
 
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
