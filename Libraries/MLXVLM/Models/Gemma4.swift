@@ -578,7 +578,7 @@ private final class Gemma4TextExperts: Module {
     }
 }
 
-private final class Gemma4ScaledLinear: Module, UnaryLayer {
+private class Gemma4ScaledLinear: Module, UnaryLayer, Quantizable {
     @ModuleInfo(key: "weight") var weight: MLXArray
     let scalar: Float
 
@@ -588,8 +588,57 @@ private final class Gemma4ScaledLinear: Module, UnaryLayer {
         super.init()
     }
 
+    /// Adopt an already-materialised weight — used by the quantized subclass, which
+    /// cannot assign the wrapped property directly.
+    fileprivate init(weight: MLXArray, scalar: Float) {
+        self.scalar = scalar
+        self._weight.wrappedValue = weight
+        super.init()
+    }
+
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         (x.matmul(weight.transposed())) * scalar
+    }
+
+    // This module holds a bare MLXArray rather than wrapping a Linear, so quantize()
+    // could not convert it: it stayed in float form while the checkpoint shipped it
+    // quantized, and model.update failed with a packed-vs-unpacked shape mismatch
+    // (`Actual [10752, 320], expected [10752, 2560]` — 4-bit packing, SwiftLM #120).
+    // The quantized form subclasses this one because Module.update can only replace a
+    // child with an instance of the declared property type, which is how Linear and
+    // QuantizedLinear are related.
+    func toQuantized(groupSize: Int, bits: Int) -> Module {
+        toQuantized(groupSize: groupSize, bits: bits, mode: .affine)
+    }
+
+    func toQuantized(groupSize: Int, bits: Int, mode: QuantizationMode) -> Module {
+        QuantizedGemma4ScaledLinear(self, groupSize: groupSize, bits: bits, mode: mode)
+    }
+}
+
+private final class QuantizedGemma4ScaledLinear: Gemma4ScaledLinear, Quantized {
+    @ModuleInfo(key: "scales") var scales: MLXArray
+    @ModuleInfo(key: "biases") var biases: MLXArray?
+    let groupSize: Int
+    let bits: Int
+    let mode: QuantizationMode
+
+    init(_ other: Gemma4ScaledLinear, groupSize: Int, bits: Int, mode: QuantizationMode) {
+        self.groupSize = groupSize
+        self.bits = bits
+        self.mode = mode
+        let (quantizedWeight, scales, biases) = MLX.quantized(
+            other.weight, groupSize: groupSize, bits: bits, mode: mode)
+        self._scales.wrappedValue = scales
+        self._biases.wrappedValue = biases
+        super.init(weight: quantizedWeight, scalar: other.scalar)
+    }
+
+    override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let y = quantizedMatmul(
+            x, weight, scales: scales, biases: biases,
+            transpose: true, groupSize: groupSize, bits: bits, mode: mode)
+        return y * scalar
     }
 }
 
@@ -606,11 +655,11 @@ private final class Gemma4TextAttention: Module {
     let useKEqV: Bool
 
     @ModuleInfo(key: "q_proj") var qProj: Linear
-    @ModuleInfo(key: "k_proj") var kProj: Linear
+    @ModuleInfo(key: "k_proj") var kProj: Linear?
     @ModuleInfo(key: "v_proj") var vProj: Linear?
     @ModuleInfo(key: "o_proj") var oProj: Linear
     @ModuleInfo(key: "q_norm") var qNorm: Gemma4RMSNormZeroShift
-    @ModuleInfo(key: "k_norm") var kNorm: Gemma4RMSNormZeroShift
+    @ModuleInfo(key: "k_norm") var kNorm: Gemma4RMSNormZeroShift?
     @ModuleInfo(key: "v_norm") var vNorm: Gemma4RMSNormNoScale
     @ModuleInfo var rope: OffsetLayer
 
@@ -632,16 +681,25 @@ private final class Gemma4TextAttention: Module {
         self.isKVSharedLayer = layerIdx >= firstKVSharedLayer && firstKVSharedLayer > 0
 
         self._qProj.wrappedValue = Linear(config.hiddenSize, numHeads * headDim, bias: false)
-        self._kProj.wrappedValue = Linear(config.hiddenSize, numKVHeads * headDim, bias: false)
-        if !useKEqV {
-            self._vProj.wrappedValue = Linear(
+        // KV-shared layers read K/V from an earlier layer's cache and ship no k_proj,
+        // v_proj or k_norm weights. Creating them anyway made model.update(verify: .all)
+        // demand tensors the checkpoint does not contain, so gemma-4-e4b-it-4bit
+        // (num_kv_shared_layers: 18 of 42) failed to load at layer 24 (SwiftLM #120).
+        if !isKVSharedLayer {
+            self._kProj.wrappedValue = Linear(
                 config.hiddenSize, numKVHeads * headDim, bias: false)
+            if !useKEqV {
+                self._vProj.wrappedValue = Linear(
+                    config.hiddenSize, numKVHeads * headDim, bias: false)
+            }
         }
         self._oProj.wrappedValue = Linear(numHeads * headDim, config.hiddenSize, bias: false)
         self._qNorm.wrappedValue = Gemma4RMSNormZeroShift(
             dimensions: headDim, eps: config.rmsNormEps)
-        self._kNorm.wrappedValue = Gemma4RMSNormZeroShift(
-            dimensions: headDim, eps: config.rmsNormEps)
+        if !isKVSharedLayer {
+            self._kNorm.wrappedValue = Gemma4RMSNormZeroShift(
+                dimensions: headDim, eps: config.rmsNormEps)
+        }
         self._vNorm.wrappedValue = Gemma4RMSNormNoScale(eps: config.rmsNormEps)
 
         let ropeKey = isSliding ? "sliding_attention" : "full_attention"
@@ -677,6 +735,10 @@ private final class Gemma4TextAttention: Module {
             kvState = sharedKV
         } else {
             currentOffset = cache?.offset ?? 0
+            guard let kProj, let kNorm else {
+                fatalError(
+                    "Gemma4 layer \(layerIdx) is KV-shared but received no shared KV state")
+            }
             var keys = kProj(x).reshaped(batch, length, numKVHeads, headDim)
             var values =
                 if useKEqV {
