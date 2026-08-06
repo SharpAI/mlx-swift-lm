@@ -47,7 +47,7 @@ public struct Gemma4TextConfiguration: Codable, Sendable {
     var vocabSizePerLayerInput: Int = 262144
     var numKeyValueHeads: Int = 1
     var numGlobalKeyValueHeads: Int?
-    var numKvSharedLayers: Int = 20
+    var numKvSharedLayers: Int = 0
     var hiddenSizePerLayerInput: Int = 256
     var slidingWindow: Int = 512
     var slidingWindowPattern: Int = 5
@@ -125,8 +125,12 @@ public struct Gemma4TextConfiguration: Codable, Sendable {
             try container.decodeIfPresent(Int.self, forKey: .numKeyValueHeads) ?? 1
         self.numGlobalKeyValueHeads =
             try container.decodeIfPresent(Int.self, forKey: .numGlobalKeyValueHeads)
+        // An absent key must mean "no KV sharing": this value now decides whether K/V
+        // projections are built at all (see hasKv in Gemma4TextAttention.init), so a
+        // default of 20 would silently drop K/V for the last 20 layers of any config
+        // that omits the key.
         self.numKvSharedLayers =
-            try container.decodeIfPresent(Int.self, forKey: .numKvSharedLayers) ?? 20
+            try container.decodeIfPresent(Int.self, forKey: .numKvSharedLayers) ?? 0
         self.hiddenSizePerLayerInput =
             try container.decodeIfPresent(Int.self, forKey: .hiddenSizePerLayerInput) ?? 256
         self.slidingWindow = try container.decodeIfPresent(Int.self, forKey: .slidingWindow) ?? 512
@@ -198,18 +202,68 @@ private class RMSNormNoScale: Module {
     }
 }
 
-private class ScaledLinear: Module {
-    let weight: MLXArray
+private class ScaledLinear: Module, UnaryLayer, Quantizable {
+    @ModuleInfo(key: "weight") var weight: MLXArray
     let scalar: Float
 
     init(inFeatures: Int, outFeatures: Int, scalar: Float) {
-        self.weight = MLXArray.zeros([outFeatures, inFeatures])
+        self._weight.wrappedValue = MLXArray.zeros([outFeatures, inFeatures])
+        self.scalar = scalar
+        super.init()
+    }
+
+    /// Adopt an already-materialised weight — used by the quantized subclass, which
+    /// cannot assign the wrapped property directly.
+    fileprivate init(weight: MLXArray, scalar: Float) {
+        self._weight.wrappedValue = weight
         self.scalar = scalar
         super.init()
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         matmul(x, weight.T) * scalar
+    }
+
+    // Holds a bare MLXArray rather than wrapping a Linear, so quantize() could not
+    // convert it and it stayed float while the checkpoint ships it quantized —
+    // model.update then failed on packed-vs-unpacked shapes (SwiftLM #120). The
+    // quantized form subclasses this one because Module.update can only replace a child
+    // with an instance of the declared property type.
+    func toQuantized(groupSize: Int, bits: Int) -> Module {
+        toQuantized(groupSize: groupSize, bits: bits, mode: .affine)
+    }
+
+    func toQuantized(groupSize: Int, bits: Int, mode: QuantizationMode) -> Module {
+        QuantizedScaledLinear(self, groupSize: groupSize, bits: bits, mode: mode)
+    }
+}
+
+private final class QuantizedScaledLinear: ScaledLinear, Quantized {
+    @ModuleInfo(key: "scales") var scales: MLXArray
+    @ModuleInfo(key: "biases") var biases: MLXArray?
+    let groupSize: Int
+    let bits: Int
+    let mode: QuantizationMode
+
+    init(_ other: ScaledLinear, groupSize: Int, bits: Int, mode: QuantizationMode) {
+        self.groupSize = groupSize
+        self.bits = bits
+        self.mode = mode
+        let (quantizedWeight, scales, biases) = MLX.quantized(
+            other.weight, groupSize: groupSize, bits: bits, mode: mode)
+        self._scales.wrappedValue = scales
+        self._biases.wrappedValue = biases
+        super.init(weight: quantizedWeight, scalar: other.scalar)
+        // Packed integer weights must not surface as trainable parameters, matching
+        // QuantizedLinear and QuantizedSwitchLinear.
+        self.freeze()
+    }
+
+    override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let y = quantizedMatmul(
+            x, weight, scales: scales, biases: biases,
+            transpose: true, groupSize: groupSize, bits: bits, mode: mode)
+        return y * scalar
     }
 }
 
@@ -289,11 +343,18 @@ private class Gemma4Attention: Module {
 
         self._qProj.wrappedValue = Linear(dim, nHeads * effectiveHeadDim, bias: false)
         
-        // A layer owns its own K/V if it is NOT a KV-shared layer.
-        // In the Gemma 4 architecture, the main model has K/V weights for all layers even if num_kv_shared_layers > 0.
-        // However, the assistant model has numHiddenLayers == numKvSharedLayers and NO K/V weights at all.
-        let isAssistant = config.numHiddenLayers == config.numKvSharedLayers
-        let hasKv = !isAssistant
+        // A layer owns its own K/V only if it sits before the first KV-shared layer.
+        //
+        // This previously assumed that a main model always ships K/V for every layer and
+        // that only an assistant model (numHiddenLayers == numKvSharedLayers) omits them.
+        // That is not true of gemma-4-e4b-it-4bit: 42 layers with num_kv_shared_layers 18,
+        // where layers 24-41 carry only q_proj/q_norm/o_proj. Building k_proj there made
+        // model.update(verify: .all) demand tensors the checkpoint does not contain and
+        // the model failed to load at layer 24 (SwiftLM #120). The assistant case still
+        // works: numHiddenLayers == numKvSharedLayers puts the boundary at 0, so no layer
+        // owns K/V.
+        let firstKVSharedLayer = config.numHiddenLayers - config.numKvSharedLayers
+        let hasKv = layerIdx < firstKVSharedLayer
         
         if hasKv {
             self._kProj.wrappedValue = Linear(dim, nKvHeads * effectiveHeadDim, bias: false)
