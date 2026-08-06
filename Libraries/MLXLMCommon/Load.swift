@@ -20,10 +20,43 @@ public func loadWeights(
     // load the weights and collect metadata from the first safetensor file
     var weights = [String: MLXArray]()
     var metadata = [String: String]()
+
+    // When the repo declares its weights in an index, that index defines the model.
+    // The sweep below is recursive, so without this filter any stray .safetensors in a
+    // subdirectory is merged in as if it were part of the model. Repos do ship such
+    // files — e.g. `optiq/mtp.safetensors`, an MTP head that is absent from
+    // model.safetensors.index.json. Loading it silently changed how the model's own
+    // weights were interpreted (SwiftLM issue #118: every RMSNorm weight shifted by 1,
+    // producing noise with no error) and broke the VLM path outright with
+    // `Unhandled keys ["mtp"]`.
+    //
+    // MTP add-ons stay loadable when the user asks for them via SWIFTLM_MTP_ENABLE.
+    var indexedFiles: Set<String>? = nil
+    if let data = try? Data(
+        contentsOf: modelDirectory.appendingPathComponent("model.safetensors.index.json")),
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let weightMap = json["weight_map"] as? [String: String]
+    {
+        indexedFiles = Set(weightMap.values)
+    }
+
     let enumerator = FileManager.default.enumerator(
         at: modelDirectory, includingPropertiesForKeys: nil)!
     for case let url as URL in enumerator {
         if url.pathExtension == "safetensors" {
+            if let indexedFiles {
+                let relativePath = url.path.hasPrefix(modelDirectory.path + "/")
+                    ? String(url.path.dropFirst(modelDirectory.path.count + 1))
+                    : url.lastPathComponent
+                let isIndexed =
+                    indexedFiles.contains(relativePath) || indexedFiles.contains(url.lastPathComponent)
+                let isRequestedMTPAddOn =
+                    MTPConfig.retainMTPWeights && relativePath.lowercased().contains("mtp")
+                if !isIndexed && !isRequestedMTPAddOn {
+                    print("[loadWeights] skipping \(relativePath): not listed in model.safetensors.index.json")
+                    continue
+                }
+            }
             let (w, m) = try loadArraysAndMetadata(url: url)
             for (key, value) in w {
                 weights[key] = value
