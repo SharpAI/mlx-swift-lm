@@ -738,7 +738,23 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
         let hasUnsanitizedConv1d = weights.contains { key, value in
             key.contains("conv1d.weight") && value.dim(-1) != 1
         }
-        let shouldShiftNormWeights = hasMTPWeights || hasUnsanitizedConv1d
+        // The `+1` below rewrites every RMSNorm weight, so it is only meaningful for
+        // checkpoints that store norms zero-centered (mean ≈ 0). Applying it to a
+        // checkpoint whose norms are already in standard form (mean ≈ 1 or above)
+        // corrupts every normalization in the model — it loads without error and
+        // generates noise (SwiftLM issue #118). Sampled norm means: Qwen3.6-27B-OptiQ
+        // 1.96, Qwen3.5-4B 3.19, Qwen3.6-27B MTP head 1.04 — none need shifting, and a
+        // checkpoint that genuinely does would sit near 0, so this guard cannot suppress
+        // a shift that was required.
+        let normsLookZeroCentered: Bool = {
+            guard
+                let sample = weights.first(where: {
+                    $0.key.hasSuffix(".input_layernorm.weight") && $0.value.ndim == 1
+                })?.value
+            else { return true }
+            return abs(sample.mean().item(Float.self)) < 0.5
+        }()
+        let shouldShiftNormWeights = (hasMTPWeights || hasUnsanitizedConv1d) && normsLookZeroCentered
 
         var weights = weights
         if !MTPConfig.retainMTPWeights {
