@@ -44,6 +44,116 @@ extension MLXTestingSuite {
         return json.data(using: .utf8)!
     }
 
+    /// A config with KV-shared layers, mirroring gemma-4-e4b-it-4bit's shape
+    /// (num_hidden_layers 42 / num_kv_shared_layers 18) at tiny scale.
+    private func makeKVSharedConfigData(layers: Int = 4, shared: Int = 2) -> Data {
+        let json = """
+        {
+            "model_type": "gemma4",
+            "text_config": {
+                "model_type": "gemma4_text",
+                "hidden_size": 64,
+                "num_hidden_layers": \(layers),
+                "intermediate_size": 128,
+                "num_attention_heads": 4,
+                "head_dim": 16,
+                "global_head_dim": 64,
+                "rms_norm_eps": 1e-6,
+                "vocab_size": 100,
+                "num_key_value_heads": 2,
+                "rope_traditional": false,
+                "sliding_window": 128,
+                "sliding_window_pattern": 1,
+                "max_position_embeddings": 512,
+                "num_kv_shared_layers": \(shared),
+                "use_double_wide_mlp": false,
+                "tie_word_embeddings": true,
+                "hidden_size_per_layer_input": 32,
+                "vocab_size_per_layer_input": 10,
+                "final_logit_softcapping": 30.0,
+                "enable_moe_block": false,
+                "attention_k_eq_v": false
+            },
+            "vocab_size": 100
+        }
+        """
+        return json.data(using: .utf8)!
+    }
+
+    /// KV-shared layers ship no k_proj/v_proj/k_norm weights, so the model must not
+    /// create those parameters — building them made update(verify: .all) demand tensors
+    /// the checkpoint does not contain, and gemma-4-e4b-it-4bit failed to load at the
+    /// first shared layer (SwiftLM #120).
+    @Test("Gemma 4 KV-shared layers build no K/V projections")
+    func testKVSharedLayersOmitKVProjections() throws {
+        let config = try JSONDecoder().decode(
+            Gemma4Configuration.self, from: makeKVSharedConfigData(layers: 4, shared: 2))
+        let model = Gemma4Model(config)
+        let keys = Set(model.parameters().flattened().map { $0.0 })
+
+        // Boundary is 4 - 2 = 2: layers 0-1 own their K/V, layers 2-3 share.
+        for owning in 0..<2 {
+            #expect(keys.contains { $0.contains("layers.\(owning).self_attn.k_proj") },
+                    "layer \(owning) owns its K/V and must have k_proj")
+        }
+        for shared in 2..<4 {
+            for absent in ["k_proj", "v_proj", "k_norm"] {
+                #expect(!keys.contains { $0.contains("layers.\(shared).self_attn.\(absent)") },
+                        "KV-shared layer \(shared) must not build \(absent)")
+            }
+        }
+    }
+
+    /// A forward pass with no explicit cache must not trap on a shared layer: those
+    /// layers have no projections to fall back on, so shared state has to reach them
+    /// regardless of caching (review follow-up on mlx-swift-lm#44).
+    @Test("Gemma 4 KV-shared forward without a cache")
+    func testKVSharedForwardWithoutCache() throws {
+        let config = try JSONDecoder().decode(
+            Gemma4Configuration.self, from: makeKVSharedConfigData(layers: 4, shared: 2))
+        let model = Gemma4Model(config)
+        let tokens = MLXArray([1, 2, 3, 4]).reshaped(1, 4)
+        let logits = model(tokens, cache: nil)
+        eval(logits)
+        #expect(logits.shape.last == 100)
+    }
+
+    /// A checkpoint may ship k_proj/v_proj/k_norm for KV-shared layers even though the
+    /// model does not build them — gemma-4-e2b-it-4bit does, gemma-4-e4b-it-4bit does
+    /// not, with the same num_kv_shared_layers semantics. sanitize must discard the
+    /// vestigial ones, or update(verify: .all) fails on the checkpoints that include
+    /// them (regression from #44, caught in review of #45).
+    @Test("Gemma 4 sanitize drops vestigial KV-shared projections")
+    func testSanitizeDropsVestigialSharedKVWeights() throws {
+        let config = try JSONDecoder().decode(
+            Gemma4Configuration.self, from: makeKVSharedConfigData(layers: 4, shared: 2))
+        let model = Gemma4Model(config)
+
+        // A checkpoint that ships K/V for every layer, e2b-style.
+        var weights: [String: MLXArray] = [:]
+        for layer in 0..<4 {
+            for name in ["k_proj", "v_proj", "k_norm", "q_proj", "o_proj"] {
+                weights["language_model.model.layers.\(layer).self_attn.\(name).weight"] =
+                    MLXArray.zeros([4, 4])
+            }
+        }
+
+        let sanitized = model.sanitize(weights: weights)
+
+        // Boundary is 4 - 2 = 2: layers 0-1 keep their K/V, layers 2-3 lose it.
+        for owning in 0..<2 {
+            #expect(sanitized.keys.contains { $0.contains("layers.\(owning).self_attn.k_proj") })
+        }
+        for shared in 2..<4 {
+            for dropped in ["k_proj", "v_proj", "k_norm"] {
+                #expect(!sanitized.keys.contains { $0.contains("layers.\(shared).self_attn.\(dropped)") },
+                        "layer \(shared) is KV-shared, so \(dropped) must be discarded")
+            }
+            // q_proj and o_proj belong to every layer and must survive.
+            #expect(sanitized.keys.contains { $0.contains("layers.\(shared).self_attn.q_proj") })
+        }
+    }
+
     @Test("Gemma 4 Configuration Decoding")
     func testGemma4ConfigDecoding() throws {
         let data = makeTinyConfigData()
