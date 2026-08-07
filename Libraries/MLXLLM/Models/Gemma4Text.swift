@@ -525,7 +525,13 @@ private class Gemma4MLP: Module {
 
     init(_ config: Gemma4TextConfiguration, layerIdx: Int) {
         let firstKvSharedLayerIdx = config.numHiddenLayers - config.numKvSharedLayers
-        let isKvSharedLayer = layerIdx >= firstKvSharedLayerIdx && firstKvSharedLayerIdx > 0
+        // No `firstKvSharedLayerIdx > 0` clause, matching the attention site here and
+        // both sites in MLXVLM's Gemma4: with numKvSharedLayers == 0 the boundary equals
+        // numHiddenLayers so nothing is shared anyway, and for an assistant model
+        // (numHiddenLayers == numKvSharedLayers) every layer is shared. Leaving it on
+        // only this site made the two implementations disagree on MLP width in exactly
+        // that configuration.
+        let isKvSharedLayer = layerIdx >= firstKvSharedLayerIdx
         let useDoubleWide = config.useDoubleWideMlp && isKvSharedLayer
         let intermediateSize = config.intermediateSize * (useDoubleWide ? 2 : 1)
 
@@ -974,9 +980,32 @@ public class Gemma4TextModel: Module, LLMModel, KVCacheDimensionProvider {
         return out
     }
 
+
+    /// True for a k_proj/v_proj/k_norm weight belonging to a KV-shared layer, which the
+    /// model does not build. See the call site in sanitize.
+    func isVestigialSharedKVWeight(_ key: String) -> Bool {
+        guard key.contains(".self_attn.") else { return false }
+        guard key.contains(".k_proj.") || key.contains(".v_proj.") || key.contains(".k_norm.")
+        else { return false }
+        guard let range = key.range(of: #"\.layers\.(\d+)\."#, options: .regularExpression),
+            let layerIdx = Int(key[range].dropFirst(8).dropLast())
+        else { return false }
+        let firstShared = config.numHiddenLayers - config.numKvSharedLayers
+        return firstShared > 0 && layerIdx >= firstShared
+    }
+
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         var sanitized = [String: MLXArray]()
         for (k, v) in weights {
+            // Some checkpoints ship k_proj/v_proj/k_norm for KV-shared layers even
+            // though those layers reuse an earlier layer's K/V and never project their
+            // own — gemma-4-e2b-it-4bit does (35 layers, 20 shared, weights for all 35)
+            // while gemma-4-e4b-it-4bit does not (42/18, weights only for the first 24).
+            // The config key alone therefore cannot decide whether to build the modules,
+            // so build per the config and discard the vestigial weights here; otherwise
+            // update(verify: .all) fails with "Unable to set …layers.N.self_attn.k_proj"
+            // on the checkpoints that include them (regression from #44).
+            if isVestigialSharedKVWeight(k) { continue }
             // Skip vision/audio/rotary weights and unsupported MTP keys
             if k.contains("self_attn.rotary_emb")
                 || k.contains("input_max")

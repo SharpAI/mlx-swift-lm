@@ -1074,7 +1074,6 @@ private final class Gemma4TextBackbone: Module, LayerPartitionable, StreamableMo
         }
         let finalPerLayerInputs = projectPerLayerInputs(h0, perLayerInputs: processedPerLayerInputs)
 
-        let hasExplicitCache = cache != nil
         let localCache =
             cache ?? Array(repeating: nil as KVCache?, count: max(firstKVSharedLayerIdx, 1))
         let fullMask: MLXFast.ScaledDotProductAttentionMaskMode

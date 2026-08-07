@@ -118,6 +118,42 @@ extension MLXTestingSuite {
         #expect(logits.shape.last == 100)
     }
 
+    /// A checkpoint may ship k_proj/v_proj/k_norm for KV-shared layers even though the
+    /// model does not build them — gemma-4-e2b-it-4bit does, gemma-4-e4b-it-4bit does
+    /// not, with the same num_kv_shared_layers semantics. sanitize must discard the
+    /// vestigial ones, or update(verify: .all) fails on the checkpoints that include
+    /// them (regression from #44, caught in review of #45).
+    @Test("Gemma 4 sanitize drops vestigial KV-shared projections")
+    func testSanitizeDropsVestigialSharedKVWeights() throws {
+        let config = try JSONDecoder().decode(
+            Gemma4Configuration.self, from: makeKVSharedConfigData(layers: 4, shared: 2))
+        let model = Gemma4Model(config)
+
+        // A checkpoint that ships K/V for every layer, e2b-style.
+        var weights: [String: MLXArray] = [:]
+        for layer in 0..<4 {
+            for name in ["k_proj", "v_proj", "k_norm", "q_proj", "o_proj"] {
+                weights["language_model.model.layers.\(layer).self_attn.\(name).weight"] =
+                    MLXArray.zeros([4, 4])
+            }
+        }
+
+        let sanitized = model.sanitize(weights: weights)
+
+        // Boundary is 4 - 2 = 2: layers 0-1 keep their K/V, layers 2-3 lose it.
+        for owning in 0..<2 {
+            #expect(sanitized.keys.contains { $0.contains("layers.\(owning).self_attn.k_proj") })
+        }
+        for shared in 2..<4 {
+            for dropped in ["k_proj", "v_proj", "k_norm"] {
+                #expect(!sanitized.keys.contains { $0.contains("layers.\(shared).self_attn.\(dropped)") },
+                        "layer \(shared) is KV-shared, so \(dropped) must be discarded")
+            }
+            // q_proj and o_proj belong to every layer and must survive.
+            #expect(sanitized.keys.contains { $0.contains("layers.\(shared).self_attn.q_proj") })
+        }
+    }
+
     @Test("Gemma 4 Configuration Decoding")
     func testGemma4ConfigDecoding() throws {
         let data = makeTinyConfigData()
