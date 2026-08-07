@@ -229,10 +229,6 @@ private class ScaledLinear: Module, UnaryLayer, Quantizable {
     // model.update then failed on packed-vs-unpacked shapes (SwiftLM #120). The
     // quantized form subclasses this one because Module.update can only replace a child
     // with an instance of the declared property type.
-    func toQuantized(groupSize: Int, bits: Int) -> Module {
-        toQuantized(groupSize: groupSize, bits: bits, mode: .affine)
-    }
-
     func toQuantized(groupSize: Int, bits: Int, mode: QuantizationMode) -> Module {
         QuantizedScaledLinear(self, groupSize: groupSize, bits: bits, mode: mode)
     }

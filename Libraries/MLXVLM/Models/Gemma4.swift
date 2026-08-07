@@ -488,7 +488,7 @@ private final class Gemma4TextMLP: Module, UnaryLayer {
 
     init(config: Gemma4TextConfiguration, layerIdx: Int) {
         let firstKVSharedLayer = config.hiddenLayers - config.numKVSharedLayers
-        let isKVSharedLayer = layerIdx >= firstKVSharedLayer && firstKVSharedLayer > 0
+        let isKVSharedLayer = layerIdx >= firstKVSharedLayer
         let useDoubleWide = config.useDoubleWideMLP && isKVSharedLayer
         let hiddenDimensions = config.intermediateSize * (useDoubleWide ? 2 : 1)
 
@@ -611,10 +611,6 @@ private class Gemma4ScaledLinear: Module, UnaryLayer, Quantizable {
     // The quantized form subclasses this one because Module.update can only replace a
     // child with an instance of the declared property type, which is how Linear and
     // QuantizedLinear are related.
-    func toQuantized(groupSize: Int, bits: Int) -> Module {
-        toQuantized(groupSize: groupSize, bits: bits, mode: .affine)
-    }
-
     func toQuantized(groupSize: Int, bits: Int, mode: QuantizationMode) -> Module {
         QuantizedGemma4ScaledLinear(self, groupSize: groupSize, bits: bits, mode: mode)
     }
@@ -684,8 +680,14 @@ private final class Gemma4TextAttention: Module {
             useKEqV ? (config.globalKVHeads ?? config.kvHeads) : config.kvHeads
         self.scale = 1.0
 
+        // No `firstKVSharedLayer > 0` clause: with numKVSharedLayers == 0 the boundary
+        // equals hiddenLayers and no layer is shared anyway, while for an assistant model
+        // (hiddenLayers == numKVSharedLayers) the boundary is 0 and *no* layer owns K/V —
+        // which is what the checkpoint ships. The clause made this file build K/V for
+        // every layer in that case, disagreeing with MLXLLM's Gemma4Text (review
+        // follow-up on #44).
         let firstKVSharedLayer = config.hiddenLayers - config.numKVSharedLayers
-        self.isKVSharedLayer = layerIdx >= firstKVSharedLayer && firstKVSharedLayer > 0
+        self.isKVSharedLayer = layerIdx >= firstKVSharedLayer
 
         self._qProj.wrappedValue = Linear(config.hiddenSize, numHeads * headDim, bias: false)
         // KV-shared layers read K/V from an earlier layer's cache and ship no k_proj,
