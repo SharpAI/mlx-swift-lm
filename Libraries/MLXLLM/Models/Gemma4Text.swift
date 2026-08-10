@@ -1212,7 +1212,18 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
 
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
-        // Fallback for standard autoregressive call, though not used in MTP flow
+        // The dual-model MTP path installs this assistant as the iterator's `model`, so
+        // the iterator's prefill lands here. Every assistant layer is KV-shared (the
+        // checkpoint ships no K/V projections for them) and can only run with sharedKV
+        // supplied from the trunk's cache, which is what `callMTP` does. Running the
+        // assistant standalone therefore aborts — and only for prompts long enough to
+        // make `prepare` actually forward a chunk, so short prompts hid it entirely.
+        //
+        // Prefill belongs to the trunk in any case: it is the trunk's cache being
+        // primed, and the trunk's logits the iterator samples the first token from.
+        if let mainModel = mainModelRef as? any LLMModel {
+            return mainModel(inputs, cache: cache)
+        }
         let h = model(inputs, cache: cache)
         if let lmHead {
             return lmHead(h)
@@ -1322,13 +1333,16 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
                         let cacheElement = fullCache[mainIdx]
                         if let c = cacheElement as? KVCacheSimple, let k = c.keys, let v = c.values {
                             // Slice to valid offset (avoid zero-padded buffer positions)
-                            let validK = k[0..., 0..., 0..<c.offset, 0...]  // [B, nKVH, S, headDim]
-                            let validV = v[0..., 0..., 0..<c.offset, 0...]
+                            // Clamp to the buffer as the rotating branch does: `offset` counts
+                            // positions seen, which can outrun the allocated key length.
+                            let validLen = min(c.offset, k.dim(2))
+                            let validK = k[0..., 0..., 0 ..< validLen, 0...]  // [B, nKVH, S, headDim]
+                            let validV = v[0..., 0..., 0 ..< validLen, 0...]
                             sharedKV = (validK, validV)
                         } else if let c = cacheElement as? RotatingKVCache, let k = c.keys, let v = c.values {
                             let validLen = min(c.offset, k.dim(2))
-                            let validK = k[0..., 0..., 0..<validLen, 0...]
-                            let validV = v[0..., 0..., 0..<validLen, 0...]
+                            let validK = k[0..., 0..., 0 ..< validLen, 0...]
+                            let validV = v[0..., 0..., 0 ..< validLen, 0...]
                             sharedKV = (validK, validV)
                         }
                     }
