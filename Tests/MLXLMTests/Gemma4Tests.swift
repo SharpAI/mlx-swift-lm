@@ -412,6 +412,105 @@ extension MLXTestingSuite {
         return json.data(using: .utf8)!
     }
 
+    /// The assistant config above sets num_kv_shared_layers to 0, which no shipped
+    /// assistant checkpoint does — they are *entirely* KV-shared, carrying no K/V
+    /// projections of their own. That gap is why the MTP tests below all passed while
+    /// dual-model MTP aborted on any prompt long enough to be prefilled in chunks (#46).
+    /// This variant matches the real thing: every layer shared.
+    private func makeTinySharedKVAssistantConfigData() -> Data {
+        let json = """
+        {
+            "model_type": "gemma4",
+            "text_config": {
+                "model_type": "gemma4_text",
+                "hidden_size": 64,
+                "num_hidden_layers": 2,
+                "intermediate_size": 128,
+                "num_attention_heads": 4,
+                "head_dim": 16,
+                "global_head_dim": 64,
+                "rms_norm_eps": 1e-6,
+                "vocab_size": 100,
+                "num_key_value_heads": 2,
+                "rope_traditional": false,
+                "sliding_window": 128,
+                "sliding_window_pattern": 1,
+                "max_position_embeddings": 512,
+                "num_kv_shared_layers": 2,
+                "use_double_wide_mlp": false,
+                "tie_word_embeddings": true,
+                "hidden_size_per_layer_input": 0,
+                "vocab_size_per_layer_input": 100,
+                "final_logit_softcapping": 30.0,
+                "enable_moe_block": false,
+                "attention_k_eq_v": false
+            },
+            "vocab_size": 100
+        }
+        """
+        return json.data(using: .utf8)!
+    }
+
+    /// An all-KV-shared assistant cannot run standalone — its layers have no K/V
+    /// projections and need sharedKV handed in from the trunk. The dual-model path
+    /// installs the assistant as the iterator's model, so a plain forward has to reach
+    /// the trunk instead of the assistant's own layers, or it aborts.
+    @Test("Gemma4 MTP — an all-KV-shared assistant forwards through the trunk")
+    func testAllSharedAssistantDelegatesPlainForward() throws {
+        let mainCfg = try JSONDecoder().decode(Gemma4Configuration.self, from: makeTinyConfigData())
+        let asstCfg = try JSONDecoder().decode(
+            Gemma4Configuration.self, from: makeTinySharedKVAssistantConfigData())
+        let mainModel = Gemma4Model(mainCfg)
+        let asstModel = Gemma4AssistantModel(asstCfg)
+        asstModel.mainModelRef = mainModel
+
+        let input = MLXArray(0 ..< 5).reshaped(1, 5)
+        // Would abort with "Layer 0 is a KV-shared layer but received no sharedKV"
+        // before the delegation fix.
+        let viaAssistant = asstModel(input, cache: mainModel.newCache(parameters: nil))
+
+        #expect(viaAssistant.shape == [1, 5, 100])
+        let sum = viaAssistant.sum().item(Float.self)
+        #expect(!sum.isNaN)
+        #expect(!sum.isInfinite)
+
+        // Delegation, not merely "did not crash": the same input through the trunk
+        // directly must give the same logits.
+        let viaTrunk = mainModel(input, cache: mainModel.newCache(parameters: nil))
+        let maxDelta = abs(viaAssistant - viaTrunk).max().item(Float.self)
+        #expect(maxDelta < 1e-4, "assistant forward diverged from the trunk by \(maxDelta)")
+    }
+
+    /// The regression proper. prepare() only forwards a chunk when the prompt exceeds
+    /// prefillStepSize; below it the prompt tokens are returned untouched and the model
+    /// is never called. Every other MTP test here stays under that threshold, so the
+    /// chunked path went unexercised — squeezing prefillStepSize down reproduces it
+    /// with a 5-token prompt instead of a multi-gigabyte model.
+    @Test("Gemma4 MTP — chunked prefill drives an all-KV-shared assistant")
+    func testAllSharedAssistantSurvivesChunkedPrefill() throws {
+        let mainCfg = try JSONDecoder().decode(Gemma4Configuration.self, from: makeTinyConfigData())
+        let asstCfg = try JSONDecoder().decode(
+            Gemma4Configuration.self, from: makeTinySharedKVAssistantConfigData())
+        let mainModel = Gemma4Model(mainCfg)
+        let asstModel = Gemma4AssistantModel(asstCfg)
+        asstModel.mainModelRef = mainModel
+
+        let params = GenerateParameters(maxTokens: 3, temperature: 0.0, prefillStepSize: 2)
+        let input = LMInput(tokens: MLXArray([1, 2, 3, 4, 5]))
+
+        // The trunk owns the cache in the dual-model path; the assistant's own newCache
+        // is empty when every layer is shared.
+        var iterator = try MTPTokenIterator(
+            input: input, model: asstModel, cache: mainModel.newCache(parameters: params),
+            parameters: params, numMTPTokens: 1)
+
+        let token = iterator.next()
+        #expect(token != nil)
+        if let t = token {
+            #expect(t >= 0 && t < 100)
+        }
+    }
+
     @Test("Gemma4 MTP — callMTP returns main logits with correct shape")
     func testGemma4AssistantCallMTPShape() throws {
         let mainCfg = try JSONDecoder().decode(Gemma4Configuration.self, from: makeTinyConfigData())
