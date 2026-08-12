@@ -437,6 +437,18 @@ public class DeepseekV3Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         return lmHead(out)
     }
 
+    /// Multi-token-prediction layers sit past the main stack and have no module to load
+    /// into. DeepSeek-V3 has 61 of them and its MTP block is `model.layers.61`, which is
+    /// why this used to be a literal string — but that number is just `numHiddenLayers`,
+    /// and hardcoding it silently deletes a real layer in any architecture reusing this
+    /// stack with a different depth (GLM-5.2 has 78, so `layers.61` is load-bearing).
+    func isMultiTokenPredictionLayer(_ key: String) -> Bool {
+        guard key.starts(with: "model.layers.") else { return false }
+        let parts = key.split(separator: ".")
+        guard parts.count >= 3, let layerIdx = Int(parts[2]) else { return false }
+        return layerIdx >= args.numHiddenLayers
+    }
+
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         var newWeights = weights
 
@@ -480,7 +492,7 @@ public class DeepseekV3Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         }
 
         return newWeights.filter { key, _ in
-            !key.starts(with: "model.layers.61") && !key.contains("rotary_emb.inv_freq")
+            !isMultiTokenPredictionLayer(key) && !key.contains("rotary_emb.inv_freq")
         }
     }
 
