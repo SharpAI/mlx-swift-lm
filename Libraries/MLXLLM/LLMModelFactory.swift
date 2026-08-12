@@ -50,6 +50,11 @@ public enum LLMTypeRegistry {
         "openelm": create(OpenElmConfiguration.self, OpenELMModel.init),
         "internlm2": create(InternLM2Configuration.self, InternLM2Model.init),
         "deepseek_v3": create(DeepseekV3Configuration.self, DeepseekV3Model.init),
+        // DeepSeek Sparse Attention. GLM-5.2 (`glm_moe_dsa`) is the same architecture —
+        // in mlx-lm its model class is a bare subclass of the V3.2 one — so it maps to
+        // the same Swift model rather than getting a parallel implementation.
+        "deepseek_v3_2": create(DeepseekV32Configuration.self, DeepseekV32Model.init),
+        "glm_moe_dsa": create(DeepseekV32Configuration.self, DeepseekV32Model.init),
         "deepseek_v4": create(DeepseekV4Configuration.self, DeepseekV4Model.init),
         "granite": create(GraniteConfiguration.self, GraniteModel.init),
         "granitemoehybrid": create(
