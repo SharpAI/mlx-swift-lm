@@ -8,12 +8,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  # Upstream periodically adds/edits workflow files (e.g. integration_tests.yml).
-  # Pushing a commit that touches .github/workflows/* requires this scope on top
-  # of contents: write, or GitHub rejects the push with "refusing to allow a
-  # GitHub App to create or update workflow ... without workflows permission" —
-  # which is why every sync run failed once upstream added a new workflow file.
-  workflows: write
 
 jobs:
   sync:
@@ -47,6 +41,17 @@ jobs:
           CURRENT_TAG=$(grep -oP '(?<=exact: ")([^"]+)' Package.swift || echo "0.30.6")
           sed -i "s|package(url: \"https://github.com/ml-explore/mlx-swift.*|package(url: \"https://github.com/SharpAI/mlx-swift.git\", exact: \"${CURRENT_TAG}\"),|" Package.swift
           git add Package.swift
+          # GITHUB_TOKEN can never push a commit that touches .github/workflows/*,
+          # regardless of the permissions: block above — that restriction is
+          # hard-coded for the default token and isn't a grantable scope (there is
+          # no such thing as a "workflows" permissions key; that error message's
+          # wording is misleading). Restoring our own workflow files after the
+          # merge — mirroring mlx-swift's upstream-sync.yml, which already does
+          # this and has never hit the restriction — keeps the push a pure
+          # content sync instead of trying to grant a permission that doesn't
+          # exist.
+          git checkout origin/main -- .github/workflows
+          git add .github/workflows
           git diff --cached --quiet || git commit -m "chore(sync): restore SharpAI mlx-swift fork dependency after upstream merge"
           git push -f origin sync/upstream-latest
 
