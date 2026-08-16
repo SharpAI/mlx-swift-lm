@@ -83,10 +83,28 @@ public func loadWeights(
             if weights["\(path).scales"] != nil {
                 if let perLayerQuantization {
                     let dict = perLayerQuantization.perLayerQuantization
-                    if let opt = dict[path] ?? 
-                                 dict["language_model.\(path)"] ??
-                                 dict[path.replacingOccurrences(of: ".experts.router.", with: ".router.")] ??
-                                 dict["language_model." + path.replacingOccurrences(of: ".experts.router.", with: ".router.")] {
+                    // Normalize MTP module paths: the Swift module tree indexes MTP
+                    // prediction layers as "mtp.<depth>.layers...." (e.g. "mtp.0.layers...."
+                    // for the first/only next-token-prediction depth), but checkpoints
+                    // declare their per-layer quantization overrides keyed as
+                    // "mtp.layers...." (no depth index) — mirroring the equivalent
+                    // ".mtp.0." -> ".mtp." normalization already applied to weight-key
+                    // remapping earlier in this file. Without this, MTP-head modules
+                    // (which are commonly quantized at a different bit-width than the
+                    // main model, e.g. a uniform 8-bit MTP head layered on a mixed
+                    // 4/5/6-bit main model) silently fall through to the top-level
+                    // default and crash quantized_matmul on a genuine shape mismatch.
+                    let mtpNormalizedPath = path.replacingOccurrences(
+                        of: #"\.mtp\.\d+\."#, with: ".mtp.", options: .regularExpression)
+                    let routerNormalizedPath = path.replacingOccurrences(
+                        of: ".experts.router.", with: ".router.")
+                    if let opt = dict[path]
+                        ?? dict["language_model.\(path)"]
+                        ?? dict[mtpNormalizedPath]
+                        ?? dict["language_model.\(mtpNormalizedPath)"]
+                        ?? dict[routerNormalizedPath]
+                        ?? dict["language_model.\(routerNormalizedPath)"]
+                    {
                         switch opt {
                         case .skip: return nil
                         case .quantize(let q): return q.asTuple
