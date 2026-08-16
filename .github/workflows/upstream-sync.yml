@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Upstream periodically adds/edits workflow files (e.g. integration_tests.yml).
+  # Pushing a commit that touches .github/workflows/* requires this scope on top
+  # of contents: write, or GitHub rejects the push with "refusing to allow a
+  # GitHub App to create or update workflow ... without workflows permission" —
+  # which is why every sync run failed once upstream added a new workflow file.
+  workflows: write
 
 jobs:
   sync:
