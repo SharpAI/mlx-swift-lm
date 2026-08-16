@@ -45,13 +45,16 @@ jobs:
           # regardless of the permissions: block above — that restriction is
           # hard-coded for the default token and isn't a grantable scope (there is
           # no such thing as a "workflows" permissions key; that error message's
-          # wording is misleading). Restoring our own workflow files after the
-          # merge — mirroring mlx-swift's upstream-sync.yml, which already does
-          # this and has never hit the restriction — keeps the push a pure
-          # content sync instead of trying to grant a permission that doesn't
-          # exist.
+          # wording is misleading). `rm -rf` before restoring is required, not
+          # optional: `git checkout <ref> -- .github/workflows` only overwrites
+          # paths that already exist in <ref> — it leaves a file the merge just
+          # added (e.g. upstream's integration_tests.yml, which origin/main
+          # never had) sitting in the working tree untouched, so the push still
+          # gets rejected for that new file. Verified locally: without the rm,
+          # this step is a silent no-op for exactly the case that matters.
+          rm -rf .github/workflows
           git checkout origin/main -- .github/workflows
-          git add .github/workflows
+          git add -A .github/workflows
           git diff --cached --quiet || git commit -m "chore(sync): restore SharpAI mlx-swift fork dependency after upstream merge"
           git push -f origin sync/upstream-latest
 
