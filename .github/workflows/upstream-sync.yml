@@ -60,7 +60,14 @@ jobs:
 
       - name: Create Pull Request to Main
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Bare GITHUB_TOKEN fails here with "Resource not accessible by
+          # integration (createPullRequest)" — confirmed by a real
+          # workflow_dispatch run after the push-rejection bug above was fixed
+          # and verified working. The sibling mlx-swift/upstream-sync.yml
+          # already falls back to SWIFTLM_PR_TOKEN for this exact step (it's
+          # configured on both repos) and has created PRs successfully on
+          # every run; this applies the same fallback here.
+          GH_TOKEN: ${{ secrets.SWIFTLM_PR_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           gh pr create --base main --head sync/upstream-latest \
             --title "🔄 Auto-Sync: Apple Upstream Repository" \
