@@ -179,8 +179,36 @@ public func attentionWithCacheUpdate(
             // Hot-window design: cachedKeys = fp16 hot window only (self.keys after eviction).
             // polarKeys = compressed older history. They are disjoint — no duplication possible.
             // SDPA sees: [decoded_prior_history | fp16_hot_window]
-            let historyK = MLXFast.turboDecodeK(packed: pk).asType(cachedKeys.dtype)
-            let historyV = MLXFast.turboDecodeV(packed: pv).asType(cachedValues.dtype)
+            //
+            // polarKeys/polarValues only grow (new chunks appended, never rewritten), so the
+            // decoded history is memoized on the cache and only the newly-compressed increment
+            // is decoded each step — otherwise this re-decoded the *entire* (ever-growing)
+            // packed history on every single decode step across every full-attention layer,
+            // turning long-context decode into O(context) work per token instead of O(1).
+            let historyK: MLXArray
+            let historyV: MLXArray
+            if kvCache.decodedHistoryTokens == kvCache.compressedOffset,
+               let cachedHistK = kvCache.decodedHistoryKeys,
+               let cachedHistV = kvCache.decodedHistoryValues {
+                historyK = cachedHistK
+                historyV = cachedHistV
+            } else {
+                let alreadyDecoded = kvCache.decodedHistoryTokens
+                let newPK = pk[.ellipsis, alreadyDecoded..<kvCache.compressedOffset, 0...]
+                let newPV = pv[.ellipsis, alreadyDecoded..<kvCache.compressedOffset, 0...]
+                let newHistK = MLXFast.turboDecodeK(packed: newPK).asType(cachedKeys.dtype)
+                let newHistV = MLXFast.turboDecodeV(packed: newPV).asType(cachedValues.dtype)
+                if let prevK = kvCache.decodedHistoryKeys, let prevV = kvCache.decodedHistoryValues {
+                    historyK = concatenated([prevK, newHistK], axis: 2)
+                    historyV = concatenated([prevV, newHistV], axis: 2)
+                } else {
+                    historyK = newHistK
+                    historyV = newHistV
+                }
+                kvCache.decodedHistoryKeys = historyK
+                kvCache.decodedHistoryValues = historyV
+                kvCache.decodedHistoryTokens = kvCache.compressedOffset
+            }
             // Merge 2×256 virtual heads back if 512-dim split was used
             var mergedK = historyK
             var mergedV = historyV

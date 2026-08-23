@@ -335,6 +335,16 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
     /// Total tokens stored in polarKeys/polarValues
     public var compressedOffset: Int = 0
 
+    // ── Decoded-history memoization ─────────────────────────────────────────
+    // polarKeys/polarValues only grow (new chunks are appended, never rewritten),
+    // so the fp16 history decoded from them is stable up to `decodedHistoryTokens`.
+    // AttentionUtils reuses decodedHistoryKeys/Values whenever compressedOffset
+    // hasn't advanced, and otherwise decodes only the newly-compressed increment
+    // instead of re-decoding the whole (ever-growing) packed buffer on every step.
+    public var decodedHistoryKeys: MLXArray?
+    public var decodedHistoryValues: MLXArray?
+    public var decodedHistoryTokens: Int = 0
+
     public var step = 256
 
     public override init() {
@@ -526,6 +536,9 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
             self.residualKeys = nil
             self.residualValues = nil
             self.turboSplitHeads = false
+            self.decodedHistoryKeys = nil
+            self.decodedHistoryValues = nil
+            self.decodedHistoryTokens = 0
             self.keys = newValue[0]
             self.values = newValue[1]
             self.offset = self.keys!.dim(2)
