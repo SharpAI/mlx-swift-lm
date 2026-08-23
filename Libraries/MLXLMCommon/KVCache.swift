@@ -341,6 +341,25 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
     // AttentionUtils reuses decodedHistoryKeys/Values whenever compressedOffset
     // hasn't advanced, and otherwise decodes only the newly-compressed increment
     // instead of re-decoding the whole (ever-growing) packed buffer on every step.
+    // Fixes an O(context) dequant cost per decoded token (measured: ~1.4 tok/s
+    // collapsing to ~0.04 tok/s as context grew) down to amortized O(1).
+    //
+    // ⚠️ Known trade-off / limitation: this cache holds the *decoded fp16* copy of
+    // the compressed history alongside the 3-bit polarKeys/polarValues, i.e. it
+    // partially reintroduces the memory TurboQuant compression exists to avoid.
+    // At moderate context (single-digit-K to ~50K tokens — the realistic range for
+    // coding-assistant system prompts / tool defs) this is a clear net win: the
+    // decoded copy is a few hundred MB to a few GB. At extreme context (~200K
+    // tokens, e.g. feeding whole codebases as one prompt) the decoded copy alone
+    // is ~12-15GB (for this model's 16 full-attention layers), and combined with
+    // prefill's own transient memory this OOM-killed SwiftLM on a 64GB Mac in
+    // testing — confirmed via a memory monitor showing active memory jump from
+    // ~22GB to 45GB+ within ~30s of starting prefill, with even a dynamically
+    // grown 46GB swap file unable to keep up. If very-long-context (~100K+)
+    // reliability matters more than moderate-context decode speed, consider
+    // capping memoization (e.g. skip caching / evict above a token or byte
+    // threshold, falling back to the original always-redecode behavior) instead
+    // of unconditionally caching the full decoded history.
     public var decodedHistoryKeys: MLXArray?
     public var decodedHistoryValues: MLXArray?
     public var decodedHistoryTokens: Int = 0
