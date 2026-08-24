@@ -520,7 +520,7 @@ enum Qwen35Language {
 
         func callAsFunction(
             _ x: MLXArray,
-            mask: MLXArray?,
+            mask: MLXFast.ScaledDotProductAttentionMaskMode,
             cache: KVCache?,
             positionIds: MLXArray?
         ) -> MLXArray {
@@ -557,11 +557,14 @@ enum Qwen35Language {
             (queries, keys) = applyMultimodalRotaryPosEmb(
                 q: queries, k: keys, cos: cosValues, sin: sinValues)
 
+            // Only an explicit array mask needs slicing to the current kv length;
+            // symbolic modes (.causal, .none) pass through unchanged and never
+            // materialize a dense [seq, seq] mask (see Model.callAsFunction).
             let attentionMask: MLXFast.ScaledDotProductAttentionMaskMode
-            if let mask {
-                attentionMask = .array(mask[.ellipsis, 0 ..< kvSeqLen])
+            if case .array(let m) = mask {
+                attentionMask = .array(m[.ellipsis, 0 ..< kvSeqLen])
             } else {
-                attentionMask = .none
+                attentionMask = mask
             }
 
             let output = attentionWithCacheUpdate(
@@ -817,7 +820,7 @@ enum Qwen35Language {
 
         func callAsFunction(
             _ x: MLXArray,
-            attentionMask: MLXArray?,
+            attentionMask: MLXFast.ScaledDotProductAttentionMaskMode,
             ssmMask: MLXArray?,
             cache: KVCache?,
             positionIds: MLXArray?
@@ -882,14 +885,18 @@ enum Qwen35Language {
                 cacheArray = Array(repeating: nil as KVCache?, count: layers.count)
             }
 
+            // A dense [seq, seq] mask array is only structurally required when real
+            // image embeddings are merged in (bidirectional-within-image-block
+            // masking can't be expressed symbolically). For text-only calls
+            // (inputsEmbeds == nil, i.e. embedTokens(inputs) above), the plain
+            // causal structure suffices — use the symbolic .causal mode so no
+            // O(seq^2) mask array is ever materialized. Forcing returnArray: true
+            // unconditionally here previously caused a hard crash (Metal
+            // single-buffer allocation over its ~41.7GB ceiling) on long text-only
+            // prompts once seq^2 * fullAttentionLayers * 4 bytes exceeded it
+            // (observed ~210GB requested at ~81K tokens on Qwen3.5-9B).
             let faMaskMode = createAttentionMask(
-                h: hiddenStates, cache: cacheArray?[faIdx], returnArray: true)
-            let faMask: MLXArray?
-            if case .array(let arrayMask) = faMaskMode {
-                faMask = arrayMask
-            } else {
-                faMask = nil
-            }
+                h: hiddenStates, cache: cacheArray?[faIdx], returnArray: inputsEmbeds != nil)
             let ssmMask = createSSMMask(h: hiddenStates, cache: cacheArray?[ssmIdx] as? MambaCache)
 
             for (index, layer) in layers.enumerated() {
@@ -897,7 +904,7 @@ enum Qwen35Language {
                 hiddenStates = partitionedLayerCall(index: index, gpuLayerCount: gpuLayerCount, stream: streamExperts) {
                     layer(
                         hiddenStates,
-                        attentionMask: faMask,
+                        attentionMask: faMaskMode,
                         ssmMask: layerSSMMask,
                         cache: cacheArray?[index],
                         positionIds: positionIds
@@ -1138,8 +1145,70 @@ public class Qwen35: Module, VLMModel {
     public func prepare(
         _ input: LMInput,
         cache: [any KVCache],
-        windowSize _: Int?
+        windowSize: Int?
     ) throws -> PrepareResult {
+        // Text-only prompts (no image/video) can be chunked exactly like a plain
+        // LLM: feed windowSize-token slices through the model incrementally,
+        // evaluating the cache after each chunk so memory never has to hold more
+        // than one chunk's worth of intermediate attention state at once.
+        //
+        // This matters a lot for this architecture specifically: head_dim=256
+        // isn't supported by the fused Metal "full" SDPA kernel (only 64/80/128
+        // are — see ScaledDotProductAttention::use_fallback in
+        // mlx-swift/.../backend/metal/scaled_dot_product_attention.cpp), so ANY
+        // multi-token attention call here falls back to a naive O(seq^2) score
+        // matrix regardless of mask mode. A single-shot prefill of a long prompt
+        // can therefore exceed Metal's ~41.7GB single-buffer limit outright
+        // (confirmed: an 81K-token text-only prompt crashed with
+        // "[metal::malloc] Attempting to allocate 210403250208 bytes... greater
+        // than the maximum allowed buffer size of 41747087360 bytes"). Chunking
+        // keeps each fallback call's score matrix at
+        // [chunkSize x runningContextLength] instead of [fullLen x fullLen].
+        //
+        // Mirrors LLMModel.prepare's reference chunking (MLXLLM/LLMModel.swift).
+        // Image/video prompts keep the original single-shot path below —
+        // chunking around image token boundaries needs separate, more careful
+        // handling and isn't addressed here.
+        if input.image == nil, input.video == nil {
+            let prefillStepSize = windowSize ?? 512
+            var y = input.text
+
+            // Consume every chunk here (including the final, possibly-shorter
+            // one) and return its logits directly via .logits(...), rather than
+            // handing a leftover remainder back as .tokens(...). The shared
+            // TokenIterator.step() consumes .tokens(...) via
+            // `previous[text: .newAxis]` (Evaluate.swift), which assumes 1-D
+            // token arrays and inserts a batch axis — but this model's
+            // tokenization already produces 2-D [batch, seq] tokens, so that
+            // adds a spurious extra axis. That mismatch was never exercised
+            // before (prepare() used to always process the whole prompt in one
+            // shot and return .logits(...) directly), but chunking is the first
+            // path here to ever produce a .tokens(...) remainder, so avoid
+            // triggering it rather than fixing framework code shared by models
+            // that rely on the 1-D assumption.
+            var lastLogits: MLXArray? = nil
+            while y.tokens.dim(-1) > 0 {
+                let stepSize = min(prefillStepSize, y.tokens.dim(-1))
+                // y.tokens is already [batch, seq] — slice the sequence axis
+                // only, keep the batch axis (size 1) as-is. (An earlier version
+                // used `.newAxis` here, borrowed from LLMModel.prepare's
+                // reference, which assumes 1-D tokens; that inserted an extra
+                // axis and silently sliced the wrong (batch) dimension instead,
+                // so every "chunk" was actually still the full untruncated
+                // prompt.)
+                let chunk = y[0..., ..<stepSize]
+                let logits = self(chunk.tokens, cache: cache.isEmpty ? nil : cache)
+                y = y[0..., stepSize...]
+                if y.tokens.dim(-1) > 0 {
+                    eval(cache)
+                } else {
+                    lastLogits = logits
+                }
+            }
+
+            return .logits(LMOutput(logits: lastLogits!))
+        }
+
         let inputIds = input.text.tokens
 
         var pixelValues: MLXArray?
