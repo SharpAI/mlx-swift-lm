@@ -95,8 +95,160 @@ struct DeepseekV32Tests {
         #expect(!sum.isInfinite)
     }
 
-    @Test("DeepseekV32 sanitize drops indexer weights")
-    func testSanitizeDropsIndexerWeights() throws {
+    @Test("Sparse attention engages once cached length exceeds index_topk, and stays finite")
+    func testSparseAttentionEngagesPastTopkAndStaysFinite() throws {
+        // 6 tokens through a single forward pass against index_topk: 4 — the
+        // indexer's cache reaches length 6 > 4 within that one call, so every
+        // query position in this batch routes through the sparse (masked) path,
+        // not just the dense fallback below-threshold regime the other tests
+        // exercise.
+        let seqLen = 6
+        let sparseCfg = try JSONDecoder().decode(
+            DeepseekV32Configuration.self, from: glmStyleConfigData(indexTopk: 4))
+        let sparseModel = DeepseekV32Model(sparseCfg)
+
+        let input = MLXArray(0 ..< seqLen).reshaped(1, seqLen)
+        let sparseLogits = sparseModel(input, cache: nil)
+
+        #expect(sparseLogits.shape == [1, seqLen, 128])
+        let sum = sparseLogits.sum().item(Float.self)
+        #expect(!sum.isNaN, "sparse-path logits contain NaN")
+        #expect(!sum.isInfinite, "sparse-path logits contain Inf")
+
+        // Finite and shape-correct isn't enough on its own to prove the mask is
+        // doing anything — a broken mask that ends up all-true would pass that
+        // check too. Compare against the same weights with index_topk raised
+        // past seqLen (dense, indexer never engages) and confirm the two
+        // genuinely diverge.
+        let denseCfg = try JSONDecoder().decode(
+            DeepseekV32Configuration.self, from: glmStyleConfigData(indexTopk: 1_000_000))
+        let denseModel = DeepseekV32Model(denseCfg)
+        denseModel.update(parameters: sparseModel.parameters())
+        let denseLogits = denseModel(input, cache: nil)
+        eval(sparseLogits, denseLogits)
+
+        let maxAbsDiff = (sparseLogits - denseLogits).abs().max().item(Float.self)
+        #expect(
+            maxAbsDiff > 0,
+            "sparse and dense attention produced identical output — the top-k mask had no effect"
+        )
+    }
+
+    /// Every other test in this file passes `cache: nil`, which trivially
+    /// side-steps any bug that only manifests once a real KVCache mutates its
+    /// own `.offset` — exactly what happened here: the causal mask was built
+    /// from `mainCache.offset` *after* `mainCache.update(...)` had already
+    /// incremented it, sizing the mask one batch too wide and crashing the
+    /// boolean AND/broadcast the moment this ran with a real cache. This test
+    /// exercises that path directly: a real cache from `newCache`, prefilled
+    /// past `index_topk` in one call (sparse engages), then one more decode
+    /// step (`L == 1`, exercising the other offset-read site).
+    @Test("Sparse attention with a real (non-nil) cache: prefill past index_topk, then decode")
+    func testSparseAttentionWithRealCache() throws {
+        let cfg = try JSONDecoder().decode(
+            DeepseekV32Configuration.self, from: glmStyleConfigData(indexTopk: 4))
+        let model = DeepseekV32Model(cfg)
+        let cache = model.newCache(parameters: nil)
+
+        let prefillInput = MLXArray(0 ..< 6).reshaped(1, 6)
+        let prefillLogits = model(prefillInput, cache: cache)
+        eval(prefillLogits)
+
+        #expect(prefillLogits.shape == [1, 6, 128])
+        let prefillSum = prefillLogits.sum().item(Float.self)
+        #expect(!prefillSum.isNaN, "prefill logits contain NaN with a real cache")
+        #expect(!prefillSum.isInfinite, "prefill logits contain Inf with a real cache")
+
+        // Cache offset is now 6 > index_topk (4): every subsequent decode step
+        // routes through the sparse path, exercising the L == 1 offset-read site.
+        let decodeInput = MLXArray([6]).reshaped(1, 1)
+        let decodeLogits = model(decodeInput, cache: cache)
+        eval(decodeLogits)
+
+        #expect(decodeLogits.shape == [1, 1, 128])
+        let decodeSum = decodeLogits.sum().item(Float.self)
+        #expect(!decodeSum.isNaN, "decode logits contain NaN with a real cache")
+        #expect(!decodeSum.isInfinite, "decode logits contain Inf with a real cache")
+    }
+
+    /// The inertness property from #139: the reference indexer returns no
+    /// selection at all until the cache is longer than `index_topk` — so a
+    /// context at or under that length must be numerically indistinguishable
+    /// from a model whose indexer never engages (`index_topk` effectively
+    /// infinite). This is the self-check that needs no real checkpoint: build
+    /// two identically-shaped, identically-seeded models that differ only in
+    /// `index_topk`, and confirm they agree exactly below the smaller threshold.
+    @Test("Below index_topk, output matches a model where the indexer never engages")
+    func testDenseRegimeMatchesAcrossIndexTopkValues() throws {
+        let seqLen = 6
+
+        // `MLXRandom.seed()` is global, process-wide mutable state, and
+        // swift-testing runs tests concurrently by default — reseeding then
+        // constructing two models is not reliably reproducible when other
+        // tests' own (unseeded) random construction can race with it. Instead,
+        // build one model normally and copy its parameters onto the second —
+        // deterministic regardless of any concurrent RNG activity elsewhere in
+        // the process. `index_topk` isn't a stored/loaded parameter (it only
+        // gates runtime control flow), so this leaves the two models identical
+        // except for the one field under test.
+        let smallTopkCfg = try JSONDecoder().decode(
+            DeepseekV32Configuration.self, from: glmStyleConfigData(indexTopk: seqLen + 1))
+        let smallTopkModel = DeepseekV32Model(smallTopkCfg)
+
+        let largeTopkCfg = try JSONDecoder().decode(
+            DeepseekV32Configuration.self, from: glmStyleConfigData(indexTopk: 1_000_000))
+        let largeTopkModel = DeepseekV32Model(largeTopkCfg)
+        largeTopkModel.update(parameters: smallTopkModel.parameters())
+        eval(largeTopkModel)
+
+        let input = MLXArray(0 ..< seqLen).reshaped(1, seqLen)
+        let smallTopkLogits = smallTopkModel(input, cache: nil)
+        let largeTopkLogits = largeTopkModel(input, cache: nil)
+        eval(smallTopkLogits, largeTopkLogits)
+
+        // seqLen (6) <= smallTopkCfg.indexTopk (7): the indexer's own "not longer
+        // than index_topk yet" check means it returns nil for both models here —
+        // this is exercising that stage 2's own inertness holds, not comparing
+        // against a since-removed stage-1 implementation.
+        let maxAbsDiff = (smallTopkLogits - largeTopkLogits).abs().max().item(Float.self)
+        #expect(
+            maxAbsDiff == 0,
+            "identically-seeded models must match exactly below index_topk, diff=\(maxAbsDiff)"
+        )
+    }
+
+    /// `DeepseekV32Model` doesn't get `KVCacheDimensionProvider`'s default
+    /// `newCache` (its cache shape is a `CacheList` pair, not that protocol's
+    /// flat array), so honoring `parameters.maxKVSize` — bounded/rotating cache
+    /// for constant-memory long context — has to be done explicitly rather than
+    /// inherited for free. Confirms both cache slots in the pair are actually
+    /// `RotatingKVCache` when requested, and stay the default `KVCacheSimple`
+    /// when not (so the main/indexer caches keep growing in lockstep either way).
+    @Test("newCache honors maxKVSize with a RotatingKVCache pair")
+    func testNewCacheHonorsMaxKVSize() throws {
+        let cfg = try JSONDecoder().decode(
+            DeepseekV32Configuration.self, from: glmStyleConfigData())
+        let model = DeepseekV32Model(cfg)
+
+        let bounded = model.newCache(parameters: GenerateParameters(maxKVSize: 32))
+        guard let firstBounded = bounded.first as? CacheList else {
+            Issue.record("newCache(maxKVSize:) did not return CacheList")
+            return
+        }
+        #expect(firstBounded[0] is RotatingKVCache)
+        #expect(firstBounded[1] is RotatingKVCache)
+
+        let unbounded = model.newCache(parameters: nil)
+        guard let firstUnbounded = unbounded.first as? CacheList else {
+            Issue.record("newCache(nil) did not return CacheList")
+            return
+        }
+        #expect(firstUnbounded[0] is KVCacheSimple)
+        #expect(firstUnbounded[1] is KVCacheSimple)
+    }
+
+    @Test("DeepseekV32 sanitize keeps indexer weights, still drops compressor weights")
+    func testSanitizeKeepsIndexerDropsCompressor() throws {
         let cfg = try JSONDecoder().decode(
             DeepseekV32Configuration.self, from: glmStyleConfigData())
         let model = DeepseekV32Model(cfg)
@@ -106,14 +258,19 @@ struct DeepseekV32Tests {
             "model.layers.0.self_attn.indexer.wk.weight": MLXArray.zeros([128, 64]),
             "model.layers.0.self_attn.indexer.weights_proj.weight": MLXArray.zeros([32, 64]),
             "model.layers.0.self_attn.indexer.k_norm.weight": MLXArray.zeros([128]),
+            "model.layers.0.attn.compressor.wkv.weight": MLXArray.zeros([1, 1]),
         ]
         let sanitized = model.sanitize(weights: weights)
 
+        // Stage 2 has a real Indexer module to load these into — unlike stage 1,
+        // they must now survive sanitize or the checkpoint's indexer weights are
+        // silently discarded and the module stays randomly initialised.
         #expect(sanitized.keys.contains("model.layers.0.self_attn.q_a_proj.weight"))
-        #expect(
-            !sanitized.keys.contains { $0.contains(".indexer.") },
-            "indexer weights survived sanitize: \(sanitized.keys.filter { $0.contains(".indexer.") })"
-        )
+        #expect(sanitized.keys.contains("model.layers.0.self_attn.indexer.wk.weight"))
+        #expect(sanitized.keys.contains("model.layers.0.self_attn.indexer.weights_proj.weight"))
+        #expect(sanitized.keys.contains("model.layers.0.self_attn.indexer.k_norm.weight"))
+        // .attn.compressor. is an unrelated, still-unimplemented feature — still dropped.
+        #expect(!sanitized.keys.contains { $0.contains(".attn.compressor.") })
     }
 
     /// The trap this port had to avoid. DeepSeek-V3's sanitize dropped
