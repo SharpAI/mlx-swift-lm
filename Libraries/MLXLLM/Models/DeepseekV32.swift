@@ -405,6 +405,14 @@ class DeepseekV32Attention: Module {
         kPe = applyRotaryPosition(rope, to: kPe, cache: mainCache)
         kPe = repeated(kPe, count: numHeads, axis: 1)
 
+        // Captured before mainCache.update() below, which mutates mainCache.offset
+        // as its first side effect — reading .offset any later here would already
+        // see the post-update (this-batch-included) value, sizing every mask built
+        // from it one batch too wide against the indexer/attention's actual key
+        // count and crashing the boolean AND/broadcast the first time this runs
+        // with a real (non-nil) cache.
+        let preUpdateOffset = mainCache?.offset ?? 0
+
         var keys: MLXArray
         if let mainCache {
             (keys, values) = mainCache.update(
@@ -425,7 +433,7 @@ class DeepseekV32Attention: Module {
             if case .array(let arr) = mask {
                 indexerCausalMask = arr
             } else {
-                indexerCausalMask = createCausalMask(n: L, offset: mainCache?.offset ?? 0)
+                indexerCausalMask = createCausalMask(n: L, offset: preUpdateOffset)
             }
         }
 
@@ -436,15 +444,35 @@ class DeepseekV32Attention: Module {
             let sTotal = keys.dim(2)
             var sparseMask = MLXArray.zeros([B, 1, L, sTotal], dtype: .bool)
             sparseMask = putAlong(sparseMask, topkIndices, values: MLXArray(true), axis: -1)
-            let causal = indexerCausalMask ?? createCausalMask(n: L, offset: mainCache?.offset ?? 0)
-            finalMask = .array(sparseMask & causal)
+            // L == 1 (decode): a single new query is causally valid against every
+            // already-cached position, so ANDing in a causal mask here is
+            // provably a no-op — skip rebuilding/reusing one. L > 1 (prefill):
+            // indexerCausalMask is already materialised above and reused as-is.
+            if let indexerCausalMask {
+                sparseMask = sparseMask & indexerCausalMask
+            }
+            finalMask = .array(sparseMask)
         }
 
+        // cache: nil because mainCache.update(...) already ran above (the top-k
+        // mask needs the post-update key count before this call) — passing the
+        // cache again here would double-append. Known cost, shared with
+        // FalconH1's identical CacheList-pair models (which don't route through
+        // attentionWithCacheUpdate at all): this opts DSA attention out of
+        // attentionWithCacheUpdate's TurboKV compressed-history decode/prepend
+        // and its QuantizedKVCacheProtocol routing — both only engage on a
+        // non-nil cache. --turbo-kv and --kv-bits are effectively unsupported for
+        // this model family for now (KV-quantization silently no-ops the same
+        // way for FalconH1's cache pair — see maybeQuantizeKVCache's explicit
+        // "MambaCache and CacheList don't use traditional KV quantization").
+        // Making the CacheList pattern itself TurboKV/quantization-aware is a
+        // separate, cross-cutting change affecting every paired-cache model, not
+        // scoped to this PR.
         let output = attentionWithCacheUpdate(
             queries: queries,
             keys: keys,
             values: values,
-            cache: nil,  // cache already updated above; a second update would double-append
+            cache: nil,
             scale: scale,
             mask: finalMask
         )
@@ -546,18 +574,53 @@ public class DeepseekV32Model: Module, LLMModel, LoRAModel {
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]? = nil) -> MLXArray {
-        let out = model(inputs, cache: cache as? [CacheList])
+        let typedCache: [CacheList]?
+        if let cache {
+            guard let cast = cache as? [CacheList] else {
+                // A non-CacheList cache here means the caller didn't get it from
+                // this model's own newCache(parameters:) — silently falling back
+                // to `nil` (as `cache as? [CacheList]` alone would) would run a
+                // full fresh prefill with no visible error, which reads as "the
+                // model forgot everything" rather than "wrong cache type was
+                // passed" and is far harder to debug. Fail loudly instead.
+                fatalError(
+                    "DeepseekV32Model requires CacheList-typed caches (from its own "
+                        + "newCache(parameters:)); got \(type(of: cache))"
+                )
+            }
+            typedCache = cast
+        } else {
+            typedCache = nil
+        }
+        let out = model(inputs, cache: typedCache)
         return lmHead(out)
     }
 
     /// One `CacheList(main, indexer)` pair per layer — mirrors the reference's
     /// `[CacheList(KVCache(), KVCache()) for _ in self.layers]` and the same
     /// paired-cache shape `FalconH1Model.newCache` uses for its own two-cache
-    /// hybrid layers. Both children are `KVCacheSimple`, so `canTrimPromptCache`/
+    /// hybrid layers. Both children are the same concrete type (`KVCacheSimple`,
+    /// or `RotatingKVCache` when `maxKVSize` is set) so `canTrimPromptCache`/
     /// `trimPromptCache` (which require every cache to report `isTrimmable`) keep
-    /// working transparently through `CacheList.isTrimmable`/`.trim(_:)`.
+    /// working transparently through `CacheList.isTrimmable`/`.trim(_:)`, and so
+    /// the main and indexer caches stay in lockstep — the indexer's own top-k
+    /// scoring assumes its cache offset always equals the main cache's.
+    ///
+    /// This model doesn't conform to `KVCacheDimensionProvider` (its cache shape
+    /// is a CacheList pair, not that protocol's flat `[KVCache]`), so
+    /// `parameters?.maxKVSize` — bounded/rotating cache for constant-memory long
+    /// context, which `KVCacheDimensionProvider`'s default `newCache` provides —
+    /// has to be handled explicitly here instead of coming for free.
     public func newCache(parameters: GenerateParameters?) -> [KVCache] {
-        (0 ..< args.numHiddenLayers).map { _ in CacheList(KVCacheSimple(), KVCacheSimple()) }
+        (0 ..< args.numHiddenLayers).map { _ in
+            if let maxKVSize = parameters?.maxKVSize {
+                CacheList(
+                    RotatingKVCache(maxSize: maxKVSize, keep: 4),
+                    RotatingKVCache(maxSize: maxKVSize, keep: 4))
+            } else {
+                CacheList(KVCacheSimple(), KVCacheSimple())
+            }
+        }
     }
 
     /// Multi-token-prediction layers sit past the main stack and have no module to

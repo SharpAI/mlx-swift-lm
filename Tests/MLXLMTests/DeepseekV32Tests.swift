@@ -134,6 +134,43 @@ struct DeepseekV32Tests {
         )
     }
 
+    /// Every other test in this file passes `cache: nil`, which trivially
+    /// side-steps any bug that only manifests once a real KVCache mutates its
+    /// own `.offset` — exactly what happened here: the causal mask was built
+    /// from `mainCache.offset` *after* `mainCache.update(...)` had already
+    /// incremented it, sizing the mask one batch too wide and crashing the
+    /// boolean AND/broadcast the moment this ran with a real cache. This test
+    /// exercises that path directly: a real cache from `newCache`, prefilled
+    /// past `index_topk` in one call (sparse engages), then one more decode
+    /// step (`L == 1`, exercising the other offset-read site).
+    @Test("Sparse attention with a real (non-nil) cache: prefill past index_topk, then decode")
+    func testSparseAttentionWithRealCache() throws {
+        let cfg = try JSONDecoder().decode(
+            DeepseekV32Configuration.self, from: glmStyleConfigData(indexTopk: 4))
+        let model = DeepseekV32Model(cfg)
+        let cache = model.newCache(parameters: nil)
+
+        let prefillInput = MLXArray(0 ..< 6).reshaped(1, 6)
+        let prefillLogits = model(prefillInput, cache: cache)
+        eval(prefillLogits)
+
+        #expect(prefillLogits.shape == [1, 6, 128])
+        let prefillSum = prefillLogits.sum().item(Float.self)
+        #expect(!prefillSum.isNaN, "prefill logits contain NaN with a real cache")
+        #expect(!prefillSum.isInfinite, "prefill logits contain Inf with a real cache")
+
+        // Cache offset is now 6 > index_topk (4): every subsequent decode step
+        // routes through the sparse path, exercising the L == 1 offset-read site.
+        let decodeInput = MLXArray([6]).reshaped(1, 1)
+        let decodeLogits = model(decodeInput, cache: cache)
+        eval(decodeLogits)
+
+        #expect(decodeLogits.shape == [1, 1, 128])
+        let decodeSum = decodeLogits.sum().item(Float.self)
+        #expect(!decodeSum.isNaN, "decode logits contain NaN with a real cache")
+        #expect(!decodeSum.isInfinite, "decode logits contain Inf with a real cache")
+    }
+
     /// The inertness property from #139: the reference indexer returns no
     /// selection at all until the cache is longer than `index_topk` — so a
     /// context at or under that length must be numerically indistinguishable
@@ -178,6 +215,36 @@ struct DeepseekV32Tests {
             maxAbsDiff == 0,
             "identically-seeded models must match exactly below index_topk, diff=\(maxAbsDiff)"
         )
+    }
+
+    /// `DeepseekV32Model` doesn't get `KVCacheDimensionProvider`'s default
+    /// `newCache` (its cache shape is a `CacheList` pair, not that protocol's
+    /// flat array), so honoring `parameters.maxKVSize` — bounded/rotating cache
+    /// for constant-memory long context — has to be done explicitly rather than
+    /// inherited for free. Confirms both cache slots in the pair are actually
+    /// `RotatingKVCache` when requested, and stay the default `KVCacheSimple`
+    /// when not (so the main/indexer caches keep growing in lockstep either way).
+    @Test("newCache honors maxKVSize with a RotatingKVCache pair")
+    func testNewCacheHonorsMaxKVSize() throws {
+        let cfg = try JSONDecoder().decode(
+            DeepseekV32Configuration.self, from: glmStyleConfigData())
+        let model = DeepseekV32Model(cfg)
+
+        let bounded = model.newCache(parameters: GenerateParameters(maxKVSize: 32))
+        guard let firstBounded = bounded.first as? CacheList else {
+            Issue.record("newCache(maxKVSize:) did not return CacheList")
+            return
+        }
+        #expect(firstBounded[0] is RotatingKVCache)
+        #expect(firstBounded[1] is RotatingKVCache)
+
+        let unbounded = model.newCache(parameters: nil)
+        guard let firstUnbounded = unbounded.first as? CacheList else {
+            Issue.record("newCache(nil) did not return CacheList")
+            return
+        }
+        #expect(firstUnbounded[0] is KVCacheSimple)
+        #expect(firstUnbounded[1] is KVCacheSimple)
     }
 
     @Test("DeepseekV32 sanitize keeps indexer weights, still drops compressor weights")
