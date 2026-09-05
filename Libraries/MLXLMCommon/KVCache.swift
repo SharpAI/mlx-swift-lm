@@ -432,7 +432,6 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
                         }
                         self.residualKeys   = qK.1
                         self.residualValues = qV.1
-                        self.compressedOffset += newColdCount
 
                         // Evict: rebuild fp16 buffer containing only the hot window + one spare step
                         let hotK = fullK[.ellipsis, coldEnd..<self.offset, 0...]
@@ -444,6 +443,14 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
                         self.keys   = concatenated([hotK, sparK], axis: 2)
                         self.values = concatenated([hotV, sparV], axis: 2)
                         self.offset = turboHotWindowSize  // hot window is now exactly this many tokens
+                        // `compressedOffset` indexes into `self.keys`, which was just rebuilt to
+                        // hold nothing but the (uncompressed) hot window — so the next
+                        // not-yet-compressed token is at local index 0 again. Leaving the old,
+                        // pre-rebuild value here (previously `self.compressedOffset += newColdCount`)
+                        // silently discarded whole token windows on the next eviction: coldEnd/newColdCount
+                        // math would look plausible against the new buffer's shorter length while actually
+                        // slicing the wrong tokens, permanently losing history with no error.
+                        self.compressedOffset = 0
 
                         TurboKVCacheTelemetry.logOnce(
                             compressedOffset: newColdCount, keys: qK.0, values: qV.0,
@@ -479,9 +486,14 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
             // Returning just that would cause the prompt-cache to lose all compressed history,
             // making every subsequent request that hits the cache see a truncated context.
             // Fix: decode polarKeys and concatenate with the hot window to form the full fp16 state.
+            // `polarKeys`/`polarValues` are only ever non-nil once at least one eviction
+            // has happened, so their presence alone signals "there is compressed history to
+            // decode" — `compressedOffset` is a local index into the current `self.keys`
+            // buffer (reset to 0 after every eviction, see `update`) and is NOT a substitute
+            // signal for that; it can legitimately be 0 immediately after an eviction while
+            // real compressed history still exists in polarKeys.
             if turboQuantEnabled,
                let pk = polarKeys, let pv = polarValues,
-               compressedOffset > 0,
                let hotK = self.keys, let hotV = self.values {
                 var histK = MLXFast.turboDecodeK(packed: pk)
                 var histV = MLXFast.turboDecodeV(packed: pv)
