@@ -181,5 +181,75 @@ func testCacheListCopyIsIndependent() async throws {
         #expect(allClose(orig, saved).item(Bool.self))
     }
 }
+
+/// Regression test for a silent-data-loss bug: TurboKV's `compressedOffset` used to
+/// keep accumulating across evictions even though `self.keys` gets rebuilt into a
+/// fresh buffer on every eviction (holding only the hot window, indexed from 0
+/// again). That stale, ever-growing offset was then used to slice the *new*
+/// buffer on the next eviction, silently skipping whole token windows — they
+/// were never compressed into `polarKeys` and were then overwritten, vanishing
+/// from history with no error. Feeding four `step`-sized (256-token) chunks
+/// through a real cache (hot window at its default of 256, so evictions trigger
+/// every other chunk) must yield back exactly the tokens that went in, in order.
+@Test
+func testTurboKVMultiRoundEvictionPreservesAllTokens() async throws {
+    let dim = 128
+    let nKVHeads = 4
+    let step = 256
+    let totalTokens = 1024  // 4 chunks -> 2 eviction rounds with the default hot window
+
+    let cache = KVCacheSimple()
+    cache.turboQuantEnabled = true
+    cache.turboMinActivationTokens = 0  // activate immediately instead of waiting for 2048 tokens
+    cache.step = step
+    // turboHotWindowSize left at its production default (256).
+
+    var chunks = [MLXArray]()
+    var chunkStart = 0
+    var chunkIndex: UInt64 = 0
+    while chunkStart < totalTokens {
+        let chunkLen = min(step, totalTokens - chunkStart)
+        let chunk = MLXRandom.normal(
+            [1, nKVHeads, chunkLen, dim], key: MLXRandom.key(chunkIndex)
+        ).asType(.float16)
+        eval(chunk)
+        chunks.append(chunk)
+        _ = cache.update(keys: chunk, values: chunk)
+        chunkStart += chunkLen
+        chunkIndex += 1
+    }
+
+    let state = cache.state
+    eval(state)
+
+    // The bug manifested as `state[0]` coming back SHORTER than `totalTokens`
+    // (an entire step-sized chunk silently dropped) rather than a crash on its
+    // own — the crash only appeared downstream, comparing against the true
+    // token count. Assert the count directly so this fails clearly either way.
+    #expect(state[0].dim(2) == totalTokens)
+    #expect(state[1].dim(2) == totalTokens)
+
+    let originalKeys = concatenated(chunks, axis: 2).asType(.float32)
+    let reconstructedKeys = state[0].asType(.float32)
+    let diff = originalKeys - reconstructedKeys
+    let overallMSE = mean(diff * diff).item(Float.self)
+    // Per-step-sized-chunk MSE pinpoints WHICH chunk (if any) is still wrong,
+    // rather than only an aggregate number.
+    var perChunkMSE = [Float]()
+    for i in 0 ..< (totalTokens / step) {
+        let lo = i * step, hi = lo + step
+        let o = originalKeys[.ellipsis, lo ..< hi, 0...]
+        let r = reconstructedKeys[.ellipsis, lo ..< hi, 0...]
+        let d = o - r
+        perChunkMSE.append(mean(d * d).item(Float.self))
+    }
+    FileHandle.standardError.write(Data((
+        "[REGRESSION TEST] overallMSE=\(overallMSE) perChunkMSE=\(perChunkMSE)\n"
+    ).utf8))
+    // 3-bit TurboQuant compression is lossy by design (see the module's own
+    // ~0.03 MSE at this bit depth) — this checks the history is the RIGHT
+    // tokens in the RIGHT order, not lossless, hence a loose tolerance.
+    #expect(overallMSE < 0.5)
+}
 }
 }
