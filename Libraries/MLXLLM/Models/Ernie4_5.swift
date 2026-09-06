@@ -104,8 +104,9 @@ class Ernie45Attention: Module {
         keys = keys.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
         values = values.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
 
-        queries = applyRotaryPosition(rope, to: queries, cache: cache)
-        keys = applyRotaryPosition(rope, to: keys, cache: cache)
+        let offset = cache?.ropeOffset
+        queries = applyRotaryPosition(rope, to: queries, offset: offset)
+        keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
         let output = attentionWithCacheUpdate(
             queries: queries,
@@ -205,12 +206,14 @@ public class Ernie45Model: Module, LLMModel, KVCacheDimensionProvider {
     public let kvHeads: [Int]
 
     public let model: Ernie45ModelInner
+    private let tieWordEmbeddings: Bool
     @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
     public init(_ args: Ernie45Configuration) {
         self.vocabularySize = args.vocabularySize
         self.kvHeads = Array(repeating: args.numKeyValueHeads, count: args.numHiddenLayers)
         self.model = Ernie45ModelInner(args)
+        self.tieWordEmbeddings = args.tieWordEmbeddings
 
         if !args.tieWordEmbeddings {
             self._lmHead.wrappedValue = Linear(args.hiddenSize, args.vocabularySize, bias: false)
@@ -225,6 +228,10 @@ public class Ernie45Model: Module, LLMModel, KVCacheDimensionProvider {
         } else {
             return model.embedTokens.asLinear(out)
         }
+    }
+
+    public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
+        filterLMHeadWeights(from: weights, tiedWordEmbeddings: tieWordEmbeddings)
     }
 }
 

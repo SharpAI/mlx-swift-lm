@@ -2,13 +2,17 @@
 // Integration packages inject their own Downloader and TokenizerLoader, then call
 // these functions which run the test and throw on failure.
 
-import CoreImage
 import Foundation
 import MLX
 import MLXEmbedders
 import MLXLLM
 import MLXLMCommon
+import MLXRerankers
 import MLXVLM
+
+#if canImport(CoreImage)
+import CoreImage
+#endif
 
 // Both MLXLMCommon and MLXEmbedders define ModelContainer.
 public typealias LLModelContainer = MLXLMCommon.ModelContainer
@@ -26,6 +30,211 @@ public struct IntegrationTestFailure: LocalizedError {
 
 private func check(_ condition: Bool, _ message: String) throws {
     guard condition else { throw IntegrationTestFailure(message) }
+}
+
+// MARK: - Harmony tokenizer contract
+
+public enum HarmonyProtocolTests {
+    /// Exercises the production tokenizer adapter and GPT-OSS chat template
+    /// without downloading model weights.
+    public static func realTokenizerContract(tokenizer: any Tokenizer) throws {
+        let expectedControlTokenIDs = [
+            "<|return|>": 200_002,
+            "<|constrain|>": 200_003,
+            "<|channel|>": 200_005,
+            "<|start|>": 200_006,
+            "<|end|>": 200_007,
+            "<|message|>": 200_008,
+            "<|call|>": 200_012,
+        ]
+
+        for (token, expectedID) in expectedControlTokenIDs {
+            try check(
+                tokenizer.convertTokenToId(token) == expectedID,
+                "GPT-OSS tokenizer resolved \(token) to "
+                    + "\(String(describing: tokenizer.convertTokenToId(token))); expected \(expectedID)"
+            )
+            try check(
+                tokenizer.encode(text: token, addSpecialTokens: false) == [expectedID],
+                "GPT-OSS tokenizer did not encode \(token) atomically")
+        }
+
+        try check(
+            HarmonyFrameParser(tokenizer: tokenizer) != nil,
+            "HarmonyFrameParser rejected the production GPT-OSS tokenizer")
+        try check(
+            HarmonyFrameParser.stopTokenIDs(tokenizer: tokenizer) == [200_002, 200_012],
+            "Harmony stop-token resolution did not match <|return|>/<|call|>")
+
+        let call = ToolCall(
+            function: .init(name: "get_weather", arguments: ["city": "Paris"]),
+            id: "call_fixture")
+        let generator: any MessageGenerator = GPTOSSMessageGenerator()
+        let messages = generator.generate(messages: [
+            .user("Weather in Paris?"),
+            .assistant("", toolCalls: [call]),
+            .tool(#"{"forecast":"sunny"}"#, id: "call_fixture"),
+        ])
+        let tools: [[String: any Sendable]] = [
+            [
+                "type": "function",
+                "function": [
+                    "name": "get_weather",
+                    "description": "Get weather",
+                    "parameters": [
+                        "type": "object",
+                        "properties": [
+                            "city": ["type": "string"] as [String: any Sendable]
+                        ] as [String: any Sendable],
+                        "required": ["city"],
+                    ] as [String: any Sendable],
+                ] as [String: any Sendable],
+            ]
+        ]
+
+        let rendered = try tokenizer.applyChatTemplate(
+            messages: messages, tools: tools, additionalContext: nil)
+        try check(rendered.contains(200_012), "Real GPT-OSS template omitted the tool-call token")
+        let promptStart = rendered.lastIndex(of: 200_006)
+        let promptSuffix = promptStart.map {
+            tokenizer.decode(
+                tokenIds: Array(rendered[$0...]), skipSpecialTokens: false)
+        }
+        try check(
+            promptSuffix == "<|start|>assistant",
+            "Real GPT-OSS template omitted the assistant generation prompt")
+    }
+}
+
+// MARK: - Muse Glimmer tokenizer contract
+
+public enum MuseGlimmerProtocolTests {
+    /// Exercises Meta's production Onyx control vocabulary and ATEM chat
+    /// template without loading the 30B checkpoint.
+    public static func realTokenizerContract(tokenizer: any Tokenizer) throws {
+        let expectedControlTokenIDs = [
+            "<|begin_of_text|>": 200_000,
+            "<|end_of_text|>": 200_001,
+            "<|eom|>": 200_007,
+            "<|eot|>": 200_008,
+            "<|start|>": 200_022,
+            "<|message|>": 200_023,
+        ]
+        for (token, expectedID) in expectedControlTokenIDs {
+            try check(
+                tokenizer.convertTokenToId(token) == expectedID,
+                "Muse Glimmer tokenizer resolved \(token) to "
+                    + "\(String(describing: tokenizer.convertTokenToId(token))); expected \(expectedID)"
+            )
+            try check(
+                tokenizer.encode(text: token, addSpecialTokens: false) == [expectedID],
+                "Muse Glimmer tokenizer did not encode \(token) atomically")
+        }
+
+        let tools: [[String: any Sendable]] = [
+            [
+                "type": "function",
+                "function": [
+                    "name": "weather.get",
+                    "description": "Get weather",
+                    "parameters": [
+                        "type": "object",
+                        "properties": [
+                            "city": ["type": "string"] as [String: any Sendable]
+                        ] as [String: any Sendable],
+                        "required": ["city"],
+                    ] as [String: any Sendable],
+                ] as [String: any Sendable],
+            ]
+        ]
+        guard
+            var decoder = ToolCallFormat.atem.makeProtocolTokenStreamDecoder(
+                tokenizer: tokenizer, tools: tools, stopStrings: [])
+        else {
+            throw IntegrationTestFailure(
+                "ATEM protocol adapter rejected the production Muse Glimmer tokenizer")
+        }
+        let payload =
+            "<atem:function_calls><atem:invoke name=\"weather.get\">"
+            + "<atem:parameter name=\"city\">Paris</atem:parameter>"
+            + "</atem:invoke></atem:function_calls>"
+        let frameTokens =
+            tokenizer.encode(text: " to=weather.get", addSpecialTokens: false)
+            + [200_023]
+            + tokenizer.encode(text: payload, addSpecialTokens: false)
+            + [200_008]
+        var parsedCalls: [ToolCall] = []
+        for token in frameTokens {
+            _ = decoder.push(token) { event in
+                if case .toolCall(let call) = event { parsedCalls.append(call) }
+                return true
+            }
+        }
+        try check(parsedCalls.count == 1, "Onyx decoder did not emit the production ATEM call")
+        let call = parsedCalls[0]
+        guard let callID = call.id else {
+            throw IntegrationTestFailure("Onyx decoder emitted a tool call without an id")
+        }
+        let messages = DefaultMessageGenerator().generate(messages: [
+            .user("Weather in Paris?"),
+            .assistant("", toolCalls: [call]),
+            .tool(
+                #"{"forecast":"sunny"}"#, id: callID,
+                name: call.function.name),
+        ])
+        let rendered = try tokenizer.applyChatTemplate(
+            messages: messages, tools: tools, additionalContext: nil)
+        let text = tokenizer.decode(tokenIds: rendered, skipSpecialTokens: false)
+        try check(
+            text.contains(#"<atem:invoke name="weather.get">"#),
+            "Muse Glimmer template omitted the structured ATEM call")
+        try check(
+            text.contains(#"<tool_output name="weather.get">"#),
+            "Muse Glimmer template did not correlate the tool result by call id")
+        try check(
+            text.hasSuffix("<|start|>assistant"),
+            "Muse Glimmer template omitted the assistant continuation prompt")
+        try check(
+            decoder.additionalStopTokenIDs == Set([200_001, 200_008]),
+            "Onyx decoder did not declare <|end_of_text|>/<|eot|> as stop tokens")
+    }
+}
+
+// MARK: - Network Retry
+
+/// Transient network failures worth retrying on a flaky CI network — chiefly
+/// `-1005 networkConnectionLost`, which surfaced mid-download in CI.
+private func isTransientNetworkError(_ error: Error) -> Bool {
+    guard let urlError = error as? URLError else { return false }
+    switch urlError.code {
+    case .networkConnectionLost, .timedOut, .cannotConnectToHost,
+        .notConnectedToInternet, .dnsLookupFailed, .cannotFindHost,
+        .resourceUnavailable, .badServerResponse:
+        return true
+    default:
+        return false
+    }
+}
+
+/// Run `operation`, retrying a few times with linear backoff on transient
+/// network errors. Non-network errors (and the final attempt) rethrow.
+private func withNetworkRetry<T>(
+    _ label: String, attempts: Int = 3, _ operation: () async throws -> T
+) async throws -> T {
+    var lastError: Error?
+    for attempt in 1 ... attempts {
+        do {
+            return try await operation()
+        } catch {
+            lastError = error
+            guard isTransientNetworkError(error), attempt < attempts else { throw error }
+            print(
+                "Transient network error loading \(label) "
+                    + "(attempt \(attempt)/\(attempts)): \(error). Retrying…")
+            try? await Task.sleep(nanoseconds: UInt64(attempt) * 2_000_000_000)
+        }
+    }
+    throw lastError ?? IntegrationTestFailure("\(label): retry loop exited unexpectedly")
 }
 
 // MARK: - Model IDs
@@ -47,178 +256,104 @@ public actor IntegrationTestModels {
     private let downloader: any Downloader
     private let tokenizerLoader: any TokenizerLoader
 
-    private var llmTask: Task<LLModelContainer, Error>?
-    private var vlmTask: Task<LLModelContainer, Error>?
-    private var lfm2Task: Task<LLModelContainer, Error>?
-    private var glm4Task: Task<LLModelContainer, Error>?
-    private var mistral3Task: Task<LLModelContainer, Error>?
-    private var nemotronTask: Task<LLModelContainer, Error>?
-    private var qwen35Task: Task<LLModelContainer, Error>?
+    private var llmTasksByName: [String: Task<LLModelContainer, Error>] = [:]
+    private var vlmTasksByName: [String: Task<LLModelContainer, Error>] = [:]
+    private var embeddingTask: Task<EmbeddingModelContainer, Error>?
 
     public init(downloader: any Downloader, tokenizerLoader: any TokenizerLoader) {
         self.downloader = downloader
         self.tokenizerLoader = tokenizerLoader
     }
 
-    public func llmContainer() async throws -> LLModelContainer {
-        if let task = llmTask {
+    /// Load an arbitrary LLM container, cached by `configuration.name` so the same
+    /// model is only loaded once per `IntegrationTestModels` instance.
+    public func llmContainer(for configuration: ModelConfiguration) async throws
+        -> LLModelContainer
+    {
+        let key = configuration.name
+        if let task = llmTasksByName[key] {
             return try await task.value
         }
         let downloader = self.downloader
         let tokenizerLoader = self.tokenizerLoader
-        let id = IntegrationTestModelIDs.llm
         let task = Task {
-            print("Loading LLM: \(id)")
-            let container = try await LLMModelFactory.shared.loadContainer(
-                from: downloader, using: tokenizerLoader,
-                configuration: .init(id: id),
-                progressHandler: logProgress(id)
-            )
-            print("Loaded LLM: \(id)")
+            print("Loading LLM: \(key)")
+            let container = try await withNetworkRetry(key) {
+                try await LLMModelFactory.shared.loadContainer(
+                    from: downloader, using: tokenizerLoader,
+                    configuration: configuration,
+                    progressHandler: logProgress(key)
+                )
+            }
+            print("Loaded LLM: \(key)")
             return container
         }
-        llmTask = task
+        llmTasksByName[key] = task
         return try await task.value
     }
 
-    public func vlmContainer() async throws -> LLModelContainer {
-        if let task = vlmTask {
+    /// Drop the cached container for `configuration` so ARC can free its
+    /// GPU-resident weights between tests. Pair with `Memory.clearCache()` at the
+    /// call site to release the freed buffers back to the system — without this,
+    /// loading many large models in one serialized run accumulates weights until
+    /// the process is jetsammed (Metal compiler XPC failures / crashes).
+    public func evictLLM(_ configuration: ModelConfiguration) {
+        llmTasksByName[configuration.name] = nil
+    }
+
+    /// Load an arbitrary VLM container, cached by `configuration.name` so the same
+    /// model is only loaded once per `IntegrationTestModels` instance.
+    public func vlmContainer(for configuration: ModelConfiguration) async throws
+        -> LLModelContainer
+    {
+        let key = configuration.name
+        if let task = vlmTasksByName[key] {
             return try await task.value
         }
         let downloader = self.downloader
         let tokenizerLoader = self.tokenizerLoader
-        let id = IntegrationTestModelIDs.vlm
         let task = Task {
-            print("Loading VLM: \(id)")
+            print("Loading VLM: \(key)")
             let container = try await VLMModelFactory.shared.loadContainer(
                 from: downloader, using: tokenizerLoader,
-                configuration: .init(id: id),
-                progressHandler: logProgress(id)
+                configuration: configuration,
+                progressHandler: logProgress(key)
             )
-            print("Loaded VLM: \(id)")
+            print("Loaded VLM: \(key)")
             return container
         }
-        vlmTask = task
-        return try await task.value
-    }
-
-    public func lfm2Container() async throws -> LLModelContainer {
-        if let task = lfm2Task {
-            return try await task.value
-        }
-        let downloader = self.downloader
-        let tokenizerLoader = self.tokenizerLoader
-        let id = IntegrationTestModelIDs.lfm2
-        let task = Task {
-            print("Loading LFM2: \(id)")
-            let container = try await LLMModelFactory.shared.loadContainer(
-                from: downloader, using: tokenizerLoader,
-                configuration: .init(id: id),
-                progressHandler: logProgress(id)
-            )
-            print("Loaded LFM2: \(id)")
-            return container
-        }
-        lfm2Task = task
-        return try await task.value
-    }
-
-    public func glm4Container() async throws -> LLModelContainer {
-        if let task = glm4Task {
-            return try await task.value
-        }
-        let downloader = self.downloader
-        let tokenizerLoader = self.tokenizerLoader
-        let id = IntegrationTestModelIDs.glm4
-        let task = Task {
-            print("Loading GLM4: \(id)")
-            let container = try await LLMModelFactory.shared.loadContainer(
-                from: downloader, using: tokenizerLoader,
-                configuration: .init(id: id),
-                progressHandler: logProgress(id)
-            )
-            print("Loaded GLM4: \(id)")
-            return container
-        }
-        glm4Task = task
-        return try await task.value
-    }
-
-    public func mistral3Container() async throws -> LLModelContainer {
-        if let task = mistral3Task {
-            return try await task.value
-        }
-        let downloader = self.downloader
-        let tokenizerLoader = self.tokenizerLoader
-        let id = IntegrationTestModelIDs.mistral3
-        let task = Task {
-            print("Loading Mistral3: \(id)")
-            let container = try await LLMModelFactory.shared.loadContainer(
-                from: downloader, using: tokenizerLoader,
-                configuration: .init(id: id),
-                progressHandler: logProgress(id)
-            )
-            print("Loaded Mistral3: \(id)")
-            return container
-        }
-        mistral3Task = task
-        return try await task.value
-    }
-
-    public func nemotronContainer() async throws -> LLModelContainer {
-        if let task = nemotronTask {
-            return try await task.value
-        }
-        let downloader = self.downloader
-        let tokenizerLoader = self.tokenizerLoader
-        let id = IntegrationTestModelIDs.nemotron
-        let task = Task {
-            print("Loading Nemotron: \(id)")
-            let container = try await LLMModelFactory.shared.loadContainer(
-                from: downloader, using: tokenizerLoader,
-                configuration: .init(id: id),
-                progressHandler: logProgress(id)
-            )
-            print("Loaded Nemotron: \(id)")
-            return container
-        }
-        nemotronTask = task
-        return try await task.value
-    }
-
-    public func qwen35Container() async throws -> LLModelContainer {
-        if let task = qwen35Task {
-            return try await task.value
-        }
-        let downloader = self.downloader
-        let tokenizerLoader = self.tokenizerLoader
-        let id = IntegrationTestModelIDs.qwen35
-        let task = Task {
-            print("Loading Qwen3.5: \(id)")
-            let container = try await LLMModelFactory.shared.loadContainer(
-                from: downloader, using: tokenizerLoader,
-                configuration: .init(id: id),
-                progressHandler: logProgress(id)
-            )
-            print("Loaded Qwen3.5: \(id)")
-            return container
-        }
-        qwen35Task = task
+        vlmTasksByName[key] = task
         return try await task.value
     }
 
     public func embeddingContainer() async throws -> EmbeddingModelContainer {
+        if let task = embeddingTask {
+            return try await task.value
+        }
         let downloader = self.downloader
         let tokenizerLoader = self.tokenizerLoader
         let id = "nomic_text_v1_5"
-        print("Loading embedding model: \(id)")
-        let container = try await EmbedderModelFactory.shared.loadContainer(
-            from: downloader, using: tokenizerLoader,
-            configuration: EmbedderRegistry.nomic_text_v1_5,
-            progressHandler: logProgress(id)
-        )
-        print("Loaded embedding model: \(id)")
-        return container
+        let task = Task {
+            print("Loading embedding model: \(id)")
+            let container = try await EmbedderModelFactory.shared.loadContainer(
+                from: downloader, using: tokenizerLoader,
+                configuration: EmbedderRegistry.nomic_text_v1_5,
+                progressHandler: logProgress(id)
+            )
+            print("Loaded embedding model: \(id)")
+            return container
+        }
+        embeddingTask = task
+        return try await task.value
+    }
+}
+
+// MARK: - Vision Test Images
+
+/// A solid-color square image for vision smoke tests.
+public enum VisionTestImages {
+    public static func solidColor(_ color: CIColor, size: CGFloat = 100) -> CIImage {
+        CIImage(color: color).cropped(to: CGRect(x: 0, y: 0, width: size, height: size))
     }
 }
 
@@ -270,9 +405,9 @@ public enum ChatSessionTests {
     }
 
     public static func visionModel(container: LLModelContainer) async throws {
+        #if canImport(CoreImage)
         let session = ChatSession(container, generateParameters: generateParameters)
-        let redImage = CIImage(color: .red).cropped(
-            to: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let redImage = VisionTestImages.solidColor(.red)
 
         let result = try await streamAndCollect(
             session.streamResponse(
@@ -282,6 +417,10 @@ public enum ChatSessionTests {
             result.lowercased().contains("red"),
             "Expected 'red' in response, got: \(result)"
         )
+        #else
+        fatalError(
+            "Vision model test requires CoreImage, which is not available on this platform.")
+        #endif
     }
 
     public static func streamDetailsWithTools(container: LLModelContainer) async throws {
@@ -302,6 +441,8 @@ public enum ChatSessionTests {
                 responseText += text
             case .toolCall(let toolCall):
                 toolCalls.append(toolCall)
+            case .rejectedToolCall(let rejection):
+                throw RejectedToolCallError(rejection)
             case .info(let completionInfo):
                 info = completionInfo
             }
@@ -324,15 +465,80 @@ public enum ChatSessionTests {
         // If we got tool calls, feed back a tool result and verify the model responds
         if !toolCalls.isEmpty {
             let followUp = try await streamAndCollect(
-                session.streamResponse(
-                    to: "Foggy with a high in the low 60s, clearing later in the day",
-                    role: .tool, images: [], videos: []),
+                session.streamResponse(to: [
+                    .tool("Foggy with a high in the low 60s, clearing later in the day")
+                ]),
                 label: "Tool result")
             try check(
                 !followUp.isEmpty,
                 "Expected a response after providing tool result, got empty string"
             )
         }
+    }
+
+    /// Exercises the structured continuation path used by clients that execute
+    /// tool calls outside `ChatSession` and feed the results back afterward.
+    ///
+    /// Conversation-aware templates must receive the original user query and
+    /// assistant tool call again on the result turn. Rendering only the new
+    /// `.tool` message reproduces the Qwen Jinja "No user query found" failure.
+    public static func structuredToolContinuation(container: LLModelContainer) async throws {
+        let session = ChatSession(
+            container,
+            instructions:
+                "Use the weather tool whenever weather is requested. After receiving its result, answer the user briefly.",
+            generateParameters: GenerateParameters(maxTokens: 150, temperature: 0),
+            additionalContext: ["enable_thinking": false],
+            tools: [weatherToolSchema]
+        )
+
+        var firstPassCalls: [ToolCall] = []
+        for try await generation in session.streamDetails(
+            to: "What's the weather in Tokyo? Use the weather tool.",
+            images: [],
+            videos: [])
+        {
+            if case .toolCall(let call) = generation {
+                firstPassCalls.append(call)
+            }
+        }
+
+        guard let call = firstPassCalls.first else {
+            throw IntegrationTestFailure("Expected the first pass to call get_weather")
+        }
+        try check(
+            call.function.name == "get_weather",
+            "Expected get_weather, got \(call.function.name)")
+
+        var followUpText = ""
+        var followUpCalls: [ToolCall] = []
+        var completion: GenerateCompletionInfo?
+        for try await generation in session.streamDetails(to: [
+            .tool(
+                #"{"location":"Tokyo","temperature_celsius":24,"conditions":"clear"}"#,
+                id: call.id)
+        ]) {
+            switch generation {
+            case .chunk(let text):
+                followUpText += text
+            case .toolCall(let call):
+                followUpCalls.append(call)
+            case .rejectedToolCall(let rejection):
+                throw RejectedToolCallError(rejection)
+            case .info(let info):
+                completion = info
+            }
+        }
+
+        try check(
+            completion != nil,
+            "Expected structured tool continuation to complete generation")
+        try check(
+            !followUpText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "Expected a final text response after the tool result")
+        try check(
+            followUpCalls.isEmpty,
+            "Expected the tool result to resolve the request, got another tool call")
     }
 
     public static func toolInvocation(container: LLModelContainer) async throws {
@@ -367,6 +573,26 @@ public enum ChatSessionTests {
         try check(
             result.lowercased().contains("wed") || result.lowercased().contains("wednesday"),
             "Expected 'Wed' or 'Wednesday' in response, got: \(result)"
+        )
+    }
+
+    public static func planetsCoherence(container: LLModelContainer) async throws {
+        let session = ChatSession(
+            container,
+            generateParameters: GenerateParameters(maxTokens: 3000, temperature: 0))
+        let result = try await streamAndCollect(
+            session.streamResponse(
+                to: "List all the planets in our solar system in order from the Sun."),
+            label: "Response")
+
+        let expected = [
+            "Mercury", "Venus", "Earth", "Mars",
+            "Jupiter", "Saturn", "Uranus", "Neptune",
+        ]
+        let missing = expected.filter { !result.contains($0) }
+        try check(
+            missing.isEmpty,
+            "Expected all planets in response, missing: \(missing). Got: \(result)"
         )
     }
 
@@ -536,6 +762,174 @@ public enum EmbedderTests {
                 "Similarity mismatch for \(documentNames[index]): expected \(expectedSimilarities[index]), got \(resultSimilarity)"
             )
         }
+    }
+}
+
+// MARK: - Reranker Tests
+
+/// End-to-end checks against reference checkpoint outputs.
+///
+/// These checks download large model weights and belong in the separate IntegrationTesting
+/// project rather than the package test suite.
+public enum RerankerIntegrationTests {
+    /// Validate BGE v2 M3 logits against the values published in its model card.
+    public static func bgeV2M3(
+        downloader: any Downloader,
+        tokenizerLoader: any TokenizerLoader
+    ) async throws {
+        let modelID = "BAAI/bge-reranker-v2-m3"
+        let reranker = try await RerankerModelFactory.shared.loadContainer(
+            from: downloader, using: tokenizerLoader,
+            configuration: ModelConfiguration(
+                id: modelID,
+                revision: "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"),
+            progressHandler: logProgress(modelID))
+        let response = try await reranker.scores(
+            query: "what is panda?",
+            documents: [
+                "hi",
+                "The giant panda (Ailuropoda melanoleuca), sometimes called a panda bear or simply panda, is a bear species endemic to China.",
+            ])
+
+        try check(
+            response.scoreKind == .normalizedRelevance,
+            "BGE must return normalized relevance scores")
+        try check(response.results.count == 2, "BGE returned an unexpected score count")
+        let logits = try response.results.map {
+            try inverseSigmoid($0.score, modelID: modelID)
+        }
+        try check(
+            abs(logits[0] - -8.1875) < 0.15,
+            "BGE irrelevant-passage logit diverged: expected -8.1875, received \(logits[0])")
+        try check(
+            abs(logits[1] - 5.261_718_75) < 0.15,
+            "BGE relevant-passage logit diverged: expected 5.26171875, received \(logits[1])")
+    }
+
+    /// Validate Qwen3 reranker logit margins against its published reference values.
+    public static func qwen3(
+        downloader: any Downloader,
+        tokenizerLoader: any TokenizerLoader
+    ) async throws {
+        let modelID = "Qwen/Qwen3-Reranker-0.6B"
+        let reranker = try await RerankerModelFactory.shared.loadContainer(
+            from: downloader, using: tokenizerLoader,
+            configuration: ModelConfiguration(
+                id: modelID,
+                revision: "e61197ed45024b0ed8a2d74b80b4d909f1255473"),
+            progressHandler: logProgress(modelID))
+        let response = try await reranker.scores(
+            query: "What is the capital of China?",
+            documents: [
+                "The capital of China is Beijing.",
+                "Gravity is a force that attracts two bodies towards each other. It gives weight to physical objects and is responsible for the movement of planets around the sun.",
+            ])
+        let sequentialResponse = try await reranker.scores(
+            query: "What is the capital of China?",
+            documents: [
+                "The capital of China is Beijing.",
+                "Gravity is a force that attracts two bodies towards each other. It gives weight to physical objects and is responsible for the movement of planets around the sun.",
+            ],
+            options: .init(maxBatchSize: 1))
+
+        try check(
+            response.scoreKind == .normalizedRelevance,
+            "Qwen3 must return normalized relevance scores")
+        try check(response.results.count == 2, "Qwen3 returned an unexpected score count")
+        let margins = try response.results.map {
+            try inverseSigmoid($0.score, modelID: modelID)
+        }
+        let sequentialMargins = try sequentialResponse.results.map {
+            try inverseSigmoid($0.score, modelID: modelID)
+        }
+        for index in margins.indices {
+            try check(
+                abs(margins[index] - sequentialMargins[index]) < 0.01,
+                "Qwen3 batched and sequential margins diverged at index \(index): \(margins[index]) versus \(sequentialMargins[index])"
+            )
+        }
+        try check(
+            abs(margins[0] - 7.625) < 0.25,
+            "Qwen3 relevant-passage logit margin diverged: expected 7.625, received \(margins[0])")
+        try check(
+            abs(margins[1] - -11.375) < 1,
+            "Qwen3 irrelevant-passage logit margin diverged: expected -11.375, received \(margins[1])"
+        )
+    }
+
+    /// Validate Jina reranker v3 scores against its published MLX implementation.
+    public static func jinaV3(
+        downloader: any Downloader,
+        tokenizerLoader: any TokenizerLoader
+    ) async throws {
+        try await jinaV3(
+            modelID: "jinaai/jina-reranker-v3-mlx",
+            revision: "1d19fe38ae4e6658221479747c1152d6136dd6ab",
+            downloader: downloader, tokenizerLoader: tokenizerLoader)
+    }
+
+    /// Validate the same scores from the upstream checkpoint the MLX repo was converted from.
+    ///
+    /// The two repos package one model two ways: `jinaai/jina-reranker-v3` has no index and keeps
+    /// the projector in its single `model.safetensors` as a numbered `nn.Sequential`, while
+    /// `jinaai/jina-reranker-v3-mlx` carries an index that names neither the projector nor its
+    /// file, and renames those layers. One model class has to read both, so both are covered.
+    public static func jinaV3SourceCheckpoint(
+        downloader: any Downloader,
+        tokenizerLoader: any TokenizerLoader
+    ) async throws {
+        try await jinaV3(
+            modelID: "jinaai/jina-reranker-v3",
+            revision: "d7d7e73b6ea138ced340b83865931b5dfb6c97aa",
+            downloader: downloader, tokenizerLoader: tokenizerLoader)
+    }
+
+    private static func jinaV3(
+        modelID: String,
+        revision: String,
+        downloader: any Downloader,
+        tokenizerLoader: any TokenizerLoader
+    ) async throws {
+        let reranker = try await RerankerModelFactory.shared.loadContainer(
+            from: downloader, using: tokenizerLoader,
+            configuration: ModelConfiguration(id: modelID, revision: revision),
+            progressHandler: logProgress(modelID))
+        let response = try await reranker.scores(
+            query: "What is the capital of China?",
+            documents: [
+                "Gravity attracts bodies toward one another.",
+                "Beijing is the capital city of China.",
+            ])
+
+        try check(
+            response.scoreKind == .cosineSimilarity,
+            "\(modelID) must return cosine-similarity scores")
+        try check(response.results.count == 2, "\(modelID) returned an unexpected score count")
+        // Generated by rerank.py from the pinned MLX checkpoint revision above. The upstream
+        // checkpoint holds the same bfloat16 weights, so it has to reproduce them too.
+        let expectedScores = [-0.156_369_954_347_610_47, 0.402_552_098_035_812_4]
+        // Quantized kernels can vary slightly with backend evaluation order.
+        let tolerance = 3e-3
+        for index in expectedScores.indices {
+            let result = response.results[index]
+            try check(
+                result.index == index,
+                "\(modelID) scores did not preserve document order at index \(index)")
+            try check(
+                abs(result.score - expectedScores[index]) < tolerance,
+                "\(modelID) score diverged at index \(index): expected \(expectedScores[index]), received \(result.score)"
+            )
+        }
+        try check(
+            response.results[1].score > response.results[0].score,
+            "\(modelID) did not score the relevant passage above the irrelevant passage")
+    }
+
+    private static func inverseSigmoid(_ score: Double, modelID: String) throws -> Double {
+        try check(
+            score > 0 && score < 1,
+            "\(modelID) returned a normalized score at a non-invertible boundary")
+        return Foundation.log(score / (1 - score))
     }
 }
 
@@ -758,8 +1152,8 @@ public enum ToolCallTests {
     public static func qwen35FormatAutoDetection(container: LLModelContainer) async throws {
         let config = await container.configuration
         try check(
-            config.toolCallFormat == ToolCallFormat.xmlFunction,
-            "Expected .xmlFunction tool call format, got: \(String(describing: config.toolCallFormat))"
+            config.toolCallFormat == ToolCallFormat.qwen35,
+            "Expected .qwen35 tool call format, got: \(String(describing: config.toolCallFormat))"
         )
     }
 
@@ -838,7 +1232,11 @@ public enum ToolCallTests {
             let lmInput = try await context.processor.prepare(input: input)
             let stream = try generate(
                 input: lmInput,
-                parameters: GenerateParameters(maxTokens: maxTokens),
+                // temperature: 0 (greedy) so tool-call generation is deterministic.
+                // The default sampling temperature makes these end-to-end checks
+                // flaky — the model may emit no tool call or malformed arguments on
+                // some runs (matches the temperature: 0 used by the coherence/MTP tests).
+                parameters: GenerateParameters(maxTokens: maxTokens, temperature: 0),
                 context: context
             )
             var text = ""
@@ -849,6 +1247,8 @@ public enum ToolCallTests {
                     text += chunk
                 case .toolCall(let toolCall):
                     toolCalls.append(toolCall)
+                case .rejectedToolCall(let rejection):
+                    throw RejectedToolCallError(rejection)
                 case .info:
                     break
                 }
@@ -937,3 +1337,176 @@ private let timeToolSchema: ToolSpec = [
 ]
 
 private let multiToolSchemas: [ToolSpec] = [weatherToolSchema, timeToolSchema]
+
+// MARK: - Hugging Face cache locations
+
+/// Returns the root directory for Hugging Face caches (`~/.cache/huggingface`).
+///
+/// `FileManager.homeDirectoryForCurrentUser` is unavailable on iOS, so this helper
+/// falls back to `NSHomeDirectory()`. On macOS that resolves to the real user home
+/// (matching the `huggingface_hub` Python client's default cache layout); on iOS it
+/// resolves to the app sandbox home, where these integration tests do not normally run
+/// but where the path is at least addressable for callers that pre-populate caches.
+public func hfCacheDir() -> URL {
+    URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        .appendingPathComponent(".cache/huggingface", isDirectory: true)
+}
+
+/// Returns the local snapshot directory for `modelId` inside the Hugging Face hub cache,
+/// following the `models--{owner}--{name}/snapshots/{rev}` layout written by `huggingface_hub`.
+/// When `revision` is `nil` (the default) picks the first entry under `snapshots/` — sufficient
+/// for the usual single-revision case.
+/// When `revision` is non-nil, returns that specific snapshot directory if it exists.
+/// Returns `nil` when the model (or the requested revision) is not present in the cache.
+public func hfSnapshotDir(modelId: String, revision: String? = nil) -> URL? {
+    let folderName = "models--" + modelId.replacingOccurrences(of: "/", with: "--")
+    let snapshots = hfCacheDir()
+        .appendingPathComponent("hub", isDirectory: true)
+        .appendingPathComponent(folderName, isDirectory: true)
+        .appendingPathComponent("snapshots", isDirectory: true)
+    if let revision {
+        let pinned = snapshots.appendingPathComponent(revision, isDirectory: true)
+        var isDir: ObjCBool = false
+        guard
+            FileManager.default.fileExists(atPath: pinned.path, isDirectory: &isDir),
+            isDir.boolValue
+        else { return nil }
+        return pinned
+    }
+    guard
+        let entries = try? FileManager.default.contentsOfDirectory(
+            at: snapshots, includingPropertiesForKeys: nil)
+    else { return nil }
+    return entries.first
+}
+
+// MARK: - Dataset download
+
+public enum IntegrationTestDatasetError: LocalizedError {
+    case listingFailed(repo: String, statusCode: Int)
+    case downloadFailed(file: String, statusCode: Int)
+    case noFilesMatched(repo: String, patterns: [String])
+
+    public var errorDescription: String? {
+        switch self {
+        case .listingFailed(let repo, let statusCode):
+            return "Failed to list files for dataset '\(repo)' (HTTP \(statusCode))"
+        case .downloadFailed(let file, let statusCode):
+            return "Failed to download '\(file)' from dataset (HTTP \(statusCode))"
+        case .noFilesMatched(let repo, let patterns):
+            return "No files in dataset '\(repo)' matched patterns \(patterns)"
+        }
+    }
+}
+
+/// Download a public Hugging Face dataset snapshot to a per-revision local cache.
+///
+/// Lists files via `huggingface.co/api/datasets/{repo}/tree/{revision}`, then
+/// downloads each file matching `patterns` (or all files if `patterns` is empty)
+/// from `huggingface.co/datasets/{repo}/resolve/{revision}/{file}`. Files are
+/// written to `~/.cache/huggingface/integration-test-datasets/{repo}/{revision}/`.
+/// Already-cached files are reused without a second HTTP fetch.
+///
+/// Pattern syntax: simple shell-style glob with `*` matching any sequence
+/// (including `/`). Examples: `"masks/*.safetensors"`, `"*.json"`, `"foo/bar"`.
+///
+/// Returns the snapshot directory URL; callers build per-file paths by
+/// appending the file path (e.g. `snapshotDir.appendingPathComponent("masks/q1.safetensors")`).
+///
+/// Tests using this helper should catch thrown errors and skip via
+/// `Issue.record(...)` rather than propagate — network unavailability or HF
+/// outages should not surface as parity-test failures.
+public func downloadDataset(
+    repo: String,
+    revision: String,
+    matching patterns: [String] = []
+) async throws -> URL {
+    let cacheRoot = hfCacheDir()
+        .appendingPathComponent("integration-test-datasets", isDirectory: true)
+    let snapshotDir =
+        cacheRoot
+        .appendingPathComponent(repo, isDirectory: true)
+        .appendingPathComponent(revision, isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: snapshotDir, withIntermediateDirectories: true)
+
+    let host = URL(string: "https://huggingface.co")!
+    let treeBase = host.appendingPathComponent("api/datasets/\(repo)/tree/\(revision)")
+    var treeComponents = URLComponents(url: treeBase, resolvingAgainstBaseURL: false)!
+    treeComponents.queryItems = [URLQueryItem(name: "recursive", value: "true")]
+    let treeURL = treeComponents.url!
+    var request = URLRequest(url: treeURL)
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    let (treeData, treeResp) = try await URLSession.shared.data(for: request)
+    let treeStatus = (treeResp as? HTTPURLResponse)?.statusCode ?? 0
+    guard treeStatus == 200 else {
+        throw IntegrationTestDatasetError.listingFailed(repo: repo, statusCode: treeStatus)
+    }
+
+    struct TreeEntry: Decodable {
+        let type: String
+        let path: String
+    }
+    let entries = try JSONDecoder().decode([TreeEntry].self, from: treeData)
+    let matched =
+        entries
+        .filter { $0.type == "file" }
+        .map(\.path)
+        .filter { path in
+            patterns.isEmpty
+                || patterns.contains { datasetPathMatches(path, glob: $0) }
+        }
+    guard !matched.isEmpty else {
+        throw IntegrationTestDatasetError.noFilesMatched(repo: repo, patterns: patterns)
+    }
+
+    for file in matched {
+        let dest = snapshotDir.appendingPathComponent(file)
+        if FileManager.default.fileExists(atPath: dest.path) { continue }
+        try FileManager.default.createDirectory(
+            at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fileURL = host.appendingPathComponent("datasets/\(repo)/resolve/\(revision)/\(file)")
+        let (tmp, resp) = try await URLSession.shared.download(from: fileURL)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            try? FileManager.default.removeItem(at: tmp)
+            throw IntegrationTestDatasetError.downloadFailed(file: file, statusCode: status)
+        }
+        // Concurrent callers may have populated `dest` between the existence
+        // check above and this move. Accept the lost race instead of erroring.
+        do {
+            try FileManager.default.moveItem(at: tmp, to: dest)
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            if !FileManager.default.fileExists(atPath: dest.path) {
+                throw error
+            }
+        }
+    }
+
+    return snapshotDir
+}
+
+private func datasetPathMatches(_ path: String, glob pattern: String) -> Bool {
+    let parts = pattern.split(separator: "*", omittingEmptySubsequences: false).map(String.init)
+    if parts.count == 1 { return path == pattern }
+    var cursor = path.startIndex
+    for (i, part) in parts.enumerated() {
+        if part.isEmpty {
+            if i == 0 || i == parts.count - 1 { continue }
+            continue
+        }
+        if i == 0 {
+            guard path[cursor...].hasPrefix(part) else { return false }
+            cursor = path.index(cursor, offsetBy: part.count)
+        } else if i == parts.count - 1 {
+            return path[cursor...].hasSuffix(part)
+        } else {
+            guard let r = path.range(of: part, range: cursor ..< path.endIndex) else {
+                return false
+            }
+            cursor = r.upperBound
+        }
+    }
+    return true
+}

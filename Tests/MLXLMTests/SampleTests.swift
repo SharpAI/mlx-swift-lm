@@ -1,5 +1,6 @@
 // Copyright © 2025 Apple Inc.
 
+import Foundation
 import MLX
 import MLXLMCommon
 import XCTest
@@ -168,6 +169,29 @@ public class SampleTests: XCTestCase {
         XCTAssertEqual(values[3], 0.0, accuracy: 1e-6)
     }
 
+    func testPresencePenaltyDoesNotMutateLogitsViewSource() {
+        var processor = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 20)
+        processor.prompt(MLXArray([1, 3]))
+
+        let source = MLXArray([
+            0.0 as Float, 1.0 as Float, 2.0 as Float, 3.0 as Float,
+            10.0 as Float, 11.0 as Float, 12.0 as Float, 13.0 as Float,
+        ]).reshaped(1, 2, 4)
+        let logitsView = source[0..., 1, 0...]
+
+        let processed = processor.process(logits: logitsView)
+
+        zip(processed[0].asArray(Float.self), [10.0, 10.5, 12.0, 12.5]).forEach {
+            XCTAssertEqual($0, $1, accuracy: 1e-6)
+        }
+        zip(
+            source.asArray(Float.self),
+            [0.0, 1.0, 2.0, 3.0, 10.0, 11.0, 12.0, 13.0]
+        ).forEach {
+            XCTAssertEqual($0, $1, accuracy: 1e-6)
+        }
+    }
+
     func testFrequencyPenaltyContextPenalizesByTokenCount() {
         var processor = FrequencyPenaltyContext(frequencyPenalty: 0.5, frequencyContextSize: 5)
         processor.prompt(MLXArray([0, 0, 0, 1, 1]))
@@ -260,5 +284,324 @@ public class SampleTests: XCTestCase {
         XCTAssertEqual(values[1], -0.6667, accuracy: 1e-4)
         XCTAssertEqual(values[2], 0.0, accuracy: 1e-4)
         XCTAssertEqual(values[3], -0.5, accuracy: 1e-4)
+    }
+
+    // MARK: - Repetition penalty
+
+    func testRepetitionContextPenalizesSeenTokens() {
+        var processor = RepetitionContext(repetitionPenalty: 2.0, repetitionContextSize: 20)
+        processor.prompt(MLXArray([1, 1, 3]))
+
+        let logits =
+            MLXArray([1.0 as Float, 2.0 as Float, 3.0 as Float, 4.0 as Float])[.newAxis, .ellipsis]
+        let processed = processor.process(logits: logits)
+        let values = processed[0].asArray(Float.self)
+        XCTAssertEqual(values[0], 1.0, accuracy: 1e-6)
+        XCTAssertEqual(values[1], 1.0, accuracy: 1e-6)
+        XCTAssertEqual(values[2], 3.0, accuracy: 1e-6)
+        XCTAssertEqual(values[3], 2.0, accuracy: 1e-6)
+    }
+
+    // MARK: - 2D prompt shape tests (issue #168)
+
+    func testRepetitionContextWith2DPrompt() {
+        var processor = RepetitionContext(repetitionPenalty: 2.0, repetitionContextSize: 20)
+        processor.prompt(MLXArray([1, 1, 3]).reshaped(1, -1))
+
+        let logits =
+            MLXArray([1.0 as Float, 2.0 as Float, 3.0 as Float, 4.0 as Float])[.newAxis, .ellipsis]
+        let processed = processor.process(logits: logits)
+        let values = processed[0].asArray(Float.self)
+        XCTAssertEqual(values[0], 1.0, accuracy: 1e-6)
+        XCTAssertEqual(values[1], 1.0, accuracy: 1e-6)
+        XCTAssertEqual(values[2], 3.0, accuracy: 1e-6)
+        XCTAssertEqual(values[3], 2.0, accuracy: 1e-6)
+
+        // Exercise the append path where the original crash occurred
+        processor.didSample(token: MLXArray(Int32(2)))
+        let afterAppend = processor.process(logits: logits)
+        let valuesAfter = afterAppend[0].asArray(Float.self)
+        XCTAssertEqual(valuesAfter[2], 1.5, accuracy: 1e-6)
+    }
+
+    func testPresencePenaltyContextWith2DPrompt() {
+        var processor = PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 20)
+        processor.prompt(MLXArray([1, 1, 3]).reshaped(1, -1))
+
+        let logits =
+            MLXArray([1.0 as Float, 2.0 as Float, 3.0 as Float, 4.0 as Float])[.newAxis, .ellipsis]
+        let processed = processor.process(logits: logits)
+        let values = processed[0].asArray(Float.self)
+        XCTAssertEqual(values[0], 1.0, accuracy: 1e-6)
+        XCTAssertEqual(values[1], 1.5, accuracy: 1e-6)
+        XCTAssertEqual(values[2], 3.0, accuracy: 1e-6)
+        XCTAssertEqual(values[3], 3.5, accuracy: 1e-6)
+
+        // Exercise the append path where the original crash occurred
+        processor.didSample(token: MLXArray(Int32(2)))
+        let afterAppend = processor.process(logits: logits)
+        let valuesAfter = afterAppend[0].asArray(Float.self)
+        XCTAssertEqual(valuesAfter[2], 2.5, accuracy: 1e-6)
+    }
+
+    func testFrequencyPenaltyContextWith2DPrompt() {
+        var processor = FrequencyPenaltyContext(frequencyPenalty: 0.5, frequencyContextSize: 20)
+        processor.prompt(MLXArray([1, 1, 3]).reshaped(1, -1))
+
+        let logits =
+            MLXArray([1.0 as Float, 2.0 as Float, 3.0 as Float, 4.0 as Float])[.newAxis, .ellipsis]
+        let processed = processor.process(logits: logits)
+        let values = processed[0].asArray(Float.self)
+        XCTAssertEqual(values[0], 1.0, accuracy: 1e-6)
+        XCTAssertEqual(values[1], 1.0, accuracy: 1e-6)
+        XCTAssertEqual(values[2], 3.0, accuracy: 1e-6)
+        XCTAssertEqual(values[3], 3.5, accuracy: 1e-6)
+
+        // Exercise the append path where the original crash occurred
+        processor.didSample(token: MLXArray(Int32(2)))
+        let afterAppend = processor.process(logits: logits)
+        let valuesAfter = afterAppend[0].asArray(Float.self)
+        XCTAssertEqual(valuesAfter[2], 2.5, accuracy: 1e-6)
+    }
+
+    // MARK: - Seeded (reproducible) sampling
+
+    /// Flat 4-way distribution so sampling actually varies between draws (not
+    /// argmax-dominated); reproducibility under a fixed seed is then meaningful.
+    private func flatLogits() -> MLXArray {
+        log(MLXArray([0.25, 0.25, 0.25, 0.25] as [Float]))[.newAxis, .ellipsis]
+    }
+
+    private func drawTopP(seed: UInt64?, draws: Int) -> [Int] {
+        let sampler = TopPSampler(temperature: 1.0, seed: seed)
+        let logits = flatLogits()
+        return (0 ..< draws).map { _ in sampler.sample(logits: logits).item(Int.self) }
+    }
+
+    func testTopPSamplerSameSeedIsReproducible() {
+        XCTAssertEqual(drawTopP(seed: 42, draws: 24), drawTopP(seed: 42, draws: 24))
+    }
+
+    func testTopPSamplerDifferentSeedsDiverge() {
+        // Over 24 draws across 4 equiprobable tokens, identical sequences from
+        // distinct seeds would be ~(1/4)^24 — effectively impossible.
+        XCTAssertNotEqual(drawTopP(seed: 1, draws: 24), drawTopP(seed: 2, draws: 24))
+    }
+
+    func testCategoricalSamplerSameSeedIsReproducible() {
+        let logits = flatLogits()
+        func draw(seed: UInt64) -> [Int] {
+            let sampler = CategoricalSampler(temperature: 1.0, seed: seed)
+            return (0 ..< 24).map { _ in sampler.sample(logits: logits).item(Int.self) }
+        }
+        XCTAssertEqual(draw(seed: 7), draw(seed: 7))
+    }
+
+    func testGenerateParametersThreadsSeedToSampler() {
+        let logits = flatLogits()
+        func draw() -> [Int] {
+            let sampler = GenerateParameters(temperature: 1.0, topK: 4, seed: 99).sampler()
+            return (0 ..< 24).map { _ in sampler.sample(logits: logits).item(Int.self) }
+        }
+        // Two independently-built samplers carrying the same seed agree.
+        XCTAssertEqual(draw(), draw())
+    }
+
+    func testNilSeedPreservesUnseededSamplingPath() {
+        // nil seed must remain valid (entropy-seeded) and produce in-range tokens.
+        let tokens = drawTopP(seed: nil, draws: 8)
+        XCTAssertEqual(tokens.count, 8)
+        for t in tokens { XCTAssertTrue((0 ..< 4).contains(t)) }
+    }
+
+    // MARK: - Custom logit processor
+
+    private struct ScaleProcessor: LogitProcessor {
+        let scale: Float
+        func prompt(_ prompt: MLXArray) {}
+        func process(logits: MLXArray) -> MLXArray { logits * scale }
+        func didSample(token: MLXArray) {}
+    }
+
+    /// Thread-safe counter for asserting how many times a `@Sendable` factory runs.
+    private final class CallCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+
+        func increment() {
+            lock.withLock { count += 1 }
+        }
+
+        var value: Int {
+            lock.withLock { count }
+        }
+    }
+
+    func testGenerationComponentsComposition() {
+        // no penalties, no factory -> no processor
+        XCTAssertNil(GenerationComponents().logitProcessor(parameters: GenerateParameters()))
+
+        // factory alone -> the custom processor, unwrapped
+        let parameters = GenerateParameters()
+        var components = GenerationComponents()
+        components.logitProcessorFactory = { ScaleProcessor(scale: 2.0) }
+        XCTAssertNotNil(components.logitProcessor(parameters: parameters) as? ScaleProcessor)
+
+        // penalties + factory -> chained
+        let penalized = GenerateParameters(presencePenalty: 0.5)
+        XCTAssertNotNil(components.logitProcessor(parameters: penalized) as? ChainedLogitProcessor)
+    }
+
+    /// An empty ``GenerationComponents`` must reproduce ``GenerateParameters/processor()``
+    /// exactly -- the guarantee that threading `components` everywhere is non-breaking.
+    func testEmptyGenerationComponentsMatchesParametersProcessor() {
+        let components = GenerationComponents()
+
+        // no penalties -> nil, same as processor()
+        let plain = GenerateParameters()
+        XCTAssertNil(plain.processor())
+        XCTAssertNil(components.logitProcessor(parameters: plain))
+
+        // penalties only -> the penalty processor, unwrapped (no chaining)
+        let penalized = GenerateParameters(presencePenalty: 0.5, presenceContextSize: 5)
+        XCTAssertNotNil(penalized.processor() as? PenaltyProcessor)
+        XCTAssertNotNil(components.logitProcessor(parameters: penalized) as? PenaltyProcessor)
+    }
+
+    /// The factory must be invoked on every call so each generation gets a fresh,
+    /// independent (stateful) processor instance.
+    func testGenerationComponentsInvokesFactoryPerCall() {
+        let counter = CallCounter()
+        var components = GenerationComponents()
+        components.logitProcessorFactory = {
+            counter.increment()
+            return ScaleProcessor(scale: 2.0)
+        }
+
+        let parameters = GenerateParameters()
+        _ = components.logitProcessor(parameters: parameters)
+        _ = components.logitProcessor(parameters: parameters)
+
+        XCTAssertEqual(counter.value, 2)
+    }
+
+    func testGenerationComponentsAppliesCustomProcessorAfterPenalties() {
+        let parameters = GenerateParameters(presencePenalty: 0.5, presenceContextSize: 5)
+        var components = GenerationComponents()
+        components.logitProcessorFactory = { ScaleProcessor(scale: 2.0) }
+
+        var processor = components.logitProcessor(parameters: parameters)
+        XCTAssertNotNil(processor)
+
+        processor?.prompt(MLXArray([1]))
+        let logits =
+            MLXArray([1.0 as Float, 2.0 as Float, 3.0 as Float, 4.0 as Float])[.newAxis, .ellipsis]
+        let processed = processor?.process(logits: logits)
+        guard let values = processed?[0].asArray(Float.self) else {
+            XCTFail("Expected processed logits")
+            return
+        }
+
+        // penalty first, then scale: token 1 is (2.0 - 0.5) * 2 = 3.0
+        // (scale-then-penalty would give 2.0 * 2 - 0.5 = 3.5)
+        XCTAssertEqual(values[0], 2.0, accuracy: 1e-6)
+        XCTAssertEqual(values[1], 3.0, accuracy: 1e-6)
+        XCTAssertEqual(values[2], 6.0, accuracy: 1e-6)
+        XCTAssertEqual(values[3], 8.0, accuracy: 1e-6)
+    }
+
+    func testChainedLogitProcessorForwardsPromptAndDidSample() {
+        var processor = ChainedLogitProcessor(processors: [
+            PresencePenaltyContext(presencePenalty: 0.5, presenceContextSize: 5),
+            PresencePenaltyContext(presencePenalty: 0.25, presenceContextSize: 5),
+        ])
+
+        processor.prompt(MLXArray([1]))
+        processor.didSample(token: MLXArray([3]))
+
+        let logits =
+            MLXArray([1.0 as Float, 2.0 as Float, 3.0 as Float, 4.0 as Float])[.newAxis, .ellipsis]
+        let values = processor.process(logits: logits)[0].asArray(Float.self)
+
+        // both processors saw the prompt (token 1) and the sampled token (token 3)
+        XCTAssertEqual(values[0], 1.0, accuracy: 1e-6)
+        XCTAssertEqual(values[1], 1.25, accuracy: 1e-6)
+        XCTAssertEqual(values[2], 3.0, accuracy: 1e-6)
+        XCTAssertEqual(values[3], 3.25, accuracy: 1e-6)
+    }
+
+    private struct StatefulStructProcessor: LogitProcessor {
+        var seenTokens: [Int] = []
+
+        mutating func prompt(_ prompt: MLXArray) {
+            seenTokens.append(contentsOf: prompt.asArray(Int.self))
+        }
+
+        func process(logits: MLXArray) -> MLXArray { logits }
+
+        mutating func didSample(token: MLXArray) {
+            seenTokens.append(token.item(Int.self))
+        }
+    }
+
+    private final class StatefulClassProcessorWithCopy: LogitProcessor {
+        var seenTokens: [Int]
+
+        init(seenTokens: [Int] = []) {
+            self.seenTokens = seenTokens
+        }
+
+        func prompt(_ prompt: MLXArray) {
+            seenTokens.append(contentsOf: prompt.asArray(Int.self))
+        }
+
+        func process(logits: MLXArray) -> MLXArray { logits }
+
+        func didSample(token: MLXArray) {
+            seenTokens.append(token.item(Int.self))
+        }
+
+        func copy() -> Self {
+            StatefulClassProcessorWithCopy(seenTokens: seenTokens) as! Self
+        }
+    }
+
+    func testStructLogitProcessorCopyValueSemantics() {
+        var original = StatefulStructProcessor()
+        original.prompt(MLXArray([1, 2]))
+
+        var copy = original.copy()
+        copy.didSample(token: MLXArray([3]))
+
+        XCTAssertEqual(original.seenTokens, [1, 2])
+        XCTAssertEqual(copy.seenTokens, [1, 2, 3])
+    }
+
+    func testClassLogitProcessorCopyWithExplicitImplementation() {
+        let original = StatefulClassProcessorWithCopy(seenTokens: [1, 2])
+        let copy = original.copy()
+
+        XCTAssertFalse(original === copy, "copy() must return a distinct instance")
+        copy.didSample(token: MLXArray([3]))
+
+        XCTAssertEqual(original.seenTokens, [1, 2])
+        XCTAssertEqual(copy.seenTokens, [1, 2, 3])
+    }
+
+    func testChainedLogitProcessorCopyClonesNestedProcessors() {
+        let classProcessor = StatefulClassProcessorWithCopy(seenTokens: [10])
+        var structProcessor = StatefulStructProcessor()
+        structProcessor.prompt(MLXArray([20]))
+
+        let chained = ChainedLogitProcessor(processors: [classProcessor, structProcessor])
+        var clonedChained = chained.copy()
+
+        clonedChained.didSample(token: MLXArray([99]))
+
+        XCTAssertEqual(
+            classProcessor.seenTokens, [10],
+            "Original class processor should not be modified by clone's didSample")
+        let origLogits = MLXArray([1.0 as Float, 2.0 as Float])[.newAxis, .ellipsis]
+        _ = chained.process(logits: origLogits)
     }
 }

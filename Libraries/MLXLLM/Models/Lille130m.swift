@@ -66,8 +66,9 @@ final class Lille130mAttention: Module {
         values = values.reshaped(B, L, args.kvHeads, -1).transposed(0, 2, 1, 3)
 
         // Apply RoPE with cache-aware offset if available
-        queries = applyRotaryPosition(rope, to: queries, cache: cache)
-        keys = applyRotaryPosition(rope, to: keys, cache: cache)
+        let offset = cache?.ropeOffset
+        queries = applyRotaryPosition(rope, to: queries, offset: offset)
+        keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
         let output = attentionWithCacheUpdate(
             queries: queries,
@@ -186,8 +187,9 @@ public final class Lille130mModel: Module, LLMModel, KVCacheDimensionProvider {
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
-        let w = weights.filter { key, _ in !key.contains("rotary_emb") }
-        return w
+        filterLMHeadWeights(
+            from: weights.filter { key, _ in !key.contains("rotary_emb") },
+            tiedWordEmbeddings: configuration.tieWordEmbeddings)
     }
 }
 
