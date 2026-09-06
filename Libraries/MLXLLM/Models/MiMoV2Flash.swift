@@ -31,7 +31,14 @@ private func attentionWithCacheUpdateAndSinks(
         )
     }
 
-    if let quantizedKVCache = cache as? QuantizedKVCacheProtocol {
+    if let attentionCache = cache as? KVCacheAttentionProtocol, sinks == nil {
+        return attentionCache.updateAndAttend(
+            queries: queries,
+            keys: keys,
+            values: values,
+            scale: scale,
+            mask: mask)
+    } else if let quantizedKVCache = cache as? QuantizedKVCacheProtocol {
         precondition(sinks == nil, "Quantized SDPA does not support attention sinks.")
         let (quantizedKeys, quantizedValues) = quantizedKVCache.updateQuantized(
             keys: keys, values: values)
@@ -169,8 +176,9 @@ class MiMoV2FlashAttention: Module {
         var k = keys.reshaped(B, L, numKeyValueHeads, -1).transposed(0, 2, 1, 3)
         let v = values.reshaped(B, L, numKeyValueHeads, -1).transposed(0, 2, 1, 3)
 
-        q = applyRotaryPosition(rope, to: q, cache: cache)
-        k = applyRotaryPosition(rope, to: k, cache: cache)
+        let offset = cache?.ropeOffset
+        q = applyRotaryPosition(rope, to: q, offset: offset)
+        k = applyRotaryPosition(rope, to: k, offset: offset)
 
         let output = attentionWithCacheUpdateAndSinks(
             queries: q,
@@ -301,7 +309,7 @@ class MiMoV2FlashMoE: Module, UnaryLayer {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let (inds, scores) = gate(x)
         var y = switchMLP(x, inds)
-        y = (y * scores[.ellipsis, .newAxis]).sum(axis: -2).asType(y.dtype)
+        y = weightedExpertSum(y, scores).asType(y.dtype)
         if let sharedExperts {
             y = y + sharedExperts(x)
         }
@@ -463,13 +471,12 @@ public class MiMoV2FlashModel: Module, LLMModel, KVCacheDimensionProvider {
         }
     }
 
-    public func newCache(parameters: GenerateParameters?) -> [KVCache] {
-        return model.layers.map { layer in
-            if layer.isSlidingWindow {
-                return RotatingKVCache(maxSize: configuration.slidingWindowSize)
-            } else {
-                return KVCacheSimple()
-            }
+    public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try model.layers.map { layer in
+            try makeHybridAttentionKVCache(
+                parameters: parameters,
+                slidingWindow: configuration.slidingWindowSize,
+                usesSlidingWindow: layer.isSlidingWindow)
         }
     }
 }

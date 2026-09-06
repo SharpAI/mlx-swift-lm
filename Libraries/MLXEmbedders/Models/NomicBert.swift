@@ -59,8 +59,10 @@ class NomicEmbedding: Module {
             )
         }
 
-        // Conditionally initialize Position Embeddings
-        if config.maxPositionEmbeddings > 0 {
+        // Conditionally initialize position embeddings (no RoPE or fractional RoPE)
+        // Models like nomic-embed-text-v1.5 rely entirely on
+        // rotary positional embeddings and ship no `position_embeddings.weight` tensor.
+        if config.maxPositionEmbeddings > 0 && config.rotaryEmbFraction < 1.0 {
             _positionEmbeddings.wrappedValue = Embedding(
                 embeddingCount: config.maxPositionEmbeddings,
                 dimensions: config.embedDim
@@ -679,6 +681,11 @@ public class NomicBertModel: Module, EmbeddingModel {
     /// The size of the vocabulary.
     public var vocabularySize: Int
 
+    public var maxPositionEmbeddings: Int? {
+        _maxPositionEmbeddings > 0 ? _maxPositionEmbeddings : nil
+    }
+    private let _maxPositionEmbeddings: Int
+
     /// Initializes the Nomic BERT model.
     ///
     /// - Parameters:
@@ -691,6 +698,7 @@ public class NomicBertModel: Module, EmbeddingModel {
     ) {
         precondition(config.vocabularySize > 0)
         vocabularySize = config.vocabularySize
+        _maxPositionEmbeddings = config.maxPositionEmbeddings
         encoder = Encoder(config)
         _embedder.wrappedValue = NomicEmbedding(config)
 
@@ -734,14 +742,28 @@ public class NomicBertModel: Module, EmbeddingModel {
             inp = inp.reshaped(1, -1)
         }
 
+        // Truncate to max position embeddings when using absolute position embeddings
+        var mask = attentionMask
+        var typeIds = tokenTypeIds
+        var posIds = positionIds
+        if _maxPositionEmbeddings > 0, inp.dim(1) > _maxPositionEmbeddings {
+            print(
+                "Warning: Input length \(inp.dim(1)) exceeds maxPositionEmbeddings"
+                    + " (\(_maxPositionEmbeddings)), truncating."
+            )
+            inp = inp[0..., ..<_maxPositionEmbeddings]
+            mask = mask?[0..., ..<_maxPositionEmbeddings]
+            typeIds = typeIds?[0..., ..<_maxPositionEmbeddings]
+            posIds = posIds?[0..., ..<_maxPositionEmbeddings]
+        }
+
         // 2. Process Attention Mask
         // Input: Binary mask (1 = valid, 0 = mask).
         // Operation: .log().
         //   log(1) = 0    (Add 0 to attention score -> No change)
         //   log(0) = -inf (Add -inf to attention score -> Zero probability after Softmax)
         let embeddings = embedder(
-            inp, positionIds: positionIds, tokenTypeIds: tokenTypeIds)
-        var mask = attentionMask
+            inp, positionIds: posIds, tokenTypeIds: typeIds)
         if mask != nil {
             // Cast mask to the same dtype as the embeddings output so it is
             // compatible with scaled_dot_product_attention's type promotion

@@ -131,8 +131,8 @@ extension MessageGenerator {
     }
 }
 
-/// Default implementation of ``MessageGenerator`` that produces a
-/// `role` and `content`.
+/// Default implementation of ``MessageGenerator`` that produces `role` and
+/// `content`, plus `name`, `tool_call_id`, and `tool_calls` when present.
 ///
 /// ```swift
 /// [

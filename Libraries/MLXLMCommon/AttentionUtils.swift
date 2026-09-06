@@ -44,6 +44,7 @@ typealias TurboKVCacheTelemetry = TurboKVTelemetry
 ///
 /// This function matches Python's `scaled_dot_product_attention` in base.py:
 /// - Detects if cache is `QuantizedKVCache` using `isinstance` pattern
+/// - Detects cache-native attention implementations
 /// - Routes to `quantizedScaledDotProductAttention` or `MLXFast.scaledDotProductAttention`
 /// - Handles cache updating automatically
 /// - Transparent to models - they just call this function

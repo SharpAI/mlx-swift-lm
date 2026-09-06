@@ -254,8 +254,9 @@ class GLM4MoELiteAttention: Module {
         kPe = kPe.reshaped(B, L, 1, qkRopeHeadDim).transposed(0, 2, 1, 3)
         var kvLatent = kvALayerNorm(compressedKv)
 
-        qPe = applyRotaryPosition(rope, to: qPe, cache: cache)
-        kPe = applyRotaryPosition(rope, to: kPe, cache: cache)
+        let offset = cache?.ropeOffset
+        qPe = applyRotaryPosition(rope, to: qPe, offset: offset)
+        kPe = applyRotaryPosition(rope, to: kPe, offset: offset)
 
         // Expand kvLatent for attention: [B, L, kvLoraRank] -> [B, 1, L, kvLoraRank]
         kvLatent = expandedDimensions(kvLatent, axis: 1)
@@ -408,7 +409,7 @@ class GLM4MoELiteMoE: Module, UnaryLayer {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let (inds, scores) = gate(x)
         var y = switchMLP(x, inds)
-        y = (y * scores[.ellipsis, .newAxis]).sum(axis: -2).asType(y.dtype)
+        y = weightedExpertSum(y, scores).asType(y.dtype)
         if let sharedExperts {
             y = y + sharedExperts(x)
         }
@@ -726,4 +727,10 @@ extension GLM4MoELiteModel: LoRAModel {
     public var loraLayers: [Module] {
         model.layers
     }
+}
+
+// MARK: - Chat conventions
+
+extension GLM4MoELiteModel {
+    public var toolCallFormat: ToolCallFormat? { .glm4 }
 }
