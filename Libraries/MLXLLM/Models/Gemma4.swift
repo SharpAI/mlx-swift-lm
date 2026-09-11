@@ -58,7 +58,12 @@ public class Gemma4Model: Module, LLMModel, KVCacheDimensionProvider {
     public var vocabularySize: Int { languageModel.vocabularySize }
     public var kvHeads: [Int] { languageModel.kvHeads }
 
-    @ModuleInfo(key: "language_model") public var languageModel: Gemma4TextModel
+    /// The text model, exposed at `@_spi(GemmaEncoder)` scope.
+    ///
+    /// This is the type the model factory actually produces for `gemma4_unified`, so an
+    /// encoder-style client tap cannot reach `Gemma4TextModel` without it — exposing only
+    /// the inner types is not sufficient for a real load path.
+    @ModuleInfo(key: "language_model") @_spi(GemmaEncoder) public var languageModel: Gemma4TextModel
     public var lastHiddenState: MLXArray? { return languageModel.lastHiddenState }
 
     public init(_ config: Gemma4Configuration) {
@@ -78,10 +83,13 @@ public class Gemma4Model: Module, LLMModel, KVCacheDimensionProvider {
             let startsWithModel = k.hasPrefix("model.")
             k = k.replacingOccurrences(of: "model.", with: "", options: .anchored)
 
-            // Skip vision/audio weights
+            // Skip vision/audio weights. `vision_embedder` is the gemma4_unified
+            // (12B) encoder-free vision module; without it, loading a multimodal
+            // gemma4_unified checkpoint (e.g. mlx-community/gemma-4-12B-it-4bit)
+            // through the text path fails with `Unhandled keys ["vision_embedder"]`.
             if k.hasPrefix("vision_tower") || k.hasPrefix("multi_modal_projector")
                 || k.hasPrefix("audio_tower") || k.hasPrefix("embed_audio")
-                || k.hasPrefix("embed_vision")
+                || k.hasPrefix("embed_vision") || k.hasPrefix("vision_embedder")
             {
                 continue
             }
@@ -103,8 +111,8 @@ public class Gemma4Model: Module, LLMModel, KVCacheDimensionProvider {
         return languageModel.sanitize(weights: sanitized)
     }
 
-    public func newCache(parameters: GenerateParameters?) -> [any KVCache] {
-        languageModel.newCache(parameters: parameters)
+    public func newCache(parameters: GenerateParameters?) throws -> [any KVCache] {
+        try languageModel.newCache(parameters: parameters)
     }
 }
 
@@ -114,4 +122,10 @@ extension Gemma4Model: LoRAModel {
     public var loraLayers: [Module] {
         languageModel.loraLayers
     }
+}
+
+// MARK: - Chat conventions
+
+extension Gemma4Model {
+    public var toolCallFormat: ToolCallFormat? { .gemma4 }
 }

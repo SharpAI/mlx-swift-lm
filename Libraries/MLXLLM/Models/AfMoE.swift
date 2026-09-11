@@ -197,8 +197,9 @@ class AfMoEAttention: Module {
 
         // Apply RoPE only for local (sliding window) attention
         if isLocalAttention, let rope = rope {
-            queries = applyRotaryPosition(rope, to: queries, cache: cache)
-            keys = applyRotaryPosition(rope, to: keys, cache: cache)
+            let offset = cache?.ropeOffset
+            queries = applyRotaryPosition(rope, to: queries, offset: offset)
+            keys = applyRotaryPosition(rope, to: keys, offset: offset)
         }
 
         var output = attentionWithCacheUpdate(
@@ -337,7 +338,7 @@ class AfMoEMoE: Module, UnaryLayer {
 
         // Apply experts
         var y = experts(x, inds)
-        y = (y * selectedScores[.ellipsis, .newAxis]).sum(axis: -2).asType(y.dtype)
+        y = weightedExpertSum(y, selectedScores).asType(y.dtype)
 
         // Add shared expert output
         if let sharedExperts = sharedExperts {
@@ -529,10 +530,8 @@ public class AfMoEModel: Module, LLMModel, KVCacheDimensionProvider {
         // Remove unused precomputed rotary freqs
         sanitizedWeights = sanitizedWeights.filter { !$0.key.contains("rotary_emb.inv_freq") }
 
-        // Remove lm_head if tied embeddings
-        if configuration.tieWordEmbeddings {
-            sanitizedWeights["lm_head.weight"] = nil
-        }
+        sanitizedWeights = filterLMHeadWeights(
+            from: sanitizedWeights, tiedWordEmbeddings: configuration.tieWordEmbeddings)
 
         // Stack expert weights for SwitchGLU
         for l in 0 ..< configuration.hiddenLayers {
@@ -556,14 +555,14 @@ public class AfMoEModel: Module, LLMModel, KVCacheDimensionProvider {
         return sanitizedWeights
     }
 
-    public func newCache(parameters: GenerateParameters?) -> [KVCache] {
-        // Create cache based on layer type (rotating for sliding attention, simple for full attention)
-        layerUsesSliding.map { usesSliding in
-            if usesSliding {
-                RotatingKVCache(maxSize: slidingWindow)
-            } else {
-                KVCacheSimple()
-            }
+    public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        // Sliding-window layers are capped by maxKVSize when requested;
+        // full-attention layers use the requested limit directly.
+        try layerUsesSliding.map { usesSliding in
+            try makeHybridAttentionKVCache(
+                parameters: parameters,
+                slidingWindow: slidingWindow,
+                usesSlidingWindow: usesSliding)
         }
     }
 }

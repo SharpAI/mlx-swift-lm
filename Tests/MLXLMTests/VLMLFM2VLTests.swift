@@ -88,7 +88,7 @@ extension MLXTestingSuite {
             // newCache reads fullAttnIdxs itself, independently of how the layers were
             // built, so exercising it here checks the two stay in agreement rather than
             // assuming they do.
-            let cache = model.newCache(parameters: nil)
+            let cache = try model.newCache(parameters: nil)
             let input = MLXArray(0 ..< 6).reshaped(1, 6)
             let result = model(input, cache: cache)
 
@@ -105,8 +105,8 @@ extension MLXTestingSuite {
             let model = LFM2VL(config)
 
             let input = MLXArray(0 ..< 5).reshaped(1, 5)
-            let a = model(input, cache: model.newCache(parameters: nil))
-            let b = model(input, cache: model.newCache(parameters: nil))
+            let a = model(input, cache: try model.newCache(parameters: nil))
+            let b = model(input, cache: try model.newCache(parameters: nil))
             #expect(allClose(a, b).item(Bool.self))
         }
     }

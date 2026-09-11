@@ -10,8 +10,8 @@ let model = try await loadModel(
     id: "mlx-community/Qwen3-4B-4bit"
 )
 let session = ChatSession(model)
-print(try await session.respond(to: "What are two things to see in San Francisco?")
-print(try await session.respond(to: "How about a great place to eat?")
+print(try await session.respond(to: "What are two things to see in San Francisco?"))
+print(try await session.respond(to: "How about a great place to eat?"))
 ```
 
 The second question actually refers to information (the location) from the first
@@ -41,6 +41,78 @@ for try await item in session.streamResponse(to: "Why is the sky blue?") {
 print()
 ```
 
+## Structured Chat Continuation
+
+`ChatSession` can also continue from structured `Chat.Message` values. This
+is useful for agent loops that consume tool calls from `streamDetails(to:role:images:videos:)`
+and then append one or more `.tool` messages without rebuilding the whole
+conversation history:
+
+```swift
+var pendingToolCalls: [ToolCall] = []
+var rejectedToolCall: RejectedToolCall?
+
+for try await item in session.streamDetails(
+    to: "What is the weather in Paris?",
+    images: [],
+    videos: []
+) {
+    if case .toolCall(let toolCall) = item {
+        pendingToolCalls.append(toolCall)
+    }
+    if case .rejectedToolCall(let rejection) = item {
+        rejectedToolCall = rejection
+    }
+}
+
+if let rejectedToolCall {
+    throw RejectedToolCallError(rejectedToolCall)
+}
+
+var toolResults: [Chat.Message] = []
+for toolCall in pendingToolCalls {
+    let toolResult = try await callTool(toolCall)
+    toolResults.append(.tool(toolResult))
+}
+
+if !toolResults.isEmpty {
+    let answer = try await session.respond(to: toolResults)
+    print(answer)
+}
+```
+
+`Generation.toolCall` contains only parsed and authorized calls that may be
+considered for dispatch. Tool-call-shaped output that is malformed, incomplete,
+or names an undeclared function is emitted separately as
+`Generation.rejectedToolCall`; rejected protocol is never returned as a normal
+response chunk. `rawTextPreview` is bounded for diagnostics but can contain
+sensitive argument values, so applications should not log or persist it
+automatically.
+
+The example buffers accepted calls until the generation finishes. This makes
+dispatch atomic at the turn level: if a later call in the same model output is
+rejected, no earlier call has already caused an external side effect.
+
+When `ChatSession` builds its cache from messages, it retains the structured
+transcript and renders the complete conversation for every continuation, as
+required by conversation-aware chat templates. When the rendered tokens extend
+the tokens already represented by the session's KV cache, only the new suffix
+is prefilled. Both the string-and-role overloads and the structured-message
+overloads use this same retained-conversation and cache-reuse path. If a
+template rewrites an earlier part of the prompt, the session rewinds to a
+verified common prefix when the cache and input can be trimmed safely.
+Otherwise, it rebuilds the cache rather than combining stale model state with a
+mismatched prompt.
+
+The low-level initializers that accept an existing raw KV cache cannot recover
+the messages used to create it. Those initializers preserve fragment-based
+continuation behavior; use the history initializer when a structured
+conversation must be resumed.
+
+When a session is initialized with history, the first generation must prefill
+that history to create a KV cache. Reuse the same `ChatSession` so later tool
+turns can take the suffix-only fast path.
+
 ## VLMs (Vision Language Models)
 
 This same API supports VLMs as well.  Simply present the image or video
@@ -54,7 +126,7 @@ let model = try await loadModel(
 let session = ChatSession(model)
 
 let answer1 = try await session.respond(
-    to: "what kind of creature is in the picture?"
+    to: "what kind of creature is in the picture?",
     image: .url(URL(fileURLWithPath: "support/test.jpg"))
 )
 print(answer1)

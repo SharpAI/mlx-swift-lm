@@ -1,5 +1,6 @@
 // Copyright © 2024 Apple Inc.
 
+import Foundation
 import MLX
 import MLXLMCommon
 
@@ -29,29 +30,51 @@ extension LLMModel {
 
     /// Default prepare step for ``LLMModel``.
     ///
-    /// This will evaluate the prompt in chunks until there is a small number of
-    /// tokens left to feed into the `TokenIterator`.
-    public func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws
+    /// Evaluates the prompt into the cache in chunks of at most
+    /// `PrefillParameters.stepSize` (default 512), leaving one token for the
+    /// `TokenIterator`'s first forward. With `PrefillParameters.Chunking.balanced`
+    /// (the default) the chunks are equal-sized, so no forward is a small
+    /// remainder paying full attention cost against the whole prompt.
+    public func prepare(
+        _ input: LMInput, cache: [KVCache], state: LMOutput.State?, prefill: PrefillParameters
+    ) throws
         -> PrepareResult
     {
-        let prefillStepSize = windowSize ?? 512
-        let totalTokens = input.text.tokens.size
-        var y = input.text
-        var processed = 0
+        let stepSize = prefill.resolvedStepSize()
+        let y = input.text
+        let total = y.tokens.size
 
-        // Prepare the prompt in chunks if larger than the prefill size.
-        // After each chunk, call the progress hook so the server can emit
-        // llama-server-style slot_update SSE events with real n_past.
-        while y.tokens.size > prefillStepSize {
-            let input = y[.newAxis, ..<prefillStepSize]
-            _ = self(input, cache: cache.isEmpty ? nil : cache, state: nil)
-            eval(cache)
-            y = y[prefillStepSize...]
-            processed += prefillStepSize
-            activePrefillProgressHook?(processed, totalTokens)
+        // A prompt that fits in one chunk is handed to the iterator whole,
+        // keeping short prompts bitwise-identical to the pre-chunking path.
+        // `.unchunked` (forEachChunk processes nothing) takes the same route
+        // at any prompt length.
+        guard total > stepSize else { return .tokens(y) }
+
+        var processed = 0
+        try withPreparedCache(cache, lengths: y.sequenceLengths) {
+            // asyncEval lets the CPU build chunk N+1's graph while the GPU evaluates
+            // chunk N. Under .remainder the reserved tail is the legacy leftover
+            // (up to a full step) rather than a single token.
+            var state: LMOutput.State? = state
+            processed = try prefill.forEachChunk(
+                total: total, reserving: prefill.chunking == .remainder ? stepSize : 1
+            ) { range in
+                let input = y[.newAxis, range]
+                let output = self(input, cache: cache.isEmpty ? nil : cache, state: state)
+                state = output.state
+                asyncEval(cache)
+                // Server.swift sets this before each generate() call to emit
+                // llama-server-style slot_update SSE events with real n_past.
+                activePrefillProgressHook?(range.upperBound, total)
+            }
+
+            // Single sync after the loop to flush any remaining async work.
+            if processed > 0 {
+                eval(cache)
+            }
         }
 
-        return .tokens(y)
+        return .tokens(y[processed...])
     }
 
     public func messageGenerator(tokenizer: Tokenizer) -> MessageGenerator {

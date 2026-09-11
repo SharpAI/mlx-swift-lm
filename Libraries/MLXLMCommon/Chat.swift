@@ -15,49 +15,93 @@ public enum Chat {
         public var videos: [UserInput.Video]
 
         /// Array of audio data associated with the message.
-        public var audio: [UserInput.Audio]
+        public var audios: [UserInput.Audio]
 
-        /// Array of tool calls (typically for the assistant role).
-        public var toolCalls: [[String: any Sendable]]?
+        /// Tool-call metadata associated with this message.
+        public var tool: Tool?
 
-        /// Optional ID of the tool call this message responds to (typically for the tool role).
-        public var toolCallId: String?
+        public struct Tool: Sendable {
+            fileprivate enum Storage: Sendable {
+                case calls([ToolCall])
+                case result(id: String?, name: String?)
+            }
+
+            fileprivate let storage: Storage
+
+            fileprivate init(storage: Storage) {
+                self.storage = storage
+            }
+
+            /// Tool calls emitted by an assistant message.
+            public static func calls(_ calls: [ToolCall]) -> Self {
+                Self(storage: .calls(calls))
+            }
+
+            /// Identifies the assistant tool call answered by a tool message.
+            ///
+            /// Some chat templates correlate results by `tool_call_id`, while
+            /// others (including Onyx) render the function `name` directly.
+            public static func result(id: String, name: String? = nil) -> Self {
+                Self(storage: .result(id: id, name: name))
+            }
+
+            package var calls: [ToolCall]? {
+                guard case .calls(let calls) = storage else { return nil }
+                return calls
+            }
+        }
 
         public init(
-            role: Role, content: String, images: [UserInput.Image] = [],
-            videos: [UserInput.Video] = [], audio: [UserInput.Audio] = [], toolCalls: [[String: any Sendable]]? = nil,
-            toolCallId: String? = nil
+            role: Role, content: String,
+            images: [UserInput.Image] = [],
+            videos: [UserInput.Video] = [],
+            audios: [UserInput.Audio] = [],
+            tool: Tool? = nil
         ) {
             self.role = role
             self.content = content
             self.images = images
             self.videos = videos
-            self.audio = audio
-            self.toolCalls = toolCalls
-            self.toolCallId = toolCallId
+            self.audios = audios
+            self.tool = tool
         }
 
         public static func system(
-            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = [], audio: [UserInput.Audio] = []
+            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = [], audios: [UserInput.Audio] = []
         ) -> Self {
-            Self(role: .system, content: content, images: images, videos: videos, audio: audio)
+            Self(role: .system, content: content, images: images, videos: videos, audios: audios)
         }
 
         public static func assistant(
-            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = [], audio: [UserInput.Audio] = [],
-            toolCalls: [[String: any Sendable]]? = nil
+            _ content: String,
+            images: [UserInput.Image] = [],
+            videos: [UserInput.Video] = [],
+            toolCalls: [ToolCall]? = nil
         ) -> Self {
-            Self(role: .assistant, content: content, images: images, videos: videos, audio: audio, toolCalls: toolCalls)
+            Self(
+                role: .assistant, content: content, images: images, videos: videos,
+                tool: toolCalls.map { .calls($0) })
         }
 
         public static func user(
-            _ content: String, images: [UserInput.Image] = [], videos: [UserInput.Video] = [], audio: [UserInput.Audio] = []
+            _ content: String,
+            images: [UserInput.Image] = [],
+            videos: [UserInput.Video] = [],
+            audios: [UserInput.Audio] = []
         ) -> Self {
-            Self(role: .user, content: content, images: images, videos: videos, audio: audio)
+            Self(role: .user, content: content, images: images, videos: videos, audios: audios)
         }
 
-        public static func tool(_ content: String, toolCallId: String? = nil) -> Self {
-            Self(role: .tool, content: content, toolCallId: toolCallId)
+        public static func tool(
+            _ content: String, id: String? = nil, name: String? = nil
+        ) -> Self {
+            let metadata: Tool? =
+                if id != nil || name != nil {
+                    Tool(storage: .result(id: id, name: name))
+                } else {
+                    nil
+                }
+            return Self(role: .tool, content: content, tool: metadata)
         }
 
         public enum Role: String, Sendable {
@@ -95,17 +139,39 @@ public protocol MessageGenerator: Sendable {
 extension MessageGenerator {
 
     public func generate(message: Chat.Message) -> Message {
-        var dict: [String: any Sendable] = [
+        var dictionary: Message = [
             "role": message.role.rawValue,
             "content": message.content,
         ]
-        if let toolCalls = message.toolCalls {
-            dict["tool_calls"] = toolCalls
+
+        addToolMetadata(to: &dictionary, for: message)
+
+        return dictionary
+    }
+
+    /// Adds tool-call metadata from a structured message to a raw message dictionary.
+    public func addToolMetadata(to dictionary: inout Message, for message: Chat.Message) {
+        switch message.tool?.storage {
+        case .calls(let calls):
+            dictionary["tool_calls"] = calls.map { toolCall -> [String: any Sendable] in
+                var entry: [String: any Sendable] = [
+                    "type": "function",
+                    "function": [
+                        "name": toolCall.function.name,
+                        "arguments": toolCall.function.argumentsObject,
+                    ] as [String: any Sendable],
+                ]
+                if let id = toolCall.id {
+                    entry["id"] = id
+                }
+                return entry
+            }
+        case .result(let id, let name):
+            if let id { dictionary["tool_call_id"] = id }
+            if let name { dictionary["name"] = name }
+        case nil:
+            break
         }
-        if let toolCallId = message.toolCallId {
-            dict["tool_call_id"] = toolCallId
-        }
-        return dict
     }
 
     public func generate(messages: [Chat.Message]) -> [Message] {
@@ -131,8 +197,8 @@ extension MessageGenerator {
     }
 }
 
-/// Default implementation of ``MessageGenerator`` that produces a
-/// `role` and `content`.
+/// Default implementation of ``MessageGenerator`` that produces `role` and
+/// `content`, plus `name`, `tool_call_id`, and `tool_calls` when present.
 ///
 /// ```swift
 /// [
@@ -142,20 +208,6 @@ extension MessageGenerator {
 /// ```
 public struct DefaultMessageGenerator: MessageGenerator {
     public init() {}
-
-    public func generate(message: Chat.Message) -> Message {
-        var dict: [String: any Sendable] = [
-            "role": message.role.rawValue,
-            "content": message.content,
-        ]
-        if let toolCalls = message.toolCalls {
-            dict["tool_calls"] = toolCalls
-        }
-        if let toolCallId = message.toolCallId {
-            dict["tool_call_id"] = toolCallId
-        }
-        return dict
-    }
 }
 
 /// Implementation of ``MessageGenerator`` that produces a
