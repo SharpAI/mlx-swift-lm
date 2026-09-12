@@ -12,6 +12,7 @@ import MLXOptimizers
 /// - converting `Linear` or `QuantizedLinear` layers to ``LoRALinear`` / ``QLoRALinear``
 /// - converting ``LoRALinear`` back to `Linear` or `QuantizedLinear` via ``LoRALinear/fused()``
 /// - implementing the LoRA evaluation
+/// - applying optional dropout to the LoRA branch during training
 ///
 /// ``QLoRALinear`` is the equivalent class for `QuantizedLinear`.
 ///
@@ -25,16 +26,28 @@ import MLXOptimizers
 public class LoRALinear: Linear, LoRALayer {
 
     let scale: Float
+    let dropout: Dropout
+    public var loraEnabled: Bool = true
 
     @ParameterInfo(key: "lora_a") var loraA: MLXArray
     @ParameterInfo(key: "lora_b") var loraB: MLXArray
 
-    required public init(
+    required public convenience init(
         _ inputDimensions: Int, _ outputDimensions: Int, rank: Int = 8, bias: Bool = false,
         scale: Float = 20.0, linear: Linear
     ) {
+        self.init(
+            inputDimensions, outputDimensions, rank: rank, bias: bias, scale: scale,
+            dropout: 0.0, linear: linear)
+    }
+
+    public init(
+        _ inputDimensions: Int, _ outputDimensions: Int, rank: Int = 8, bias: Bool = false,
+        scale: Float = 20.0, dropout: Float, linear: Linear
+    ) {
         // Scale for low-rank update
         self.scale = scale
+        self.dropout = Dropout(p: dropout)
 
         // Low rank lora weights
         let loraScale = 1 / sqrt(Float(inputDimensions))
@@ -66,14 +79,20 @@ public class LoRALinear: Linear, LoRALayer {
     /// This is typically called via `LoRATrain.convert(model:layers:)`.
     ///
     /// ### See Also
-    /// - ``QLoRALinear/from(linear:rank:scale:)``
-    public static func from(linear: Linear, rank: Int = 8, scale: Float = 20.0) -> LoRALayer {
+    /// - ``QLoRALinear/from(linear:rank:scale:dropout:)``
+    public static func from(
+        linear: Linear, rank: Int = 8, scale: Float = 20.0, dropout: Float = 0.0
+    ) -> LoRALayer {
         if let linear = linear as? QuantizedLinear {
-            return QLoRALinear.from(linear: linear, rank: rank, scale: scale)
+            return QLoRALinear.from(
+                linear: linear, rank: rank, scale: scale, dropout: dropout)
         }
         let (outputDimensions, inputDimensions) = linear.shape
-        return LoRALinear(
-            inputDimensions, outputDimensions, rank: rank, scale: scale, linear: linear)
+        let result = LoRALinear(
+            inputDimensions, outputDimensions, rank: rank, scale: scale, dropout: dropout,
+            linear: linear)
+        result.train(linear.training)
+        return result
     }
 
     /// Convert back into a fused `Linear` layer.
@@ -89,8 +108,15 @@ public class LoRALinear: Linear, LoRALayer {
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
         let y = super.callAsFunction(x.asType(weight.dtype))
-        let z = matmul(matmul(x, self.loraA), self.loraB)
-        return y + scale * z
+        if !loraEnabled { return y }
+        let z = matmul(matmul(dropout(x), self.loraA), self.loraB)
+        // Adapter checkpoints and base weights can use different 16-bit
+        // formats (commonly fp16 LoRA over a bf16 model). MLX promotes
+        // bf16 + fp16 to fp32, so adding `z` directly silently changes the
+        // projection's public dtype and every downstream kernel
+        // specialization. Keep the replacement layer's output contract
+        // identical to the base layer, matching mlx-lm's LoRA path.
+        return y + (scale * z).asType(y.dtype)
     }
 }
 
@@ -100,17 +126,29 @@ public class LoRALinear: Linear, LoRALayer {
 public class QLoRALinear: QuantizedLinear, LoRALayer {
 
     let scale: Float
+    let dropout: Dropout
+    public var loraEnabled: Bool = true
 
     @ParameterInfo(key: "lora_a") var loraA: MLXArray
     @ParameterInfo(key: "lora_b") var loraB: MLXArray
 
-    required public init(
+    required public convenience init(
         _ inputDimensions: Int, _ outputDimensions: Int, rank: Int = 8, bias: Bool = false,
         scale: Float = 20.0, linear: QuantizedLinear
+    ) {
+        self.init(
+            inputDimensions, outputDimensions, rank: rank, bias: bias, scale: scale,
+            dropout: 0.0, linear: linear)
+    }
+
+    public init(
+        _ inputDimensions: Int, _ outputDimensions: Int, rank: Int = 8, bias: Bool = false,
+        scale: Float = 20.0, dropout: Float, linear: QuantizedLinear
     ) {
 
         // Scale for low-rank update
         self.scale = scale
+        self.dropout = Dropout(p: dropout)
 
         // Low rank lora weights
         let loraScale = 1 / sqrt(Float(inputDimensions))
@@ -120,7 +158,7 @@ public class QLoRALinear: QuantizedLinear, LoRALayer {
 
         super.init(
             weight: linear.weight, bias: linear.bias, scales: linear.scales, biases: linear.biases,
-            groupSize: linear.groupSize, bits: linear.bits)
+            groupSize: linear.groupSize, bits: linear.bits, mode: linear.mode)
 
         // start frozen except for the lora keys
         freeze()
@@ -145,13 +183,16 @@ public class QLoRALinear: QuantizedLinear, LoRALayer {
     /// This is typically called via `LoRATrain.convert(model:layers:)`.
     ///
     /// ### See Also
-    /// - ``LoRALinear/from(linear:rank:scale:)``
-    public static func from(linear: QuantizedLinear, rank: Int = 8, scale: Float = 20.0)
-        -> LoRALayer
-    {
+    /// - ``LoRALinear/from(linear:rank:scale:dropout:)``
+    public static func from(
+        linear: QuantizedLinear, rank: Int = 8, scale: Float = 20.0, dropout: Float = 0.0
+    ) -> LoRALayer {
         let (outputDimensions, inputDimensions) = linear.shape
-        return QLoRALinear(
-            inputDimensions, outputDimensions, rank: rank, scale: scale, linear: linear)
+        let result = QLoRALinear(
+            inputDimensions, outputDimensions, rank: rank, scale: scale, dropout: dropout,
+            linear: linear)
+        result.train(linear.training)
+        return result
     }
 
     /// Convert back into a fused `QuantizedLinear` layer.
@@ -167,13 +208,15 @@ public class QLoRALinear: QuantizedLinear, LoRALayer {
             weight: weight + matmul(loraB, loraA),
             bias: bias,
             groupSize: groupSize,
-            bits: bits
+            bits: bits,
+            mode: mode
         )
     }
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
         let y = super.callAsFunction(x.asType(scales.dtype))
-        let z = matmul(matmul(x, self.loraA), self.loraB)
-        return y + scale * z
+        if !loraEnabled { return y }
+        let z = matmul(matmul(dropout(x), self.loraA), self.loraB)
+        return y + (scale * z).asType(y.dtype)
     }
 }

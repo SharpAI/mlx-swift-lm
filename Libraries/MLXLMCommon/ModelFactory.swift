@@ -1,6 +1,7 @@
 // Copyright © 2024 Apple Inc.
 
 import Foundation
+import MLXNN
 
 /// File patterns required to resolve a tokenizer without downloading model weights.
 package let tokenizerDownloadPatterns = ["*.json", "*.jinja"]
@@ -11,6 +12,7 @@ public enum ModelFactoryError: LocalizedError {
     case unsupportedProcessorType(String)
     case configurationFileError(String, String, Error)
     case configurationDecodingError(String, String, DecodingError)
+    case invalidConfiguration(String)
     case noModelFactoryAvailable
 
     public var errorDescription: String? {
@@ -21,6 +23,8 @@ public enum ModelFactoryError: LocalizedError {
             return "Unsupported processor type: \(type)"
         case .configurationFileError(let file, let modelName, let error):
             return "Error reading '\(file)' for model '\(modelName)': \(error.localizedDescription)"
+        case .invalidConfiguration(let message):
+            return "Invalid model configuration: \(message)"
         case .noModelFactoryAvailable:
             return "No model factory available via ModelFactoryRegistry"
         case .configurationDecodingError(let file, let modelName, let decodingError):
@@ -53,13 +57,17 @@ public enum ModelFactoryError: LocalizedError {
     }
 }
 
-/// Context of types that work together to provide a ``LanguageModel``.
+public protocol ModelConfigurationValidating {
+    func validateModelConfiguration() throws
+}
+
+/// Context of types that work together to provide a ``LanguageModel`` for inference.
 ///
 /// A ``ModelContext`` is created by ``ModelFactory/load(from:using:configuration:useLatest:progressHandler:)``.
 /// This contains the following:
 ///
 /// - ``ModelConfiguration``: identifier for the model
-/// - ``LanguageModel``: the model itself, see ``generate(input:cache:parameters:context:wiredMemoryTicket:)``
+/// - ``LanguageModel``: the model itself, see ``generate(input:cache:state:parameters:context:components:wiredMemoryTicket:tools:)``
 /// - ``UserInputProcessor``: can convert ``UserInput`` into ``LMInput``
 /// - `Tokenizer` -- the tokenizer used by ``UserInputProcessor``
 ///
@@ -75,6 +83,10 @@ public struct ModelContext {
         configuration: ModelConfiguration, model: any LanguageModel,
         processor: any UserInputProcessor, tokenizer: any Tokenizer
     ) {
+        // MLX modules default to training mode.  A ModelContext is the inference boundary used by
+        // generation, so normalize the complete module tree to evaluation mode.  Training APIs
+        // explicitly enable training for their duration and restore this state afterwards.
+        model.train(false)
         self.configuration = configuration
         self.model = model
         self.processor = processor

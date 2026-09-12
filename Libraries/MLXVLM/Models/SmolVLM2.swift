@@ -181,9 +181,16 @@ public struct SmolVLMProcessor: UserInputProcessor {
     /// TODO: disable in video mode
     func tiles(from originalImage: CIImage) -> (tiles: [CIImage], rows: Int, cols: Int) {
         // The original code resizes to maxProcessingImageSize, then resizes again ensuring multiples of fixedImageSize
-        // We do both resizes in one go
+        // We do both resizes in one go.
+        //
+        // Cap longestEdge at the actual image size so already-small images are not
+        // upscaled to maxProcessingImageSize (which would generate excess tiles and
+        // far more prompt tokens — see #208 for a 9x slowdown reproducer).
+        let actualLongestEdge = max(
+            originalImage.extent.size.width, originalImage.extent.size.height)
+        let effectiveLongestEdge = min(maxProcessingImageSize, actualLongestEdge)
         let processingSize = aspectRatioSize(
-            for: originalImage.extent.size, longestEdge: maxProcessingImageSize,
+            for: originalImage.extent.size, longestEdge: effectiveLongestEdge,
             multiple: fixedImageSize)
         let image = MediaProcessing.resampleLanczos(originalImage, to: processingSize)
 
@@ -306,27 +313,30 @@ public struct SmolVLMProcessor: UserInputProcessor {
 
             // Unfortunately we don't have a "render" option in Tokenizers yet, so decoding
             let promptTokens = try tokenizer.applyChatTemplate(
-                messages: messagesWithSystem(messages))
+                messages: messagesWithSystem(messages), tools: input.tools,
+                additionalContext: input.additionalContext)
             let decoded = tokenizer.decode(tokenIds: promptTokens, skipSpecialTokens: false)
 
             let video = input.videos[0]
 
             let processedFrames = try await MediaProcessing.asProcessedSequence(
                 video,
+                processing: input.processing.video,
                 targetFPS: { duration in
                     // 1 fps for duration >= 10s, apply a multiplier if smaller
                     max((10 - 0.9 * duration.seconds) * targetVideoFPS, 1)
                 }
             ) { frame in
 
-                let processedFrame = frame.frame
+                let processedFrame = try frame.image
+                    .asCIImage()
                     .toSRGB()
                     .resampled(
                         to: CGSize(width: fixedImageSize, height: fixedImageSize),
                         method: CIImage.ResamplingMethod.lanczos
                     )
                     .normalized(mean: config.imageMeanTuple, std: config.imageStdTuple)
-                return VideoFrame(frame: processedFrame, timeStamp: frame.timeStamp)
+                return VideoFrame(image: .ciImage(processedFrame), timeStamp: frame.timeStamp)
             }
 
             let thwFrames = (0 ..< processedFrames.frames.count).map {

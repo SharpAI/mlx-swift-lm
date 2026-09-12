@@ -70,8 +70,9 @@ class GLM4MoEAttention: Module {
         keys = keys.transposed(0, 2, 1, 3)
         values = values.reshaped(B, L, args.kvHeads, -1).transposed(0, 2, 1, 3)
 
-        queries = applyRotaryPosition(rope, to: queries, cache: cache)
-        keys = applyRotaryPosition(rope, to: keys, cache: cache)
+        let offset = cache?.ropeOffset
+        queries = applyRotaryPosition(rope, to: queries, offset: offset)
+        keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
         let output = attentionWithCacheUpdate(
             queries: queries,
@@ -213,7 +214,7 @@ class GLM4MoE: Module, UnaryLayer {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let (inds, scores) = gate(x)
         var y = switchMLP(x, inds)
-        y = (y * scores[.ellipsis, .newAxis]).sum(axis: -2).asType(y.dtype)
+        y = weightedExpertSum(y, scores).asType(y.dtype)
         if let sharedExperts {
             y = y + sharedExperts(x)
         }
@@ -316,9 +317,8 @@ public class GLM4MoEModel: Module, LLMModel, KVCacheDimensionProvider {
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         var sanitized = weights
 
-        if configuration.tieWordEmbeddings {
-            sanitized["lm_head.weight"] = nil
-        }
+        sanitized = filterLMHeadWeights(
+            from: sanitized, tiedWordEmbeddings: configuration.tieWordEmbeddings)
 
         for l in 0 ..< configuration.hiddenLayers {
             let prefix = "model.layers.\(l)"
@@ -445,4 +445,10 @@ extension GLM4MoEModel: LoRAModel {
     public var loraLayers: [Module] {
         model.layers
     }
+}
+
+// MARK: - Chat conventions
+
+extension GLM4MoEModel {
+    public var toolCallFormat: ToolCallFormat? { .glm4 }
 }

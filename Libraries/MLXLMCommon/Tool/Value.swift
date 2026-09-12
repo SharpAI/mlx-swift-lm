@@ -60,6 +60,8 @@ public enum JSONValue: Hashable, Codable, Sendable {
         switch value {
         case is NSNull:
             return .null
+        case let number as NSNumber:
+            return from(number)
         case let bool as Bool:
             return .bool(bool)
         case let int as Int:
@@ -81,6 +83,23 @@ public enum JSONValue: Hashable, Codable, Sendable {
         }
     }
 
+    /// Classifies a boxed number.
+    ///
+    /// `JSONSerialization` boxes booleans and numbers alike as `NSNumber`, and
+    /// an `NSNumber` holding 0 or 1 bridges to `Bool` successfully. Testing
+    /// `as? Bool` first therefore rewrites every 0 and 1 in a decoded payload —
+    /// `{"limit": 1}` becomes `{"limit": true}` — so the boolean case is keyed
+    /// on the boxed type instead of on a cast that a number also satisfies.
+    private static func from(_ number: NSNumber) -> JSONValue {
+        if CFGetTypeID(number) == CFBooleanGetTypeID() {
+            return .bool(number.boolValue)
+        }
+        if let int = number as? Int {
+            return .int(int)
+        }
+        return .double(number.doubleValue)
+    }
+
     public var anyValue: Any {
         switch self {
         case .null:
@@ -97,6 +116,25 @@ public enum JSONValue: Hashable, Codable, Sendable {
             return value.map { $0.anyValue }
         case .object(let value):
             return value.mapValues { $0.anyValue }
+        }
+    }
+
+    var sendableValue: any Sendable {
+        switch self {
+        case .null:
+            return NSNull()
+        case .bool(let value):
+            return value
+        case .int(let value):
+            return value
+        case .double(let value):
+            return value
+        case .string(let value):
+            return value
+        case .array(let value):
+            return value.map { $0.sendableValue }
+        case .object(let value):
+            return value.mapValues { $0.sendableValue }
         }
     }
 

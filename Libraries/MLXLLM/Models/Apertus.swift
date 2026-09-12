@@ -223,8 +223,9 @@ private class ApertusAttention: Module {
         values = values.transposed(0, 2, 1, 3)
 
         // 4. RoPE
-        queries = applyRotaryPosition(rope, to: queries, cache: cache)
-        keys = applyRotaryPosition(rope, to: keys, cache: cache)
+        let offset = cache?.ropeOffset
+        queries = applyRotaryPosition(rope, to: queries, offset: offset)
+        keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
         if let cache = cache {
             // Update cache (expects [B, H, L, D])
@@ -340,6 +341,7 @@ public class ApertusModel: Module, LLMModel, KVCacheDimensionProvider {
     public let kvHeads: [Int]
 
     fileprivate let model: ApertusModelInner
+    private let tieWordEmbeddings: Bool
 
     @ModuleInfo(key: "lm_head") public var lmHead: Linear?
 
@@ -347,6 +349,7 @@ public class ApertusModel: Module, LLMModel, KVCacheDimensionProvider {
         self.vocabularySize = args.vocabSize
         self.kvHeads = (0 ..< args.numHiddenLayers).map { _ in args.numKeyValueHeads }
         self.model = ApertusModelInner(args)
+        self.tieWordEmbeddings = args.tieWordEmbeddings
         if !args.tieWordEmbeddings {
             self._lmHead.wrappedValue = Linear(args.hiddenSize, args.vocabSize, bias: false)
         }
@@ -366,9 +369,11 @@ public class ApertusModel: Module, LLMModel, KVCacheDimensionProvider {
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         // Remove unused precomputed rotary frequencies
-        weights.filter {
-            !$0.key.contains("self_attn.rotary_emb.inv_freq")
-        }
+        filterLMHeadWeights(
+            from: weights.filter {
+                !$0.key.contains("self_attn.rotary_emb.inv_freq")
+            },
+            tiedWordEmbeddings: tieWordEmbeddings)
     }
 
     public func messageGenerator(tokenizer: any Tokenizer) -> any MessageGenerator {

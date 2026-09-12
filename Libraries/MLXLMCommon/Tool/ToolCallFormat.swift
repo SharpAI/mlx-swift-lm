@@ -61,7 +61,7 @@ extension ToolCallParser {
 /// The raw string values can be used for JSON serialization or CLI parameters.
 ///
 /// Reference: https://github.com/ml-explore/mlx-lm/tree/main/mlx_lm/tool_parsers
-public enum ToolCallFormat: String, Sendable, Codable, CaseIterable {
+public enum ToolCallFormat: String, Hashable, Sendable, Codable, CaseIterable {
     /// Default JSON format used by Llama, Qwen, and most models.
     /// Example: `<tool_call>{"name": "func", "arguments": {...}}</tool_call>`
     case json
@@ -70,16 +70,24 @@ public enum ToolCallFormat: String, Sendable, Codable, CaseIterable {
     /// Example: `<|tool_call_start|>[func(arg='value')]<|tool_call_end|>`
     case lfm2
 
-    /// XML function format used by Nemotron, Qwen3 Coder, Qwen3.5, and similar models.
+    /// XML function format used by Nemotron, Qwen3 Coder, Qwen3 Next, and similar models.
     /// Example: `<tool_call><function=name><parameter=key>value</parameter></function></tool_call>`
     case xmlFunction = "xml_function"
+
+    /// Qwen 3.5's XML function format with a framed Hermes-JSON compatibility dialect.
+    ///
+    /// Qwen 3.5 is prompted to emit `xmlFunction`, but can sporadically emit the
+    /// Qwen/Hermes JSON dialect used by earlier Qwen models instead. Both dialects
+    /// use the same `<tool_call>` frame; this format accepts either payload without
+    /// enabling bare JSON recovery.
+    case qwen35 = "qwen3_5"
 
     /// GLM4 format with arg_key/arg_value tags.
     /// Example: `func<arg_key>k</arg_key><arg_value>v</arg_value>`
     case glm4
 
     /// Gemma function call format.
-    /// Example: `call:name{key:value,k:<escape>str<escape>}`
+    /// Example: `<start_function_call>call:name{key:value,k:<escape>str<escape>}<end_function_call>`
     case gemma
 
     /// Gemma 4 function call format.
@@ -94,6 +102,10 @@ public enum ToolCallFormat: String, Sendable, Codable, CaseIterable {
     /// Example: `<invoke name="f"><parameter name="k">v</parameter></invoke>`
     case minimaxM2 = "minimax_m2"
 
+    /// Muse Glimmer's Onyx ATEM invoke/parameter format.
+    /// Example: `<atem:function_calls><atem:invoke name="f">...</atem:invoke></atem:function_calls>`
+    case atem
+
     /// Mistral V11+ format with [TOOL_CALLS] and [ARGS] delimiters.
     /// Example: `[TOOL_CALLS]get_weather [ARGS]{"location": "Tokyo"}`
     case mistral
@@ -101,6 +113,14 @@ public enum ToolCallFormat: String, Sendable, Codable, CaseIterable {
     /// Llama 3 inline JSON format.
     /// Example: `<|python_tag|>{ "name": "func", "parameters": {...} }`
     case llama3
+
+    /// GPT-OSS full Harmony response protocol.
+    ///
+    /// Not a tool-call JSON dialect: selects the Harmony frame parser + router
+    /// (channels, recipients, terminators). Tool calls appear only as
+    /// `commentary to=functions.<name>` frames within that protocol.
+    /// Example: `<|channel|>commentary to=functions.get_weather<|message|>{"location": "Tokyo"}<|call|>`
+    case gptOSS = "gpt_oss"
 
     // MARK: - Factory Methods
 
@@ -115,6 +135,8 @@ public enum ToolCallFormat: String, Sendable, Codable, CaseIterable {
                 startTag: "<|tool_call_start|>", endTag: "<|tool_call_end|>")
         case .xmlFunction:
             return XMLFunctionParser(startTag: "<tool_call>", endTag: "</tool_call>")
+        case .qwen35:
+            return Qwen35ToolCallParser(startTag: "<tool_call>", endTag: "</tool_call>")
         case .glm4:
             return GLM4ToolCallParser()
         case .gemma:
@@ -125,56 +147,103 @@ public enum ToolCallFormat: String, Sendable, Codable, CaseIterable {
             return KimiK2ToolCallParser()
         case .minimaxM2:
             return MiniMaxM2ToolCallParser()
+        case .atem:
+            return ATEMToolCallParser()
         case .mistral:
             return MistralToolCallParser()
         case .llama3:
             return Llama3ToolCallParser()
+        case .gptOSS:
+            return JSONToolCallParser(startTag: "<tool_call>", endTag: "</tool_call>")
         }
     }
 
-    /// Infer the tool call format based on model type from config.json.
+    /// Builds the response-protocol decoder used by streaming text generation.
     ///
-    /// This method maps known model types to their corresponding tool call formats,
-    /// enabling automatic format detection when loading models.
-    ///
-    /// - Parameters:
-    ///   - modelType: The `model_type` value from config.json
-    ///   - configData: The raw config.json data for inspecting secondary signals (e.g. `rope_scaling` for Llama 3)
-    /// - Returns: The appropriate `ToolCallFormat`, or `nil` to use the default format
-    public static func infer(from modelType: String, configData: Data? = nil) -> ToolCallFormat? {
-        let type = modelType.lowercased()
+    /// Ordinary formats share the detokenized tool-call decoder. Protocols
+    /// with token-level framing provide their own implementation here, keeping
+    /// concrete model behavior out of the generic evaluation loop.
+    package func makeTokenStreamDecoder(
+        tokenizer: any Tokenizer,
+        tools: [[String: any Sendable]]?,
+        stopStrings: Set<String>
+    ) -> any TokenStreamDecoder {
+        if let decoder = makeProtocolTokenStreamDecoder(
+            tokenizer: tokenizer, tools: tools, stopStrings: stopStrings)
+        {
+            return decoder
+        }
+        return StandardTokenStreamDecoder(
+            tokenizer: tokenizer, format: self, tools: tools, stopStrings: stopStrings)
+    }
 
-        // Llama family (need secondary signal for Llama 3 vs 1/2)
-        if type == "llama" {
-            guard let data = configData,
-                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { return nil }
+    /// Builds a decoder only for formats which own a framed token protocol.
+    /// Generic callers use this factory and never depend on an Onyx/Harmony
+    /// concrete type. Plain text tool syntaxes return `nil` and stay on their
+    /// standard detokenized routing path.
+    package func makeProtocolTokenStreamDecoder(
+        tokenizer: any Tokenizer,
+        tools: [[String: any Sendable]]?,
+        stopStrings: Set<String>
+    ) -> (any TokenStreamDecoder)? {
+        switch self {
+        case .gptOSS:
+            return HarmonyStreamAdapter(
+                tokenizer: tokenizer, tools: tools, stopStrings: stopStrings)
 
-            // Secondary signal 1: vocab_size >= 128000 (Llama 3 uses 128256, Llama 2 uses 32000)
-            if let vocabSize = json["vocab_size"] as? Int, vocabSize >= 128000 {
-                return .llama3
-            }
+        case .atem:
+            return OnyxStreamAdapter(
+                tokenizer: tokenizer, tools: tools, stopStrings: stopStrings)
 
-            // Secondary signal 2: rope_scaling with rope_type == "llama3"
-            if let ropeScaling = json["rope_scaling"] as? [String: Any],
-                let ropeType = ropeScaling["rope_type"] as? String,
-                ropeType == "llama3"
-            {
-                return .llama3
-            }
-
+        case .json, .lfm2, .xmlFunction, .qwen35, .glm4, .gemma, .gemma4, .kimiK2, .minimaxM2,
+            .mistral, .llama3:
             return nil
         }
+    }
 
-        // LFM2 family (lfm2, lfm2_moe, lfm2_5, lfm25, etc.)
-        if type.hasPrefix("lfm2") {
-            return .lfm2
+    /// Cache-reuse rules required by this protocol's on-device token stream.
+    ///
+    /// Most formats are plain text dialects: what the model generates is what a
+    /// chat-template re-render produces, so the standard prefix rules suffice
+    /// and this returns no extra rules. A protocol that keeps state in the KV
+    /// cache which the template cannot reproduce contributes a rule here.
+    ///
+    /// - Parameter tokenizer: used to resolve protocol control tokens; a
+    ///   tokenizer lacking them yields no rules, leaving the model on the
+    ///   standard path.
+    func promptCacheReuseRules(tokenizer: any Tokenizer) -> [any PromptCacheReuseRule] {
+        switch self {
+        case .gptOSS:
+            return HarmonyToolRestartRule(tokenizer: tokenizer).map { [$0] } ?? []
+        case .atem:
+            return OnyxToolRestartRule(tokenizer: tokenizer).map { [$0] } ?? []
+        case .json, .lfm2, .xmlFunction, .qwen35, .glm4, .gemma, .gemma4, .kimiK2, .minimaxM2,
+            .mistral,
+            .llama3:
+            return []
         }
+    }
 
-        // GLM4 family (glm4, glm4_moe, glm4_moe_lite, etc.)
-        if type.hasPrefix("glm4") {
-            return .glm4
+    /// Number of structured call commits a protocol's chat-template render
+    /// contributes to the prompt. Harmony renders at most one call per
+    /// assistant message; Onyx renders every call as its own assistant frame.
+    func promptCacheStructuredToolCallCount(in messages: [Chat.Message]) -> Int {
+        switch self {
+        case .gptOSS:
+            messages.count {
+                $0.role == .assistant && $0.tool?.calls?.isEmpty == false
+            }
+        case .atem:
+            messages.reduce(into: 0) { count, message in
+                if message.role == .assistant {
+                    count += message.tool?.calls?.count ?? 0
+                }
+            }
+        case .json, .lfm2, .xmlFunction, .qwen35, .glm4, .gemma, .gemma4, .kimiK2, .minimaxM2,
+            .mistral, .llama3:
+            0
         }
+    }
 
         // Gemma / Gemma 4
         if type.hasPrefix("gemma4") {
@@ -182,27 +251,5 @@ public enum ToolCallFormat: String, Sendable, Codable, CaseIterable {
         } else if type.hasPrefix("gemma") {
             return .gemma
         }
-
-        // Nemotron family (nemotron_h, etc.)
-        if type.hasPrefix("nemotron") {
-            return .xmlFunction
-        }
-
-        // Qwen3.5 family (qwen3_5, qwen3_5_moe, etc.)
-        if type.hasPrefix("qwen3_5") {
-            return .xmlFunction
-        }
-
-        // Qwen3-Next family (qwen3_next, etc.)
-        if type.hasPrefix("qwen3_next") {
-            return .xmlFunction
-        }
-
-        // Mistral3 family (mistral3, mistral3_text, etc.)
-        if type.hasPrefix("mistral3") {
-            return .mistral
-        }
-
-        return nil
     }
 }

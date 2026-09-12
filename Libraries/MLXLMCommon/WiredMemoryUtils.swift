@@ -93,31 +93,24 @@ public enum WiredMemoryUtils {
         model: any LanguageModel,
         parameters: GenerateParameters
     ) throws -> [KVCache] {
-        var cache = model.newCache(parameters: parameters)
+        let kvCachePlan = try parameters.kvCachePlan()
+        var cache = try kvCachePlan.validated(try model.newCache(parameters: parameters))
 
-        switch try model.prepare(input, cache: cache, windowSize: parameters.prefillStepSize) {
+        switch try model.prepare(
+            input, cache: cache, state: nil, prefill: parameters.prefill)
+        {
         case .tokens(let tokens):
             let result = model(
                 tokens[text: .newAxis],
                 cache: cache.isEmpty ? nil : cache,
                 state: nil
             )
-            maybeQuantizeKVCache(
-                cache: &cache,
-                kvBits: parameters.kvBits,
-                kvGroupSize: parameters.kvGroupSize,
-                quantizedKVStart: parameters.quantizedKVStart
-            )
             eval(result.logits)
         case .logits(let result):
-            maybeQuantizeKVCache(
-                cache: &cache,
-                kvBits: parameters.kvBits,
-                kvGroupSize: parameters.kvGroupSize,
-                quantizedKVStart: parameters.quantizedKVStart
-            )
             eval(result.logits)
         }
+
+        try kvCachePlan.applyAndValidate(to: &cache)
 
         return cache
     }
@@ -170,7 +163,7 @@ public enum WiredMemoryUtils {
             workspaceBytes: workspace,
             peakActiveBytes: peakActive,
             tokenCount: tokenCount,
-            prefillStepSize: parameters.prefillStepSize
+            prefillStepSize: parameters.prefill.resolvedStepSize()
         )
     }
 
@@ -214,7 +207,7 @@ public enum WiredMemoryUtils {
             workspaceBytes: workspace,
             peakActiveBytes: peakActive,
             tokenCount: input.text.tokens.size,
-            prefillStepSize: parameters.prefillStepSize
+            prefillStepSize: parameters.prefill.resolvedStepSize()
         )
     }
 

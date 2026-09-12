@@ -1,0 +1,243 @@
+// Copyright © 2026 Apple Inc.
+//
+// Nanbeige (Looped Transformer) tests: the layer stack runs
+// `effective_num_loops` times with shared weights, and each loop pass owns
+// its own slice of the KV cache array. On a tiny random-weight model so they
+// run in CI without downloads.
+
+import Foundation
+import MLX
+import XCTest
+
+@testable import MLXLLM
+@testable import MLXLMCommon
+
+final class NanbeigeTests: XCTestCase {
+
+    // MARK: - Tiny model
+
+    private func makeConfig(
+        loopLossWeights: String = "[]", extra: String = ""
+    ) throws -> NanbeigeConfiguration {
+        let json = """
+            {
+                "model_type": "nanbeige",
+                "hidden_size": 64,
+                "num_hidden_layers": 3,
+                "intermediate_size": 128,
+                "num_attention_heads": 4,
+                "num_key_value_heads": 2,
+                "head_dim": 16,
+                "rms_norm_eps": 1e-5,
+                "vocab_size": 512,
+                "rope_theta": 70000000.0,
+                "max_position_embeddings": 4096,
+                "num_loops": 2,
+                "loop_loss_weights": \(loopLossWeights),
+                "skip_loop_final_norm": false\(extra)
+            }
+            """
+        return try JSONDecoder().decode(NanbeigeConfiguration.self, from: Data(json.utf8))
+    }
+
+    /// Build the model with its weights pinned under a task-local random
+    /// state — task-local rather than MLXRandom.seed, so parallel tests do not
+    /// share (or perturb) the global random stream.
+    private func makeModel(_ config: NanbeigeConfiguration, seed: UInt64 = 1) -> NanbeigeModel {
+        withRandomState(MLXRandom.RandomState(seed: seed)) {
+            NanbeigeModel(config)
+        }
+    }
+
+    /// Deterministic pseudo-random tokens, 1-D — the shape the default
+    /// `LLMModel.prepare` chunked-prefill path expects.
+    private func textTokens(_ count: Int, seed: Int = 0) -> MLXArray {
+        var values: [Int32] = []
+        for i in 0 ..< count {
+            values.append(Int32((i * 13 + 7 + seed) % 512))
+        }
+        return MLXArray(values)
+    }
+
+    /// Prefill `tokens` into `cache` via `prepare` (the TokenIterator flow)
+    /// and return the next-token logits from evaluating the remainder.
+    private func prefillLogits(
+        _ model: NanbeigeModel, _ tokens: MLXArray, cache: [KVCache]
+    ) throws -> MLXArray {
+        let result = try model.prepare(
+            LMInput(text: .init(tokens: tokens)), cache: cache, state: nil,
+            prefill: .init(stepSize: 16))
+        switch result {
+        case .tokens(let remainder):
+            let out = model(remainder.tokens[.newAxis], cache: cache)
+            return out[0..., -1, 0...]
+        case .logits(let out):
+            return out.logits[0..., -1, 0...]
+        }
+    }
+
+    private func maxAbsDiff(_ a: MLXArray, _ b: MLXArray) -> Float {
+        abs(a - b).max().item(Float.self)
+    }
+
+    // MARK: - Configuration
+
+    func testConfigDecodeAndEffectiveLoops() throws {
+        let config = try makeConfig()
+        XCTAssertEqual(config.hiddenLayers, 3)
+        XCTAssertEqual(config.numLoops, 2)
+        // Empty loop_loss_weights (the released Nanbeige4.2-3B config) must
+        // fall through to num_loops, matching the Python truthiness check.
+        XCTAssertEqual(config.effectiveNumLoops, 2)
+    }
+
+    func testEffectiveLoopsDerivedFromLossWeights() throws {
+        let config = try makeConfig(loopLossWeights: "[0.5, 0.5]")
+        // One weight per extra loop: 2 weights -> 3 loops, overriding num_loops.
+        XCTAssertEqual(config.effectiveNumLoops, 3)
+    }
+
+    func testUnsupportedReferenceFeaturesThrow() throws {
+        let config = try makeConfig(extra: ",\n\"enable_depth_attention\": true")
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
+    func testSupportedConfigValidates() throws {
+        XCTAssertNoThrow(try makeConfig().validateModelConfiguration())
+    }
+
+    // MARK: - Cache layout
+
+    func testNewCacheAllocatesOneCachePerLoopLayerPair() throws {
+        let model = makeModel(try makeConfig())
+        XCTAssertEqual(try model.newCache(parameters: nil).count, 6)
+    }
+
+    func testNewCacheHonorsTypedCapacity() throws {
+        let model = makeModel(try makeConfig())
+        let capacity = try KVCacheConfiguration.Capacity(
+            maxTokens: 32, preservedPrefixTokens: 3)
+        let parameters = GenerateParameters(
+            kvCache: KVCacheConfiguration(capacity: capacity))
+
+        let caches = try model.newCache(parameters: parameters)
+        XCTAssertEqual(caches.count, 6)
+        for cache in caches {
+            let rotating = try XCTUnwrap(cache as? RotatingKVCache)
+            XCTAssertEqual(rotating.maxSize, 32)
+            XCTAssertEqual(rotating.keepCount, 3)
+            XCTAssertEqual(rotating.capacityOrigin, .requested)
+        }
+    }
+
+    func testNewCacheClampsTinyLegacyLimit() throws {
+        let model = makeModel(try makeConfig())
+        let caches = try model.newCache(parameters: GenerateParameters(maxKVSize: 1))
+
+        XCTAssertEqual(caches.count, 6)
+        for cache in caches {
+            let rotating = try XCTUnwrap(cache as? RotatingKVCache)
+            XCTAssertEqual(rotating.maxSize, 1)
+            XCTAssertEqual(rotating.keepCount, 0)
+            XCTAssertEqual(rotating.capacityOrigin, .requested)
+        }
+    }
+
+    /// The released Nanbeige4.2-3B shape: 22 hidden layers, 2 loops → 44
+    /// caches (tiny dims so module init stays cheap).
+    func testReleasedCheckpointShapeAllocates44Caches() throws {
+        let json = """
+            {
+                "model_type": "nanbeige",
+                "hidden_size": 16,
+                "num_hidden_layers": 22,
+                "intermediate_size": 32,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 1,
+                "head_dim": 8,
+                "rms_norm_eps": 1e-5,
+                "vocab_size": 64,
+                "num_loops": 2,
+                "loop_loss_weights": [],
+                "skip_loop_final_norm": false
+            }
+            """
+        let config = try JSONDecoder().decode(NanbeigeConfiguration.self, from: Data(json.utf8))
+        XCTAssertEqual(try makeModel(config).newCache(parameters: nil).count, 44)
+    }
+
+    // MARK: - Sanitize
+
+    func testSanitizeDropsRotaryFreqsAndTiedHead() throws {
+        let tied = try makeConfig(extra: ",\n\"tie_word_embeddings\": true")
+        let model = makeModel(tied)
+        let sanitized = model.sanitize(weights: [
+            "model.layers.0.self_attn.rotary_emb.inv_freq": MLXArray([Float(1)]),
+            "model.layers.0.self_attn.q_proj.weight": MLXArray([Float(1)]),
+            "lm_head.weight": MLXArray([Float(1)]),
+        ])
+        XCTAssertEqual(
+            Set(sanitized.keys), ["model.layers.0.self_attn.q_proj.weight"])
+    }
+
+    // MARK: - Looped forward
+
+    /// The loop must change the computation: a 2-loop forward differs from a
+    /// 1-loop forward of the same weights (guards against a port that ignores
+    /// `num_loops` and silently degenerates to a single pass).
+    func testSecondLoopChangesLogits() throws {
+        // The same seed twice: both models must share weights so the only
+        // difference between them is the loop count.
+        let looped = makeModel(try makeConfig(), seed: 11)
+        var singleConfig = try makeConfig()
+        singleConfig.numLoops = 1
+        let single = makeModel(singleConfig, seed: 11)
+
+        let tokens = textTokens(9)[.newAxis]
+        let loopedOut = looped(tokens, cache: nil)[0..., -1, 0...]
+        let singleOut = single(tokens, cache: nil)[0..., -1, 0...]
+        XCTAssertGreaterThan(maxAbsDiff(loopedOut, singleOut), 1e-4)
+    }
+
+    /// Warm continuation (prefix in cache, remainder prefilled on top) must
+    /// match one cold prefill of the concatenation. This is the invariant
+    /// that breaks if the per-loop cache slices are mis-indexed — loop 2
+    /// reading loop 1's keys shows up here immediately.
+    func testWarmContinuationMatchesFullPrefill() throws {
+        let model = makeModel(try makeConfig(), seed: 7)
+        let t1 = textTokens(40)
+        let t2 = textTokens(8, seed: 3)
+        let full = concatenated([t1, t2], axis: 0)
+
+        let cacheF = try model.newCache(parameters: nil)
+        let logitsF = try prefillLogits(model, full, cache: cacheF)
+
+        let cacheW = try model.newCache(parameters: nil)
+        _ = try prefillLogits(model, t1, cache: cacheW)
+        let logitsW = try prefillLogits(model, t2, cache: cacheW)
+
+        XCTAssertLessThanOrEqual(
+            maxAbsDiff(logitsW, logitsF), 1e-3,
+            "warm continuation diverged from cold full prefill")
+    }
+
+    // MARK: - Chat conventions
+
+    /// Nanbeige declares its own tool-call format and reasoning config via
+    /// `ChatConventionsProviding`, rather than the centralized `model_type`
+    /// inference chains. XML is the trained default for agentic use.
+    func testDeclaresXMLFunctionToolCallFormat() throws {
+        let model = makeModel(try makeConfig())
+        XCTAssertEqual(model.toolCallFormat, .xmlFunction)
+    }
+
+    /// Qwen-compatible thinking tags and tool-call boundary, without claiming
+    /// support for the original Qwen3 family's hard-budget transition.
+    func testDeclaresTaggedReasoningProtocol() throws {
+        let model = makeModel(try makeConfig())
+        let config = try XCTUnwrap(model.reasoningConfig)
+        XCTAssertEqual(config, QwenReasoningProtocol.tagged)
+        XCTAssertEqual(config.implicitEndDelimiters, ["<tool_call>"])
+        XCTAssertNil(config.budgetTransition)
+    }
+}

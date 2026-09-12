@@ -25,9 +25,13 @@ xcodebuild test \
 
 These tests do not run in CI.
 
-## External integration packages
+The reranker integration tests download BGE v2 M3, Qwen3 Reranker 0.6B, and Jina
+Reranker v3 checkpoints. To run only those reference checks:
 
-Integration tests and benchmarks can also be run from external packages:
-
-- [Swift Tokenizers MLX](https://github.com/DePasqualeOrg/swift-tokenizers-mlx): Uses [Swift Tokenizers](https://github.com/DePasqualeOrg/swift-tokenizers) and [Swift HF API](https://github.com/DePasqualeOrg/swift-hf-api)
-- [Swift Transformers MLX](https://github.com/DePasqualeOrg/swift-transformers-mlx): Uses [Swift Transformers](https://github.com/huggingface/swift-transformers) and [Swift Hugging Face](https://github.com/huggingface/swift-huggingface)
+```bash
+xcodebuild test \
+  -project IntegrationTesting/IntegrationTesting.xcodeproj \
+  -scheme IntegrationTesting \
+  -destination 'platform=macOS' \
+  -only-testing:IntegrationTestingTests/RerankerModelIntegrationTests
+```

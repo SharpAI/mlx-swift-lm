@@ -24,7 +24,7 @@ class Qwen3Attention: Module {
     @ModuleInfo(key: "q_norm") var qNorm: RMSNorm
     @ModuleInfo(key: "k_norm") var kNorm: RMSNorm
 
-    let rope: RoPE
+    let rope: RoPELayer
 
     public init(_ args: Qwen3Configuration) {
         self.args = args
@@ -44,22 +44,13 @@ class Qwen3Attention: Module {
         _qNorm.wrappedValue = RMSNorm(dimensions: headDim, eps: args.rmsNormEps)
         _kNorm.wrappedValue = RMSNorm(dimensions: headDim, eps: args.rmsNormEps)
 
-        let ropeScale: Float
-        if let ropeScaling = args.ropeScaling, ropeScaling["type"] == .string("linear"),
-            let factor = ropeScaling["factor"]
-        {
-            if let v = factor.asFloat() {
-                ropeScale = 1 / v
-            } else {
-                fatalError("ropeScaling.factor must be a float")
-            }
-        } else {
-            ropeScale = 1
-        }
-
-        self.rope = RoPE(
-            dimensions: headDim, traditional: false, base: args.ropeTheta,
-            scale: ropeScale)
+        self.rope = initializeRope(
+            dims: headDim,
+            base: args.ropeTheta,
+            traditional: false,
+            scalingConfig: args.ropeScaling,
+            maxPositionEmbeddings: args.maxPositionEmbeddings
+        )
     }
 
     public func callAsFunction(
@@ -77,8 +68,9 @@ class Qwen3Attention: Module {
         values = values.reshaped(B, L, args.kvHeads, -1).transposed(0, 2, 1, 3)
 
         // Apply RoPE positioning
-        queries = applyRotaryPosition(rope, to: queries, cache: cache)
-        keys = applyRotaryPosition(rope, to: keys, cache: cache)
+        let offset = cache?.ropeOffset
+        queries = applyRotaryPosition(rope, to: queries, offset: offset)
+        keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
         // Use the automatic attention router that handles both quantized and regular caches
         let output = attentionWithCacheUpdate(
@@ -232,9 +224,8 @@ public class Qwen3Model: Module, LLMModel, KVCacheDimensionProvider {
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         var weights = weights
 
-        if configuration.tieWordEmbeddings {
-            weights["lm_head.weight"] = nil
-        }
+        weights = filterLMHeadWeights(
+            from: weights, tiedWordEmbeddings: configuration.tieWordEmbeddings)
 
         return weights
     }
@@ -303,10 +294,22 @@ public struct Qwen3Configuration: Codable, Sendable {
     }
 }
 
+extension Qwen3Configuration: ModelConfigurationValidating {
+    public func validateModelConfiguration() throws {
+        try validateRoPEConfiguration(ropeScaling, context: "Qwen3Configuration.rope_scaling")
+    }
+}
+
 // MARK: - LoRA
 
 extension Qwen3Model: LoRAModel {
     public var loraLayers: [Module] {
         model.layers
     }
+}
+
+// MARK: - Chat conventions
+
+extension Qwen3Model {
+    public var reasoningConfig: ReasoningConfig? { QwenReasoningProtocol.qwen3 }
 }
