@@ -3,7 +3,7 @@
 import Foundation
 import MLX
 import MLXLLM
-import MLXLMCommon
+import MLXNN
 import Testing
 
 extension MLXTestingSuite {
@@ -28,6 +28,18 @@ extension MLXTestingSuite {
         )
 
         let mainModel = Gemma3TextModel(modelConfig)
+
+        // on hardware with a NAX, float32 (the default dtype) runs
+        // in tf32 in batch mode and float32 in non-batch.  this
+        // change in behavior can cause issues with prediction and
+        // doesn't match real world behavior (where float32 is not used)
+        mainModel.apply {
+            if $0.dtype == .float32 {
+                $0.asType(.float16)
+            } else {
+                $0
+            }
+        }
         let mainContext = ModelContext(
             configuration: processor.configuration,
             model: mainModel,
@@ -36,6 +48,13 @@ extension MLXTestingSuite {
         )
 
         let draftModel = Gemma3TextModel(modelConfig)
+        draftModel.apply {
+            if $0.dtype == .float32 {
+                $0.asType(.float16)
+            } else {
+                $0
+            }
+        }
         let draftContext = ModelContext(
             configuration: processor.configuration,
             model: draftModel,
@@ -54,8 +73,22 @@ extension MLXTestingSuite {
         numDraftTokens: Int,
         withLogitProcessor: Bool
     ) async throws {
-        let input = UserInput(prompt: "Input text")
-        let modelInput = try await processor.prepare(input: input)
+        let vocabularySize = 100
+        let tokenizer = TestTokenizer(vocabularySize: vocabularySize)
+        let processor = TestInputProcessor(
+            tokenizer: tokenizer,
+            configuration: ModelConfiguration(id: "stable-transition-test"),
+            messageGenerator: DefaultMessageGenerator()
+        )
+        let model = StableTransitionLanguageModel(vocabularySize: vocabularySize)
+        let draftModel = StableTransitionLanguageModel(vocabularySize: vocabularySize)
+        let context = ModelContext(
+            configuration: processor.configuration,
+            model: model,
+            processor: processor,
+            tokenizer: processor.tokenizer
+        )
+        let input = LMInput(tokens: MLXArray([92, 85, 2, 95, 55, 7, 94, 42]))
         let parameters = GenerateParameters(
             maxTokens: 4,
             temperature: 0.0,  // Use greedy decoding for deterministic output
@@ -66,15 +99,15 @@ extension MLXTestingSuite {
 
         var normalTokens: [Int] = []
         for await generation in try generateTokens(
-            input: modelInput, parameters: parameters, context: mainContext
+            input: input, parameters: parameters, context: context
         ) {
             if let token = generation.token { normalTokens.append(token) }
         }
 
         var speculativeTokens: [Int] = []
         for await generation in try generateTokens(
-            input: modelInput, parameters: parameters, context: mainContext,
-            draftModel: draftContext.model, numDraftTokens: numDraftTokens
+            input: input, parameters: parameters, context: context,
+            draftModel: draftModel, numDraftTokens: numDraftTokens
         ) {
             if let token = generation.token { speculativeTokens.append(token) }
         }

@@ -1127,7 +1127,9 @@ public class FastVLM: Module, VLMModel, KVCacheDimensionProvider {
         return embeddings.expandedDimensions(axis: 0)
     }
 
-    public func prepare(_ input: LMInput, cache: [any KVCache], windowSize: Int?) throws
+    public func prepare(
+        _ input: LMInput, cache: [any KVCache], state _: LMOutput.State?, prefill: PrefillParameters
+    ) throws
         -> PrepareResult
     {
         let embeddings = getInputEmbeddings(
@@ -1135,7 +1137,15 @@ public class FastVLM: Module, VLMModel, KVCacheDimensionProvider {
             pixelValues: input.image?.pixels,
             mask: input.text.mask
         )
-        let result = languageModel(nil, cache: cache, inputEmbedding: embeddings)
+        let totalPositions = embeddings.dim(1)
+        let processed = try prefill.forEachChunk(total: totalPositions) { range in
+            _ = languageModel(nil, cache: cache, inputEmbedding: embeddings[0..., range, 0...])
+            asyncEval(cache)
+        }
+        if processed > 0 { eval(cache) }
+        let result = languageModel(
+            nil, cache: cache, inputEmbedding: embeddings[0..., processed..., 0...])
+        prefill.progress?(totalPositions, totalPositions)
         return .logits(result)
     }
 
@@ -1148,7 +1158,10 @@ public class FastVLM: Module, VLMModel, KVCacheDimensionProvider {
         // Not sure we need to replicate the full Python logic since the weights were transformed on conversion
 
         var sanitizedWeights: [String: MLXArray] = [:]
-        for (k, v) in weights {
+        for (k, v) in filterLMHeadWeights(
+            from: weights,
+            tiedWordEmbeddings: config.textConfiguration.tieWordEmbeddings)
+        {
             var key = k
             if key.contains("mm_projector") {
                 key = key.replacingOccurrences(of: "mm_projector", with: "mm_projector.layers")
@@ -1165,8 +1178,10 @@ public class FastVLM: Module, VLMModel, KVCacheDimensionProvider {
 /// - Image precedes text content
 /// - Empty system messages are removed - the chat template applies a default one in this case
 public struct FastVLMMessageGenerator: MessageGenerator {
+    public init() {}
+
     public func generate(message: Chat.Message) -> MLXLMCommon.Message {
-        [
+        var dictionary: MLXLMCommon.Message = [
             "role": message.role.rawValue,
             "content": []
                 + message.images.map { _ in
@@ -1174,6 +1189,8 @@ public struct FastVLMMessageGenerator: MessageGenerator {
                 }
                 + [["type": "text", "text": message.content]],
         ]
+        addToolMetadata(to: &dictionary, for: message)
+        return dictionary
     }
 
     public func generate(messages: [Chat.Message]) -> [MLXLMCommon.Message] {

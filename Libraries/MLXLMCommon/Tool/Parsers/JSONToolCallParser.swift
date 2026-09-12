@@ -7,6 +7,7 @@ import Foundation
 public struct JSONToolCallParser: ToolCallParser, Sendable {
     public let startTag: String?
     public let endTag: String?
+    private let jsonObjectScanner = JSONLeadingObjectScanner(startCharacter: "{")
 
     public init(startTag: String, endTag: String) {
         self.startTag = startTag
@@ -29,10 +30,57 @@ public struct JSONToolCallParser: ToolCallParser, Sendable {
 
         let jsonStr = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let data = jsonStr.data(using: .utf8),
-            let function = try? JSONDecoder().decode(ToolCall.Function.self, from: data)
+        return parseToolCall(from: jsonStr) ?? parseRedundantOuterBraces(from: jsonStr)
+    }
+
+    /// Some Qwen chat templates emit an EOS-delimited JSON call with a
+    /// redundant leading brace and two redundant closing braces.
+    /// Recover only that exact shape and only when the enclosed prefix is one
+    /// complete, valid tool-call object followed solely by those braces.
+    private func parseRedundantOuterBraces(from text: String) -> ToolCall? {
+        guard text.hasPrefix("{{") else { return nil }
+        let withoutLeadingBrace = String(text.dropFirst())
+        guard let split = jsonObjectScanner.splitLeadingObject(from: withoutLeadingBrace) else {
+            return nil
+        }
+        let trailing = split.trailing.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trailing == "}}" else {
+            return nil
+        }
+        return parseToolCall(from: split.object)
+    }
+
+    private func parseToolCall(from text: String) -> ToolCall? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return parseToolCall(from: data)
+    }
+
+    private func parseToolCall(from data: Data) -> ToolCall? {
+        guard var jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        var id = jsonObject["id"] as? String
+        if let functionObject = jsonObject["function"] as? [String: Any] {
+            id = id ?? functionObject["id"] as? String
+            jsonObject = functionObject
+        }
+
+        if let stringifiedArguments = jsonObject["arguments"] as? String {
+            guard
+                let argumentsData = stringifiedArguments.data(using: .utf8),
+                let argumentsObject = try? JSONSerialization.jsonObject(with: argumentsData)
+                    as? [String: Any]
+            else { return nil }
+            jsonObject["arguments"] = argumentsObject
+        }
+
+        guard
+            let normalizedData = try? JSONSerialization.data(withJSONObject: jsonObject),
+            let function = try? JSONDecoder().decode(ToolCall.Function.self, from: normalizedData)
         else { return nil }
 
-        return ToolCall(function: function)
+        return ToolCall(function: function, id: id)
     }
 }

@@ -31,6 +31,7 @@ public struct LFM2MoEConfiguration: Codable, Sendable {
     public let convBias: Bool
     public let convLCache: Int
     public let ropeTheta: Float
+    public let routedScalingFactor: Float
 
     private let _fullAttnIdxs: [Int]?
     private let layerTypes: [String]?
@@ -67,6 +68,7 @@ public struct LFM2MoEConfiguration: Codable, Sendable {
         case convBias = "conv_bias"
         case convLCache = "conv_L_cache"
         case ropeTheta = "rope_theta"
+        case routedScalingFactor = "routed_scaling_factor"
         case ropeParameters = "rope_parameters"
         case _fullAttnIdxs = "full_attn_idxs"
         case layerTypes = "layer_types"
@@ -92,6 +94,8 @@ public struct LFM2MoEConfiguration: Codable, Sendable {
         self.normEps = try container.decode(Float.self, forKey: .normEps)
         self.convBias = try container.decode(Bool.self, forKey: .convBias)
         self.convLCache = try container.decode(Int.self, forKey: .convLCache)
+        self.routedScalingFactor =
+            try container.decodeIfPresent(Float.self, forKey: .routedScalingFactor) ?? 1.0
         self.ropeParameters = try container.decodeIfPresent(
             [String: StringOrNumber].self, forKey: .ropeParameters)
 
@@ -154,8 +158,9 @@ class LFM2MoEAttention: Module {
         keys = kLayerNorm(keys.reshaped(B, L, args.kvHeads, -1)).transposed(0, 2, 1, 3)
         values = values.reshaped(B, L, args.kvHeads, -1).transposed(0, 2, 1, 3)
 
-        queries = applyRotaryPosition(rope, to: queries, cache: cache)
-        keys = applyRotaryPosition(rope, to: keys, cache: cache)
+        let offset = cache?.ropeOffset
+        queries = applyRotaryPosition(rope, to: queries, offset: offset)
+        keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
         let output = attentionWithCacheUpdate(
             queries: queries,
@@ -226,7 +231,8 @@ class LFM2MoEShortConv: Module {
         Bx = concatenated([state!, Bx], axis: -2)
         if let cache {
             let start = Bx.dim(1) - (lCache - 1)
-            cache[0] = Bx[0..., start..., 0...]
+            cache[0] = contiguous(Bx[0..., start..., 0...])
+            cache.advance(x.dim(1))
         }
 
         let convOut = conv(Bx)
@@ -250,7 +256,7 @@ class LFM2MoEMLP: Module, UnaryLayer {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        downProj(silu(gateProj(x)) * upProj(x))
+        downProj(compiledSiluProduct(gateProj(x), upProj(x)))
     }
 }
 
@@ -285,26 +291,32 @@ class Lfm2MoeSparseMoeBlock: Module, UnaryLayer {
         }
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
-        var gates = gate(x).asType(.float32)
-        gates = MLX.softmax(gates, axis: -1)
-
-        if useExpertBias, let expertBias {
-            gates = gates + expertBias
-        }
+    /// Returns top-k experts and unbiased sigmoid routing weights.
+    /// `expert_bias` affects selection only.
+    func route(_ x: MLXArray) -> (indices: MLXArray, weights: MLXArray) {
+        let routingWeights = MLX.sigmoid(gate(x).asType(.float32))
 
         let k = topK
-        let indices = argPartition(-gates, kth: k - 1, axis: -1)[.ellipsis, ..<k]
-        var scores = takeAlong(gates, indices, axis: -1)
-        if normTopKProb {
-            let denom = scores.sum(axis: -1, keepDims: true) + 1e-20
-            scores = scores / denom
+        let indices: MLXArray
+        if useExpertBias, let expertBias {
+            let selection = routingWeights + expertBias.asType(.float32)
+            indices = argPartition(-selection, kth: k - 1, axis: -1)[.ellipsis, ..<k]
+        } else {
+            indices = argPartition(-routingWeights, kth: k - 1, axis: -1)[.ellipsis, ..<k]
         }
-        scores = scores.asType(x.dtype)
 
+        var weights = takeAlong(routingWeights, indices, axis: -1)
+        if normTopKProb {
+            weights = weights / (weights.sum(axis: -1, keepDims: true) + 1e-6)
+        }
+        weights = weights * args.routedScalingFactor
+        return (indices, weights)
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let (indices, weights) = route(x)
         let expertOutputs = switchMLP(x, indices)
-        let weighted = expertOutputs * scores[.ellipsis, .newAxis]
-        return weighted.sum(axis: -2)
+        return weightedExpertSum(expertOutputs, weights.asType(x.dtype))
     }
 }
 
@@ -486,10 +498,10 @@ public class LFM2MoEModel: Module, LLMModel, KVCacheDimensionProvider {
         return sanitized
     }
 
-    public func newCache(parameters: GenerateParameters?) -> [KVCache] {
-        (0 ..< configuration.hiddenLayers).map { layerIdx in
+    public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try (0 ..< configuration.hiddenLayers).map { layerIdx in
             if configuration.fullAttnIdxs.contains(layerIdx) {
-                KVCacheSimple()
+                try makeAttentionKVCache(parameters: parameters)
             } else {
                 MambaCache()
             }
@@ -501,4 +513,10 @@ extension LFM2MoEModel: LoRAModel {
     public var loraLayers: [Module] {
         model.layers
     }
+}
+
+// MARK: - Chat conventions
+
+extension LFM2MoEModel {
+    public var toolCallFormat: ToolCallFormat? { .lfm2 }
 }

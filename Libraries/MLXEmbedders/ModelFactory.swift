@@ -13,17 +13,32 @@ private func create<C: Decodable, M>(
     }
 }
 
+private func createBertCompatibleModel(configuration data: Data) throws -> any EmbeddingModel {
+    let configuration = try JSONDecoder.json5().decode(BertConfiguration.self, from: data)
+    if configuration.isSequenceClassification {
+        if configuration.modelType == "bert" {
+            return BertSequenceClassificationRerankerModel(configuration)
+        }
+        return BertRerankerModel(configuration)
+    }
+    return BertModel(configuration)
+}
+
 /// Registry of model type, e.g 'bert', to functions that can instantiate the model from configuration.
 public enum EmbedderTypeRegistry {
 
     public static let shared: ModelTypeRegistry<EmbeddingModel> = .init(creators: [
-        "bert": create(BertConfiguration.self) { BertModel($0) },
-        "roberta": create(BertConfiguration.self) { BertModel($0) },
-        "xlm-roberta": create(BertConfiguration.self) { BertModel($0) },
+        "bert": createBertCompatibleModel,
+        "roberta": createBertCompatibleModel,
+        "xlm-roberta": createBertCompatibleModel,
         "distilbert": create(BertConfiguration.self) { BertModel($0) },
 
         "nomic_bert": create(NomicBertConfiguration.self) { NomicBertModel($0, pooler: false) },
         "qwen3": create(Qwen3Configuration.self) { Qwen3Model($0) },
+
+        // LFM2.5 bidirectional encoders (Embedding + ColBERT). Both share
+        // `model_type: "lfm2"`; the single model branches on the `"mlx"` head.
+        "lfm2": create(LFM2BidirectionalConfiguration.self) { LFM2BidirectionalModel($0) },
 
         "gemma3": create(Gemma3Configuration.self) { EmbeddingGemma($0) },
         "gemma3_text": create(Gemma3Configuration.self) { EmbeddingGemma($0) },
@@ -65,12 +80,33 @@ public class EmbedderRegistry: AbstractModelRegistry, @unchecked Sendable {
     public static let snowflake_lg = ModelConfiguration(id: "Snowflake/snowflake-arctic-embed-l")
     /// BGE-M3 - Multi-lingual, Multi-functional, Multi-granularity.
     public static let bge_m3 = ModelConfiguration(id: "BAAI/bge-m3")
+    /// BGE Reranker v2 M3 - multilingual encoder reranker.
+    public static let bge_reranker_v2_m3 = ModelConfiguration(id: "BAAI/bge-reranker-v2-m3")
     /// Mixedbread AI Large v1.
     public static let mixedbread_large = ModelConfiguration(
         id: "mixedbread-ai/mxbai-embed-large-v1")
     /// Qwen3 Embedding 0.6B - 4-bit quantized version.
     public static let qwen3_embedding = ModelConfiguration(
         id: "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ")
+
+    /// LFM2.5 Embedding 350M — CLS-pooled 1024-d dense vectors (cosine).
+    public static let lfm2_embedding_350m = ModelConfiguration(
+        id: "mlx-community/LFM2.5-Embedding-350M-bf16")
+    /// LFM2.5 Embedding 350M — 4-bit quantized.
+    public static let lfm2_embedding_350m_4bit = ModelConfiguration(
+        id: "mlx-community/LFM2.5-Embedding-350M-4bit")
+    /// LFM2.5 Embedding 350M — 8-bit quantized.
+    public static let lfm2_embedding_350m_8bit = ModelConfiguration(
+        id: "mlx-community/LFM2.5-Embedding-350M-8bit")
+    /// LFM2.5 ColBERT 350M — per-token 128-d multi-vectors (MaxSim late interaction).
+    public static let lfm2_colbert_350m = ModelConfiguration(
+        id: "mlx-community/LFM2.5-ColBERT-350M-bf16")
+    /// LFM2.5 ColBERT 350M — 4-bit quantized.
+    public static let lfm2_colbert_350m_4bit = ModelConfiguration(
+        id: "mlx-community/LFM2.5-ColBERT-350M-4bit")
+    /// LFM2.5 ColBERT 350M — 8-bit quantized.
+    public static let lfm2_colbert_350m_8bit = ModelConfiguration(
+        id: "mlx-community/LFM2.5-ColBERT-350M-8bit")
 
     private static func all() -> [ModelConfiguration] {
         [
@@ -87,8 +123,15 @@ public class EmbedderRegistry: AbstractModelRegistry, @unchecked Sendable {
             bge_large,
             snowflake_lg,
             bge_m3,
+            bge_reranker_v2_m3,
             mixedbread_large,
             qwen3_embedding,
+            lfm2_embedding_350m,
+            lfm2_embedding_350m_4bit,
+            lfm2_embedding_350m_8bit,
+            lfm2_colbert_350m,
+            lfm2_colbert_350m_4bit,
+            lfm2_colbert_350m_8bit,
         ]
     }
 }
@@ -185,9 +228,10 @@ public final class EmbedderModelFactory: @unchecked Sendable {
         async let tokenizerTask = tokenizerLoader.load(
             from: configuration.tokenizerDirectory)
 
-        try loadWeights(
+        try await loadWeights(
             modelDirectory: modelDirectory, model: model,
-            perLayerQuantization: baseConfig.perLayerQuantization)
+            perLayerQuantization: baseConfig.perLayerQuantization,
+            weightFileSelection: configuration.weightFileSelection)
 
         let tokenizer = try await tokenizerTask
 
@@ -201,6 +245,7 @@ public final class EmbedderModelFactory: @unchecked Sendable {
             tokenizerSource: tokenizerSource,
             defaultPrompt: configuration.defaultPrompt,
             extraEOSTokens: configuration.extraEOSTokens,
+            stopStrings: configuration.stopStrings,
             eosTokenIds: configuration.eosTokenIds,
             toolCallFormat: configuration.toolCallFormat)
 
