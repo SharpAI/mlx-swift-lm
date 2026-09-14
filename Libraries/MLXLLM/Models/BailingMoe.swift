@@ -145,8 +145,9 @@ class BailingMoeAttention: Module {
         keys = keys.transposed(0, 2, 1, 3)
         values = values.reshaped(B, L, kvHeads, -1).transposed(0, 2, 1, 3)
 
-        queries = applyRotaryPosition(rope, to: queries, cache: cache)
-        keys = applyRotaryPosition(rope, to: keys, cache: cache)
+        let offset = cache?.ropeOffset
+        queries = applyRotaryPosition(rope, to: queries, offset: offset)
+        keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
         let output = attentionWithCacheUpdate(
             queries: queries,
@@ -262,7 +263,7 @@ class BailingMoeSparseMoeBlock: Module, UnaryLayer {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let (inds, weights) = gate.groupSelect(x)
         var out = switchMLP(x, inds)
-        out = (out * weights[.ellipsis, .newAxis]).sum(axis: -2)
+        out = weightedExpertSum(out, weights)
         if let shared = sharedExperts {
             out = out + shared(x)
         }
@@ -354,6 +355,11 @@ public class BailingMoeModel: Module, LLMModel, KVCacheDimensionProvider {
         } else {
             return model.embedTokens.asLinear(out)
         }
+    }
+
+    public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
+        filterLMHeadWeights(
+            from: weights, tiedWordEmbeddings: configuration.tieWordEmbeddings)
     }
 }
 

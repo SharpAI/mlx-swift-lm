@@ -7,6 +7,9 @@ MLX Swift LM is a Swift package to build tools and applications with large langu
 > to decouple from tokenizer and downloader packages some breaking
 > changes were introduced. See [upgrading documentation](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxlmcommon/upgrade) for detailed instructions on upgrading.
 
+> [!IMPORTANT]
+> We use `swift-format` to keep the code formatting consistent.  CI has this pinned to `603.0.0` right now. 
+
 Some key features include:
 
 - Model loading with integrations for a variety of tokenizer and model downloading packages.
@@ -25,6 +28,8 @@ Developers can use these examples in their own programs -- just import the swift
 - [MLXLLM](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxllm): Large language model example implementations
 - [MLXVLM](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxvlm): Vision language model example implementations
 - [MLXEmbedders](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxembedders): Popular encoders and embedding models example implementations
+- [MLXGuidedGeneration](Libraries/MLXGuidedGeneration/README.md): Grammar-constrained generation (JSON Schema or EBNF) for any MLX model.
+- [MLXFoundationModels](Libraries/MLXFoundationModels/README.md): Bridge MLX models into Apple's `FoundationModels.LanguageModel` for use with `LanguageModelSession`. (Requires the macOS/iOS/visionOS 27.0 SDK.)
 
 ## Usage
 
@@ -32,7 +37,11 @@ This package integrates with a variety of tokenizer and downloader packages thro
 
 See documentation on [how to integrate mlx-swift-lm and downloaders/tokenizers](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxlmcommon/using).
 
-### Installation
+> [!NOTE]
+> If the documentation link shows a 404, view the
+> [source](https://github.com/ml-explore/mlx-swift-lm/blob/main/Libraries/MLXLMCommon/Documentation.docc/using.md).
+
+## Installation
 
 Add the core package to your `Package.swift`:
 
@@ -40,72 +49,49 @@ Add the core package to your `Package.swift`:
 .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMajor(from: "3.31.3")),
 ```
 
-Then chose one of the methods below to select download and tokenizer implementations.
+Then chose an [integration package for downloaders and tokenizers](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxlmcommon/using#Integration-Packages).
 
-### Method 1: Integration Packages
+> [!NOTE]
+> If the documentation link shows a 404, view the
+> [source](https://github.com/ml-explore/mlx-swift-lm/blob/main/Libraries/MLXLMCommon/Documentation.docc/using.md).
 
-Then add your preferred tokenizer and downloader integrations, see [how to integrate mlx-swift-lm and downloaders/tokenizers](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxlmcommon/using#Integration-Packages):
-
-```swift
-.package(url: "https://github.com/DePasqualeOrg/swift-tokenizers-mlx", from: "0.1.0"),
-.package(url: "https://github.com/DePasqualeOrg/swift-hf-api-mlx", from: "0.1.0"),
-```
-
-And add the libraries to your target:
-
-```swift
-.target(
-    name: "YourTargetName",
-    dependencies: [
-        .product(name: "MLXLLM", package: "mlx-swift-lm"),
-        .product(name: "MLXLMTokenizers", package: "swift-tokenizers-mlx"),
-        .product(name: "MLXLMHuggingFace", package: "swift-hf-api-mlx"),
-    ]),
-```
-
-### Method 2: Macros
-
-This preserves parity with mlx-swift-lm 2.x.  Simply reference the huggingface packages and use the `MLXHuggingFace` macros to adapt the APIs.  [Read more here](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxlmcommon/using#MLXHuggingFace-Macros).
-
-Add these to your dependencies:
-
-```swift
-.package(url: "https://github.com/huggingface/swift-huggingface", upToNextMajor(from: "0.9.0")),
-.package(url: "https://github.com/huggingface/swift-transformers", upToNextMajor(from: "1.3.0")),
-```
-
-And add the libraries to your target:
-
-```swift
-.target(
-    name: "YourTargetName",
-    dependencies: [
-        .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-        .product(name: "MLXLLM", package: "mlx-swift-lm"),
-        .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
-        .product(name: "HuggingFace", package: "swift-huggingface"),
-        .product(name: "Tokenizers", package: "swift-transformers"),
-    ]),
-```
 
 ## Quick Start
 
-You can get started with a wide variety of open-weights LLMs and VLMs using this simplified API (for more details, see  [MLXLMCommon](Libraries/MLXLMCommon)):
+See also [MLXLMCommon](Libraries/MLXLMCommon). The simplest way to get started is using the `MLXHuggingFace` macros, which provide a default Hugging Face downloader and tokenizer integration.
 
-If using the [integration macros](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxlmcommon/using#MLXHuggingFace-Macros), you can get started with code like this:
+## Package.swift
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMajor(from: "3.31.3")),
+    .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
+    .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
+],
+targets: [
+    .target(
+        name: "YourTargetName",
+        dependencies: [
+            .product(name: "MLXLLM", package: "mlx-swift-lm"),
+            .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+            .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
+            .product(name: "HuggingFace", package: "swift-huggingface"),
+            .product(name: "Tokenizers", package: "swift-transformers"),
+        ]),
+]
+```
+
+## Usage
 
 ```swift
 import MLXLLM
 import MLXLMCommon
 import MLXHuggingFace
-
 import HuggingFace
 import Tokenizers
 
-let modelConfiguration = LLMRegistry.gemma3_1B_qat_4bit
-
 let model = try await #huggingFaceLoadModelContainer(
-    configuration: modelConfiguration
+    configuration: LLMRegistry.gemma3_1B_qat_4bit
 )
 
 let session = ChatSession(model)
@@ -113,19 +99,45 @@ print(try await session.respond(to: "What are two things to see in San Francisco
 print(try await session.respond(to: "How about a great place to eat?"))
 ```
 
-Using the [adapter packages](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxlmcommon/using#Integration-Packages) you would have similar code -- replace the imports and the load line.
+For alternative integration approaches (custom downloaders, alternative tokenizer packages, local-only weights), see the [using documentation](Libraries/MLXLMCommon/Documentation.docc/using.md).
 
-For example, loading from a local directory using the [DePasqualeOrg/swift-tokenizers-mlx](https://github.com/DePasqualeOrg/swift-tokenizers-mlx):
+## `FoundationModels` integration
+
+`MLXFoundationModels` is a bridge between MLX models and Apple's `FoundationModels` framework: build an `MLXLanguageModel`, pass it to `LanguageModelSession`, and generate through the standard `FoundationModels` API. Requires the macOS/iOS/visionOS 27.0 SDK.
 
 ```swift
+import Foundation
+import FoundationModels
+import HuggingFace
+import MLXFoundationModels
+import MLXHuggingFace
 import MLXLLM
-import MLXLMTokenizers
+import MLXLMCommon
+import Tokenizers
 
-let modelDirectory = URL(filePath: "/path/to/model")
-let container = try await loadModelContainer(
-    from: modelDirectory,
-    using: TokenizersLoader()
-)
+@available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
+@Generable
+struct Recommendation {
+    let attraction: String
+    let neighborhood: String
+    let tip: String
+}
+
+if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
+    let model = #huggingFaceLanguageModel(
+        configuration: LLMRegistry.gemma3_1B_qat_4bit,
+        capabilities: [.guidedGeneration])
+    let session = LanguageModelSession(model: model)
+
+    let recommendation = try await session.respond(
+        to: "Recommend one thing to do in Chicago.",
+        generating: Recommendation.self)
+    print(recommendation.content)
+    // Recommendation(
+    //     attraction: "Art Institute of Chicago",
+    //     neighborhood: "Loop",
+    //     tip: "Admire Seurat's Sunday on La Grande Jatte up close.")
+}
 ```
 
 ## Performance

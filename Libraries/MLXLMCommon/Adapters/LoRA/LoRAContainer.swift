@@ -20,6 +20,7 @@ import MLXNN
 ///   "num_layers": 28,
 ///   "lora_parameters": {
 ///     "rank": 16,
+///     "dropout": 0.05,
 ///     "scale": 20.0
 ///   }
 /// }
@@ -35,12 +36,46 @@ public struct LoRAConfiguration: Sendable, Codable {
 
         public let rank: Int
         public let scale: Float
+        /// Probability of dropping LoRA inputs during training. Disabled in evaluation mode.
+        public let dropout: Float
         public let keys: [String]?
 
-        public init(rank: Int = 8, scale: Float = 10.0, keys: [String]? = nil) {
+        public init(
+            rank: Int = 8, scale: Float = 10.0, dropout: Float = 0.0,
+            keys: [String]? = nil
+        ) {
+            precondition(
+                Self.isValidDropout(dropout),
+                "LoRA dropout must be greater than or equal to 0 and less than 1")
             self.rank = rank
             self.scale = scale
+            self.dropout = dropout
             self.keys = keys
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case rank
+            case scale
+            case dropout
+            case keys
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            rank = try container.decode(Int.self, forKey: .rank)
+            scale = try container.decode(Float.self, forKey: .scale)
+            let dropout = try container.decodeIfPresent(Float.self, forKey: .dropout) ?? 0.0
+            guard Self.isValidDropout(dropout) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .dropout, in: container,
+                    debugDescription: "LoRA dropout must be in the range [0, 1)")
+            }
+            self.dropout = dropout
+            keys = try container.decodeIfPresent([String].self, forKey: .keys)
+        }
+
+        static func isValidDropout(_ dropout: Float) -> Bool {
+            (0.0 ..< 1.0).contains(dropout)
         }
     }
 
@@ -106,7 +141,7 @@ public struct LoRAContainer: ModelAdapter, @unchecked Sendable {
         model.freeze()
         let layers = lora.loraLayers.suffix(configuration.numLayers)
         let keys = configuration.loraParameters.keys ?? lora.loraDefaultKeys
-        replaceLayers(layers: layers, keys: keys) { (layer: Module) in
+        replaceLayers(in: model, layers: layers, keys: keys) { (layer: Module) in
             createReplacementLayer(target: layer, configuration: configuration)
         }
 
@@ -137,7 +172,9 @@ public struct LoRAContainer: ModelAdapter, @unchecked Sendable {
     ///
     /// This method replaces target layers in the model with corresponding
     /// adapter layers based on the configuration. It also loads adapter-specific
-    /// weights into the model.
+    /// weights into the model. Replacement layers preserve the model's current
+    /// training or evaluation mode. Models placed in a ``ModelContext`` are in
+    /// evaluation mode by default.
     public func load(into model: LanguageModel) throws {
         guard let lora = model as? LoRAModel else {
             throw ModelAdapterError.incompatibleModelType
@@ -145,7 +182,7 @@ public struct LoRAContainer: ModelAdapter, @unchecked Sendable {
 
         let layers = lora.loraLayers.suffix(configuration.numLayers)
         let keys = configuration.loraParameters.keys ?? lora.loraDefaultKeys
-        replaceLayers(layers: layers, keys: keys) { (layer: Module) in
+        replaceLayers(in: model, layers: layers, keys: keys) { (layer: Module) in
             createReplacementLayer(target: layer, configuration: configuration)
         }
 
@@ -167,7 +204,7 @@ public struct LoRAContainer: ModelAdapter, @unchecked Sendable {
         try load(into: model)
         let layers = lora.loraLayers.suffix(configuration.numLayers)
         let keys = configuration.loraParameters.keys ?? lora.loraDefaultKeys
-        replaceLayers(layers: layers, keys: keys) { (lora: LoRALayer) in
+        replaceLayers(in: model, layers: layers, keys: keys) { (lora: LoRALayer) in
             lora.fused()
         }
     }
@@ -182,7 +219,7 @@ public struct LoRAContainer: ModelAdapter, @unchecked Sendable {
 
         let layers = lora.loraLayers.suffix(configuration.numLayers)
         let keys = configuration.loraParameters.keys ?? lora.loraDefaultKeys
-        replaceLayers(layers: layers, keys: keys) { (lora: LoRALayer) in
+        replaceLayers(in: model, layers: layers, keys: keys) { (lora: LoRALayer) in
             lora.reverted()
         }
     }
@@ -198,13 +235,15 @@ private func createReplacementLayer(
         return LoRALinear.from(
             linear: linear,
             rank: configuration.loraParameters.rank,
-            scale: configuration.loraParameters.scale
+            scale: configuration.loraParameters.scale,
+            dropout: configuration.loraParameters.dropout
         )
     case (let linear as Linear, .dora):
         return DoRALinear.from(
             linear: linear,
             rank: configuration.loraParameters.rank,
-            scale: configuration.loraParameters.scale
+            scale: configuration.loraParameters.scale,
+            dropout: configuration.loraParameters.dropout
         )
     default:
         return nil
@@ -212,11 +251,17 @@ private func createReplacementLayer(
 }
 
 /// Traverses the model and replaces its layers using a transformation closure.
+///
+/// Invalidates the model's compiled traces on any replacement: a trace holds the
+/// module tree it was built from, so an adapter added, fused, or reverted here
+/// would otherwise be invisible to it.
 private func replaceLayers<T>(
+    in model: Module,
     layers: ArraySlice<Module>,
     keys: [String],
     transforming transform: (T) -> Module?
 ) {
+    var replaced = false
     for layer in layers {
         var update: [(String, Module)] = []
         for (key, child) in layer.namedModules() where keys.contains(key) {
@@ -227,6 +272,11 @@ private func replaceLayers<T>(
 
         if !update.isEmpty {
             layer.update(modules: .unflattened(update))
+            replaced = true
         }
+    }
+
+    if replaced {
+        model.invalidateCompiledTraces()
     }
 }

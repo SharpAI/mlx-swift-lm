@@ -4,6 +4,18 @@ import MLXNN
 
 // Port of https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/models/switch_layers.py
 
+public let compiledSiluProduct: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(
+    shapeless: true
+) { gate, up in
+    MLXNN.silu(gate) * up
+}
+
+public let weightedExpertSum: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(
+    shapeless: true
+) { outputs, weights in
+    (outputs * MLX.expandedDimensions(weights, axis: -1)).sum(axis: -2)
+}
+
 public func gatherSort(x: MLXArray, indices: MLXArray) -> (MLXArray, MLXArray, MLXArray) {
     let m = indices.dim(-1)
     let indices = indices.flattened()
@@ -44,6 +56,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
     let hiddenDims: Int
     let numExperts: Int
     let activation: (MLXArray) -> MLXArray
+    let activationProduct: (@Sendable (MLXArray, MLXArray) -> MLXArray)?
 
     // ── Async pipeline state (SSD streaming optimization) ──
     // Persistent buffers: allocated once per layer, reused across tokens.
@@ -134,13 +147,13 @@ public class SwitchGLU: Module, @unchecked Sendable {
         inputDims: Int,
         hiddenDims: Int,
         numExperts: Int,
-        activation: @escaping (MLXArray) -> MLXArray = MLXNN.silu,
         bias: Bool = false
     ) {
         self.inputDims = inputDims
         self.hiddenDims = hiddenDims
         self.numExperts = numExperts
-        self.activation = activation
+        self.activation = MLXNN.silu
+        self.activationProduct = compiledSiluProduct
 
         self._gateProj.wrappedValue = SwitchLinear(
             inputDims: inputDims, outputDims: hiddenDims, numExperts: numExperts, bias: bias)
@@ -547,6 +560,7 @@ public class SwitchGLU: Module, @unchecked Sendable {
         }
 
         var x = MLX.expandedDimensions(x, axes: [-2, -3])
+        x = transformInput(x)
 
         // We must force sorting/flattening when SSD streaming is active to properly batch
         // expert kernel dispatches dynamically over contiguous arrays.
@@ -941,8 +955,180 @@ public class SwitchGLU: Module, @unchecked Sendable {
         // ── Fallback: original sequential path (non-SSD or non-quantized) ──
         let xUp = upProj(x, idx, sortedIndices: doSort)
         let xGate = gateProj(x, idx, sortedIndices: doSort)
+        var activated =
+            if let activationProduct {
+                activationProduct(xGate, xUp)
+            } else {
+                activation(xGate) * xUp
+            }
+        activated = transformHidden(activated)
         x = downProj(
-            activation(xGate) * xUp,
+            activated,
+            idx,
+            sortedIndices: doSort)
+
+        return (x, doSort ? inverseOrder : nil)
+    }
+
+    private func legacyWeightedReduction(
+        _ projected: (output: MLXArray, inverseOrder: MLXArray?),
+        indices: MLXArray,
+        weights: MLXArray
+    ) -> MLXArray {
+        var output = projected.output
+        if let inverseOrder = projected.inverseOrder {
+            output = scatterUnsort(x: output, invOrder: inverseOrder, shape: indices.shape)
+        }
+        return weightedExpertSum(MLX.squeezed(output, axis: -2), weights)
+    }
+
+    /// Whether this call has the exact frozen, quantized inference topology
+    /// supported by ``weightedExpertUnsort``.
+    package func supportsDirectWeightedReduction(
+        _ x: MLXArray, _ indices: MLXArray, weights: MLXArray
+    ) -> Bool {
+        let projections = [gateProj, upProj, downProj]
+        return inputDims.isMultiple(of: 64)
+            && x.ndim == 2
+            && x.dim(1) == inputDims
+            && x.dtype == .bfloat16
+            && indices.ndim == 2
+            && indices.dim(0) == x.dim(0)
+            && indices.dim(1) == 8
+            && indices.dtype == .uint32
+            && weights.shape == indices.shape
+            && weights.dtype == .bfloat16
+            && indices.size >= 64
+            && projections.allSatisfy {
+                ObjectIdentifier(type(of: $0)) == ObjectIdentifier(QuantizedSwitchLinear.self)
+                    && $0.bias == nil
+            }
+            && trainableParameters().flattened().isEmpty
+    }
+
+    open func callAsFunction(_ x: MLXArray, _ indices: MLXArray) -> MLXArray {
+        var projected = projectExperts(x, indices)
+
+        if let inverseOrder = projected.inverseOrder {
+            projected.output = scatterUnsort(
+                x: projected.output, invOrder: inverseOrder, shape: indices.shape)
+        }
+
+        return MLX.squeezed(projected.output, axis: -2)
+    }
+
+    /// Project and combine selected experts, directly reducing sorted
+    /// production prefill rows when requested and eligible.
+    ///
+    /// Disabled, decode-sized, non-bfloat16, custom, and trainable calls use
+    /// the established scatter + ``weightedExpertSum`` path unchanged.
+    package func callAndWeightedReduce(
+        _ x: MLXArray,
+        _ indices: MLXArray,
+        weights: MLXArray,
+        fuseSortedReduction: Bool
+    ) -> MLXArray {
+        guard fuseSortedReduction,
+            supportsDirectWeightedReduction(x, indices, weights: weights)
+        else {
+            return weightedExpertSum(callAsFunction(x, indices), weights)
+        }
+
+        let projected = projectExperts(x, indices)
+        guard let inverseOrder = projected.inverseOrder,
+            projected.output.ndim == 3,
+            projected.output.dim(-2) == 1,
+            projected.output.dim(-1) == inputDims,
+            projected.output.dtype == .bfloat16
+        else {
+            return legacyWeightedReduction(projected, indices: indices, weights: weights)
+        }
+
+        return weightedExpertUnsort(
+            sortedOutputs: MLX.squeezed(projected.output, axis: -2),
+            inverseOrder: inverseOrder,
+            weights: weights)
+    }
+}
+
+// MARK: - FusedGateUpSwitchGLU
+
+/// SwitchGLU variant for models that ship a single fused `gate_up_proj` weight
+/// of shape `[numExperts, 2*hiddenDims, inputDims]` instead of separate
+/// `gate_proj` / `up_proj`. Used by Gemma 4 26B MoE.
+open class FusedGateUpSwitchGLU: Module {
+    @ModuleInfo(key: "gate_up_proj") var gateUpProj: SwitchLinear
+    @ModuleInfo(key: "down_proj") var downProj: SwitchLinear
+
+    let inputDims: Int
+    let hiddenDims: Int
+    let numExperts: Int
+    let activation: (MLXArray) -> MLXArray
+    let activationProduct: (@Sendable (MLXArray, MLXArray) -> MLXArray)?
+
+    public init(
+        inputDims: Int,
+        hiddenDims: Int,
+        numExperts: Int,
+        bias: Bool = false
+    ) {
+        self.inputDims = inputDims
+        self.hiddenDims = hiddenDims
+        self.numExperts = numExperts
+        self.activation = MLXNN.silu
+        self.activationProduct = compiledSiluProduct
+
+        self._gateUpProj.wrappedValue = SwitchLinear(
+            inputDims: inputDims, outputDims: 2 * hiddenDims, numExperts: numExperts, bias: bias)
+        self._downProj.wrappedValue = SwitchLinear(
+            inputDims: hiddenDims, outputDims: inputDims, numExperts: numExperts, bias: bias)
+
+        super.init()
+    }
+
+    public init(
+        inputDims: Int,
+        hiddenDims: Int,
+        numExperts: Int,
+        activation: @escaping (MLXArray) -> MLXArray,
+        bias: Bool = false
+    ) {
+        self.inputDims = inputDims
+        self.hiddenDims = hiddenDims
+        self.numExperts = numExperts
+        self.activation = activation
+        self.activationProduct = nil
+
+        self._gateUpProj.wrappedValue = SwitchLinear(
+            inputDims: inputDims, outputDims: 2 * hiddenDims, numExperts: numExperts, bias: bias)
+        self._downProj.wrappedValue = SwitchLinear(
+            inputDims: hiddenDims, outputDims: inputDims, numExperts: numExperts, bias: bias)
+
+        super.init()
+    }
+
+    open func callAsFunction(_ x: MLXArray, _ indices: MLXArray) -> MLXArray {
+        var x = MLX.expandedDimensions(x, axes: [-2, -3])
+
+        let doSort = indices.size >= 64
+
+        var idx = indices
+        var inverseOrder = MLXArray()
+
+        if doSort {
+            (x, idx, inverseOrder) = gatherSort(x: x, indices: indices)
+        }
+
+        let gateUp = gateUpProj(x, idx, sortedIndices: doSort)
+        let parts = MLX.split(gateUp, parts: 2, axis: -1)
+        let activated =
+            if let activationProduct {
+                activationProduct(parts[0], parts[1])
+            } else {
+                activation(parts[0]) * parts[1]
+            }
+        x = downProj(
+            activated,
             idx,
             sortedIndices: doSort)
 
@@ -1349,7 +1535,7 @@ public class SwitchLinear: Module, Quantizable {
     }
 }
 
-public class QuantizedSwitchLinear: SwitchLinear, Quantized {
+open class QuantizedSwitchLinear: SwitchLinear, Quantized {
     @ModuleInfo(key: "scales") var scales: MLXArray
     @ModuleInfo(key: "biases") var biases: MLXArray?
 
@@ -1376,7 +1562,7 @@ public class QuantizedSwitchLinear: SwitchLinear, Quantized {
         self.freeze()
     }
 
-    override public func callAsFunction(
+    override open func callAsFunction(
         _ x: MLXArray, _ indices: MLXArray, sortedIndices: Bool = false
     ) -> MLXArray {
         if ExpertStreamingConfig.shared.isEnabled {

@@ -157,8 +157,9 @@ class LFM2Attention: Module {
         keys = kLayerNorm(keys.reshaped(B, L, args.kvHeads, -1)).transposed(0, 2, 1, 3)
         values = values.reshaped(B, L, args.kvHeads, -1).transposed(0, 2, 1, 3)
 
-        queries = applyRotaryPosition(rope, to: queries, cache: cache)
-        keys = applyRotaryPosition(rope, to: keys, cache: cache)
+        let offset = cache?.ropeOffset
+        queries = applyRotaryPosition(rope, to: queries, offset: offset)
+        keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
         let output = attentionWithCacheUpdate(
             queries: queries,
@@ -221,7 +222,8 @@ class LFM2ShortConv: Module {
 
         Bx = concatenated([state!, Bx], axis: -2)
         if let cache {
-            cache[0] = Bx[0..., (Bx.dim(1) - (lCache - 1))..., 0...]
+            cache[0] = contiguous(Bx[0..., (Bx.dim(1) - (lCache - 1))..., 0...])
+            cache.advance(x.dim(1))
         }
 
         let convOut = conv(Bx)
@@ -396,10 +398,10 @@ public class LFM2Model: Module, LLMModel, KVCacheDimensionProvider {
         return sanitizedWeights
     }
 
-    public func newCache(parameters: GenerateParameters?) -> [KVCache] {
-        (0 ..< configuration.hiddenLayers).map { layerIdx in
+    public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try (0 ..< configuration.hiddenLayers).map { layerIdx in
             if configuration.fullAttnIdxs.contains(layerIdx) {
-                KVCacheSimple()
+                try makeAttentionKVCache(parameters: parameters)
             } else {
                 MambaCache()
             }
@@ -411,4 +413,10 @@ extension LFM2Model: LoRAModel {
     public var loraLayers: [Module] {
         model.layers
     }
+}
+
+// MARK: - Chat conventions
+
+extension LFM2Model {
+    public var toolCallFormat: ToolCallFormat? { .lfm2 }
 }
