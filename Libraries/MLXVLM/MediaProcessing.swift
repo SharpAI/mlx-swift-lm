@@ -645,6 +645,9 @@ public enum MediaProcessing {
             try data.write(to: fileURL)
             url = fileURL
             tempURL = fileURL
+        case .array(let array):
+            // Already raw samples — no file round-trip needed.
+            return array.asArray(Float.self)
         }
         
         defer {

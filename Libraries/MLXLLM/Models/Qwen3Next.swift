@@ -639,6 +639,129 @@ public class Qwen3NextModelInner: Module {
 
         return (norm(hiddenStates), captured)
     }
+
+    // MARK: - Compiled decode segments
+
+    /// Flat segment arguments keep mutable cache state outside MLX's compiled
+    /// graphs while allowing the static work between cache writes to fuse.
+    private func segmentBody(at index: Int, _ arguments: [MLXArray]) -> [MLXArray] {
+        let segment = decodeSegments[index]
+        var hiddenStates = arguments[0]
+
+        if let post = segment.attentionPostLayer {
+            hiddenStates = layers[post].attentionPostBody(
+                x: hiddenStates, attention: arguments[1], gate: arguments[2])
+        }
+
+        var states: [MLXArray] = []
+        for (stateIndex, layerIndex) in segment.linearLayers.enumerated() {
+            let inputIndex = segment.stateInputOffset + 2 * stateIndex
+            let (output, convState, recState) = layers[layerIndex].linearLayerBody(
+                x: hiddenStates,
+                convState: arguments[inputIndex],
+                recState: arguments[inputIndex + 1])
+            hiddenStates = output
+            states.append(convState)
+            states.append(recState)
+        }
+
+        if let pre = segment.attentionPreLayer {
+            let (queries, gate, keys, values) = layers[pre].attentionPreBody(hiddenStates)
+            return [hiddenStates] + states + [queries, gate, keys, values]
+        }
+
+        if index == decodeSegments.count - 1 {
+            hiddenStates = norm(hiddenStates)
+        }
+        return [hiddenStates] + states
+    }
+
+    /// Execute one eligible single-token step through the shared compiled
+    /// segment scheduler. Returns nil for masks or cache implementations that
+    /// require the general model path.
+    private func decodeStep(_ inputs: MLXArray, _ cache: [KVCache?]) -> MLXArray? {
+        // MLX fusion currently changes low-order bfloat16/float32 results for
+        // this model. fp16 is pinned byte-identical against the general path.
+        let embedded = embedTokens(inputs)
+        guard embedded.dtype == .float16 else { return nil }
+        guard cache.count == layers.count else { return nil }
+        if createSSMMask(h: inputs, cache: cache[ssmIdx] as? MambaCache) != nil {
+            return nil
+        }
+        guard let attentionCache = cache[faIdx],
+            case .none = createAttentionMask(h: inputs, cache: attentionCache)
+        else { return nil }
+
+        var mambaCaches = [MambaCache?](repeating: nil, count: layers.count)
+        for (index, layer) in layers.enumerated() {
+            if layer.isLinear {
+                guard let mambaCache = cache[index] as? MambaCache,
+                    mambaCache[0] != nil, mambaCache[1] != nil
+                else { return nil }
+                mambaCaches[index] = mambaCache
+            } else {
+                guard let kvCache = cache[index], usesPlainAttentionCacheRoute(kvCache) else {
+                    return nil
+                }
+            }
+        }
+
+        var carry = embedded
+        var pendingAttention: [MLXArray] = []
+
+        for (segmentIndex, segment) in decodeSegments.enumerated() {
+            var arguments = [carry] + pendingAttention
+            for layerIndex in segment.linearLayers {
+                let mambaCache = mambaCaches[layerIndex]!
+                arguments.append(mambaCache[0]!)
+                arguments.append(mambaCache[1]!)
+            }
+
+            let outputs = compiledSegments(self, at: segmentIndex, arguments)
+
+            carry = outputs[0]
+            for (stateIndex, layerIndex) in segment.linearLayers.enumerated() {
+                let mambaCache = mambaCaches[layerIndex]!
+                mambaCache[0] = outputs[1 + 2 * stateIndex]
+                mambaCache[1] = outputs[2 + 2 * stateIndex]
+                mambaCache.advance(1)
+            }
+
+            pendingAttention = []
+            if let pre = segment.attentionPreLayer {
+                let outputIndex = segment.attentionOutputOffset
+                let attention = attentionCacheStep(
+                    layer: pre,
+                    queries: outputs[outputIndex],
+                    keys: outputs[outputIndex + 2],
+                    values: outputs[outputIndex + 3],
+                    cache: cache[pre]!)
+                pendingAttention = [attention, outputs[outputIndex + 1]]
+            }
+        }
+
+        return carry
+    }
+
+    /// RoPE, KV growth, and SDPA are the dynamic boundary between two static
+    /// compiled segments.
+    private func attentionCacheStep(
+        layer index: Int,
+        queries: MLXArray,
+        keys: MLXArray,
+        values: MLXArray,
+        cache: KVCache
+    ) -> MLXArray {
+        let attention = layers[index].selfAttn!
+        let offset = cache.ropeOffset
+        return attentionWithCacheUpdate(
+            queries: applyRotaryPosition(attention.rope, to: queries, offset: offset),
+            keys: applyRotaryPosition(attention.rope, to: keys, offset: offset),
+            values: values,
+            cache: cache,
+            scale: attention.scale,
+            mask: .none)
+    }
 }
 
 public class Qwen3NextModel: Module, LLMModel, KVCacheDimensionProvider {

@@ -109,7 +109,7 @@ extension MLXTestingSuite {
             // The real per-layer cache, not nil: this is what routes the linear layer
             // to a MambaCache and the attention layer to a standard one, which is the
             // model-specific behaviour this test exists to exercise.
-            let cache = model.newCache(parameters: nil)
+            let cache = try model.newCache(parameters: nil)
             let input = MLXArray(0 ..< 6).reshaped(1, 6)
             let result = model(input, cache: cache)
 
@@ -126,8 +126,8 @@ extension MLXTestingSuite {
             let model = Qwen35(config)
 
             let input = MLXArray(0 ..< 5).reshaped(1, 5)
-            let a = model(input, cache: model.newCache(parameters: nil))
-            let b = model(input, cache: model.newCache(parameters: nil))
+            let a = model(input, cache: try model.newCache(parameters: nil))
+            let b = model(input, cache: try model.newCache(parameters: nil))
             #expect(allClose(a, b).item(Bool.self))
         }
     }

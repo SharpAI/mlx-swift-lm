@@ -76,6 +76,14 @@ public struct ResolvedModelConfiguration: Sendable {
     public var eosTokenIds: Set<Int>
     public var toolCallFormat: ToolCallFormat?
     public var lazyLoad: Bool
+    public var reasoningConfig: ReasoningConfig?
+    public var messageGenerator: (any MessageGenerator)?
+
+    /// How to choose the safetensors files holding the model's weights.
+    ///
+    /// ## See Also
+    /// - ``ModelConfiguration/weightFileSelection``
+    public var weightFileSelection: WeightFileSelection
 
     public init(
         modelDirectory: URL,
@@ -86,7 +94,10 @@ public struct ResolvedModelConfiguration: Sendable {
         stopStrings: Set<String>? = nil,
         eosTokenIds: Set<Int>,
         toolCallFormat: ToolCallFormat?,
-        lazyLoad: Bool = false
+        lazyLoad: Bool = false,
+        reasoningConfig: ReasoningConfig? = nil,
+        messageGenerator: (any MessageGenerator)? = nil,
+        weightFileSelection: WeightFileSelection = .automatic
     ) {
         self.modelDirectory = modelDirectory
         self.tokenizerDirectory = tokenizerDirectory
@@ -97,6 +108,9 @@ public struct ResolvedModelConfiguration: Sendable {
         self.eosTokenIds = eosTokenIds
         self.toolCallFormat = toolCallFormat
         self.lazyLoad = lazyLoad
+        self.reasoningConfig = reasoningConfig
+        self.messageGenerator = messageGenerator
+        self.weightFileSelection = weightFileSelection
     }
 }
 

@@ -467,7 +467,7 @@ extension MLXTestingSuite {
         let input = MLXArray(0 ..< 5).reshaped(1, 5)
         // Would abort with "Layer 0 is a KV-shared layer but received no sharedKV"
         // before the delegation fix.
-        let viaAssistant = asstModel(input, cache: mainModel.newCache(parameters: nil))
+        let viaAssistant = asstModel(input, cache: try mainModel.newCache(parameters: nil))
 
         #expect(viaAssistant.shape == [1, 5, 100])
         let sum = viaAssistant.sum().item(Float.self)
@@ -476,7 +476,7 @@ extension MLXTestingSuite {
 
         // Delegation, not merely "did not crash": the same input through the trunk
         // directly must give the same logits.
-        let viaTrunk = mainModel(input, cache: mainModel.newCache(parameters: nil))
+        let viaTrunk = mainModel(input, cache: try mainModel.newCache(parameters: nil))
         let maxDelta = abs(viaAssistant - viaTrunk).max().item(Float.self)
         #expect(maxDelta < 1e-4, "assistant forward diverged from the trunk by \(maxDelta)")
     }
@@ -519,7 +519,7 @@ extension MLXTestingSuite {
         let asstModel = Gemma4AssistantModel(asstCfg)
         asstModel.mainModelRef = mainModel
 
-        let cache = asstModel.newCache(parameters: nil)
+        let cache = try asstModel.newCache(parameters: nil)
         let input = MLXArray(0..<5).reshaped(1, 5)
         let results = asstModel.callMTP(input, cache: cache, mtpCaches: nil)
 
@@ -539,7 +539,7 @@ extension MLXTestingSuite {
         let asstModel = Gemma4AssistantModel(asstCfg)
         asstModel.mainModelRef = mainModel
 
-        let cache = asstModel.newCache(parameters: nil)
+        let cache = try asstModel.newCache(parameters: nil)
         let input = MLXArray(0..<3).reshaped(1, 3)
         let results = asstModel.callMTP(input, cache: cache, mtpCaches: nil)
 

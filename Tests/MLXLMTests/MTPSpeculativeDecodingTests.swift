@@ -379,7 +379,7 @@ extension MLXTestingSuite {
             let input = LMInput(tokens: MLXArray([1, 2, 3]))
             let params = GenerateParameters(maxTokens: maxTokens, temperature: 0.0)
 
-            let cache = model.newCache(parameters: params)
+            let cache = try model.newCache(parameters: params)
             var iter = try MTPTokenIterator(
                 input: input,
                 model: model,

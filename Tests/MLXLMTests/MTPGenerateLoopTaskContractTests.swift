@@ -36,9 +36,15 @@ private struct MockMTPIterator: TokenIteratorProtocol, MTPStatsCollecting {
     public var tokenCount = 0
     public let maxTokens: Int? = nil
     public let promptPrefillTime: TimeInterval = 0
+    public var streamingError: SSDStreamingError? { nil }
     public private(set) var proposedDraftTokens: Int = 0
     public private(set) var acceptedDraftTokens: Int = 0
+    public var totalDraftTokens: Int { proposedDraftTokens }
+    public var state: LMOutput.State? { nil }
+    public var speculativeDecodingTelemetry: SpeculativeDecodingTelemetry? { nil }
     public private(set) var passthroughReason: String?
+
+    mutating func discardGeneratedToken() {}
 
     init(
         tokensToYield: [Int],

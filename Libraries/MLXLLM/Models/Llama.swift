@@ -184,6 +184,8 @@ public class LlamaModel: Module, LLMModel, KVCacheDimensionProvider {
 
     public let model: LlamaModelInner
 
+    let configuration: LlamaConfiguration
+
     @ModuleInfo(key: "lm_head") public var lmHead: Linear?
 
     public init(_ args: LlamaConfiguration) {

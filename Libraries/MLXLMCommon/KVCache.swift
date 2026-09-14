@@ -4,6 +4,29 @@ import Foundation
 import MLX
 import MLXNN
 
+extension MLXArray {
+    /// The fill value used to mask out attention scores before softmax: the most
+    /// negative finite value representable in `dtype`, matching Python's
+    /// `finfo(dtype).min`.
+    ///
+    /// mlx-swift-lm upstream added `DType.finfo`-backed support for this directly
+    /// on `MLXArray`; our fork of mlx-swift hasn't picked that up yet, so this
+    /// mirrors the same computation locally via `DType.finfo`.
+    static func maskFill(for dtype: DType) -> MLXArray {
+        MLXArray(Float(dtype.finfo?.min ?? -Double(Float.greatestFiniteMagnitude)))
+    }
+}
+
+extension DType {
+    /// The largest finite value representable in this dtype, as an `MLXArray` scalar.
+    ///
+    /// mlx-swift-lm upstream added this directly to mlx-swift; our fork hasn't picked
+    /// that up yet, so this mirrors the same computation locally via `DType.finfo`.
+    var greatestFiniteMagnitudeArray: MLXArray {
+        MLXArray(Float(finfo?.max ?? Double(Float.greatestFiniteMagnitude)))
+    }
+}
+
 /// Offset to use with ``applyRotaryPosition(_:to:offset:)``.
 ///
 /// See ``KVCache/ropeOffset``.
@@ -794,7 +817,7 @@ public class RotatingKVCache: BaseKVCache, CustomDebugStringConvertible {
     /// alongside K/V it has not committed yet.
     ///
     /// The result is built by the same two steps the multi-token write path uses --
-    /// ``temporalOrder(_:)`` to linearize, then the front-trim that preserves the pinned `keep`
+    /// ``temporallyOrdered(_:)`` to linearize, then the front-trim that preserves the pinned `keep`
     /// prefix -- so a view of length `n` holds exactly the entries a write that front-trimmed to
     /// `n` rows would have presented. When the ring is already chronological (`idx` at the end of
     /// the buffer, which is where every multi-token write leaves it) both steps degrade to
@@ -812,8 +835,8 @@ public class RotatingKVCache: BaseKVCache, CustomDebugStringConvertible {
     package func logicalView(tail: Int) -> (MLXArray, MLXArray)? {
         guard let keys = self.keys, let values = self.values else { return nil }
 
-        let orderedKeys = temporalOrder(keys)
-        let orderedValues = temporalOrder(values)
+        let orderedKeys = temporallyOrdered(keys)
+        let orderedValues = temporallyOrdered(values)
 
         let available = orderedKeys.dim(2)
         // Raising the bound to the pinned prefix is what keeps the front-trim's second slice in
@@ -1052,8 +1075,8 @@ public class RotatingKVCache: BaseKVCache, CustomDebugStringConvertible {
             // Linearize a ring before cutting its newest rows. Also shrink oversized
             // prefill buffers: the next single-token write compacts those buffers to
             // maxCacheSize and must not treat a discarded suffix as live history.
-            self.keys = temporalOrder(keys)[.ellipsis, ..<bound, 0...]
-            self.values = temporalOrder(values)[.ellipsis, ..<bound, 0...]
+            self.keys = temporallyOrdered(keys)[.ellipsis, ..<bound, 0...]
+            self.values = temporallyOrdered(values)[.ellipsis, ..<bound, 0...]
         }
         idx = bound
         offset -= trimmed
@@ -1559,7 +1582,7 @@ public class ChunkedKVCache: KVCacheSimple {
 
 /// Base cache for array-based state storage
 open class ArraysCache: BaseKVCache {
-    private var cache: [MLXArray?]
+    fileprivate var cache: [MLXArray?]
     internal var leftPadding: MLXArray?
     internal var lengths: MLXArray?
 
@@ -1615,9 +1638,12 @@ open class ArraysCache: BaseKVCache {
 
     /// In-place extend this cache with the other cache
     public func extend(other: ArraysCache) {
-        cache = zip(cache, other.cache).map { (c, o) in
-            if let c = c, let o = o {
-                return MLX.concatenated([c, o], axis: -2)
+        let aBatch = batchSize
+        let bBatch = other.batchSize
+
+        func concatenate(_ a: MLXArray?, _ b: MLXArray?) -> MLXArray? {
+            guard let example = a ?? b else {
+                return nil
             }
 
             let suffixShape = Array(example.shape.dropFirst())
@@ -1755,6 +1781,20 @@ open class MambaCache: ArraysCache {
     /// Instead, we checkpoint before speculation and restore on rollback.
     private var savedState: [MLXArray]?
 
+    private struct SpeculativeCheckpoint {
+        var state: [MLXArray?]
+        var offset: Int
+        var leftPadding: MLXArray?
+        var lengths: MLXArray?
+    }
+
+    /// Explicit checkpoint used by MTP-aware model code (e.g. Qwen3.5) that
+    /// manages its own verify/accept bookkeeping instead of going through the
+    /// generic `trim()` path — captures offset/leftPadding/lengths as well as
+    /// state, so it survives padding-changing operations `trim()`'s simpler
+    /// state-only checkpoint does not need to handle.
+    private var speculativeCheckpoint: SpeculativeCheckpoint?
+
     public init(leftPadding: [Int]? = nil) {
         super.init(size: 2, leftPadding: leftPadding)
     }
@@ -1782,6 +1822,39 @@ open class MambaCache: ArraysCache {
         }
         savedState = nil  // Clear checkpoint on full acceptance
         return 0
+    }
+
+    /// Save the recurrent state at the last unconditionally committed token
+    /// inside a speculative verification pass.
+    package func saveSpeculativeCheckpoint(
+        convState: MLXArray,
+        recurrentState: MLXArray,
+        advancedBy tokenCount: Int
+    ) {
+        speculativeCheckpoint = SpeculativeCheckpoint(
+            state: [convState, recurrentState],
+            offset: offset,
+            leftPadding: leftPadding.map { $0 - tokenCount },
+            lengths: lengths.map { $0 - tokenCount })
+    }
+
+    package var hasSpeculativeCheckpoint: Bool {
+        speculativeCheckpoint != nil
+    }
+
+    @discardableResult
+    package func restoreSpeculativeCheckpoint() -> Bool {
+        guard let checkpoint = speculativeCheckpoint else { return false }
+        cache = checkpoint.state
+        offset = checkpoint.offset
+        leftPadding = checkpoint.leftPadding
+        lengths = checkpoint.lengths
+        speculativeCheckpoint = nil
+        return true
+    }
+
+    package func discardSpeculativeCheckpoint() {
+        speculativeCheckpoint = nil
     }
 
     open override func copy() -> any KVCache {

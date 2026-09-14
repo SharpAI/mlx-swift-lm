@@ -176,6 +176,7 @@ public struct UserInput {
     public enum Audio {
         case url(URL)
         case array(MLXArray)
+        case data(Data, format: String)
 
         // See also UserInput+Audio
     }
@@ -183,12 +184,6 @@ public struct UserInput {
     /// Representation of the audio format.
     public enum AudioFormat: Sendable {
         case linearPCM
-    }
-
-    /// Representation of an audio resource.
-    public enum Audio: Sendable {
-        case data(Data, format: String)
-        case url(URL)
     }
 
     /// Representation of processing to apply to media.
@@ -311,8 +306,8 @@ public struct UserInput {
                 self.videos = messages.reduce(into: []) { result, message in
                     result.append(contentsOf: message.videos)
                 }
-                self.audio = messages.reduce(into: []) { result, message in
-                    result.append(contentsOf: message.audio)
+                self.audios = messages.reduce(into: []) { result, message in
+                    result.append(contentsOf: message.audios)
                 }
             }
         }
@@ -330,11 +325,11 @@ public struct UserInput {
     /// collect the videos from the chat messages, otherwise these are the stored videos with the ``UserInput``.
     public var videos = [Video]()
 
-    /// The audio associated with the `UserInput`.
+    /// The audios associated with the `UserInput`.
     ///
     /// If the ``prompt-swift.property`` is a ``Prompt-swift.enum/chat(_:)`` this will
-    /// collect the audio from the chat messages, otherwise these are the stored audio with the ``UserInput``.
-    public var audio = [Audio]()
+    /// collect the audios from the chat messages, otherwise these are the stored audios with the ``UserInput``.
+    public var audios = [Audio]()
 
     public var tools: [ToolSpec]?
 
@@ -355,13 +350,15 @@ public struct UserInput {
     /// - ``Prompt-swift.enum/text(_:)``
     /// - ``init(chat:processing:tools:additionalContext:)``
     public init(
-        prompt: String, images: [Image] = [Image](), videos: [Video] = [Video](),
-        audio: [Audio] = [Audio](),
+        prompt: String,
+        images: [Image] = [Image](),
+        videos: [Video] = [Video](),
+        audios: [Audio] = [Audio](),
         tools: [ToolSpec]? = nil,
         additionalContext: [String: any Sendable]? = nil
     ) {
         self.prompt = .chat([
-            .user(prompt, images: images, videos: videos, audio: audio)
+            .user(prompt, images: images, videos: videos, audios: audios)
         ])
         // note: prompt.didSet is not triggered in init
         self.images = images
@@ -407,15 +404,17 @@ public struct UserInput {
     /// - ``Prompt-swift.enum/text(_:)``
     /// - ``init(chat:processing:tools:additionalContext:)``
     public init(
-        messages: [Message], images: [Image] = [Image](), videos: [Video] = [Video](),
-        audio: [Audio] = [Audio](),
+        messages: [Message],
+        images: [Image] = [Image](),
+        videos: [Video] = [Video](),
+        audios: [Audio] = [Audio](),
         tools: [ToolSpec]? = nil,
         additionalContext: [String: any Sendable]? = nil
     ) {
         self.prompt = .messages(messages)
         self.images = images
         self.videos = videos
-        self.audio = audio
+        self.audios = audios
         self.tools = tools
         self.additionalContext = additionalContext
     }
@@ -458,8 +457,8 @@ public struct UserInput {
         self.videos = chat.reduce(into: []) { result, message in
             result.append(contentsOf: message.videos)
         }
-        self.audio = chat.reduce(into: []) { result, message in
-            result.append(contentsOf: message.audio)
+        self.audios = chat.reduce(into: []) { result, message in
+            result.append(contentsOf: message.audios)
         }
 
         self.processing = processing
@@ -487,7 +486,7 @@ public struct UserInput {
         prompt: Prompt,
         images: [Image] = [Image](),
         videos: [Video] = [Video](),
-        audio: [Audio] = [Audio](),
+        audios: [Audio] = [Audio](),
         processing: Processing = .init(),
         tools: [ToolSpec]? = nil, additionalContext: [String: any Sendable]? = nil
     ) {
@@ -497,9 +496,17 @@ public struct UserInput {
         case .text, .messages:
             self.images = images
             self.videos = videos
-            self.audio = audio
-        case .chat:
-            break
+            self.audios = audios
+        case .chat(let messages):
+            self.images = messages.reduce(into: []) { result, message in
+                result.append(contentsOf: message.images)
+            }
+            self.videos = messages.reduce(into: []) { result, message in
+                result.append(contentsOf: message.videos)
+            }
+            self.audios = messages.reduce(into: []) { result, message in
+                result.append(contentsOf: message.audios)
+            }
         }
         self.processing = processing
         self.tools = tools

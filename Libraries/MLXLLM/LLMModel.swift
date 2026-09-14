@@ -40,21 +40,38 @@ extension LLMModel {
     ) throws
         -> PrepareResult
     {
-        let prefillStepSize = windowSize ?? 512
-        let totalTokens = input.text.tokens.size
-        var y = input.text
-        var processed = 0
+        let stepSize = prefill.resolvedStepSize()
+        let y = input.text
+        let total = y.tokens.size
 
-        // Prepare the prompt in chunks if larger than the prefill size.
-        // After each chunk, call the progress hook so the server can emit
-        // llama-server-style slot_update SSE events with real n_past.
-        while y.tokens.size > prefillStepSize {
-            let input = y[.newAxis, ..<prefillStepSize]
-            _ = self(input, cache: cache.isEmpty ? nil : cache, state: nil)
-            eval(cache)
-            y = y[prefillStepSize...]
-            processed += prefillStepSize
-            activePrefillProgressHook?(processed, totalTokens)
+        // A prompt that fits in one chunk is handed to the iterator whole,
+        // keeping short prompts bitwise-identical to the pre-chunking path.
+        // `.unchunked` (forEachChunk processes nothing) takes the same route
+        // at any prompt length.
+        guard total > stepSize else { return .tokens(y) }
+
+        var processed = 0
+        try withPreparedCache(cache, lengths: y.sequenceLengths) {
+            // asyncEval lets the CPU build chunk N+1's graph while the GPU evaluates
+            // chunk N. Under .remainder the reserved tail is the legacy leftover
+            // (up to a full step) rather than a single token.
+            var state: LMOutput.State? = state
+            processed = try prefill.forEachChunk(
+                total: total, reserving: prefill.chunking == .remainder ? stepSize : 1
+            ) { range in
+                let input = y[.newAxis, range]
+                let output = self(input, cache: cache.isEmpty ? nil : cache, state: state)
+                state = output.state
+                asyncEval(cache)
+                // Server.swift sets this before each generate() call to emit
+                // llama-server-style slot_update SSE events with real n_past.
+                activePrefillProgressHook?(range.upperBound, total)
+            }
+
+            // Single sync after the loop to flush any remaining async work.
+            if processed > 0 {
+                eval(cache)
+            }
         }
 
         return .tokens(y[processed...])

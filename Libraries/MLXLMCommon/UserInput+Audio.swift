@@ -23,6 +23,12 @@ extension UserInput.Audio {
     public func asMLXArray(processing: UserInput.AudioProcessing = .init()) async throws -> MLXArray
     {
         switch self {
+        case .data(let data, let format):
+            let fileURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString).appendingPathExtension(format)
+            try data.write(to: fileURL)
+            defer { try? FileManager.default.removeItem(at: fileURL) }
+            return try await UserInput.Audio.url(fileURL).asMLXArray(processing: processing)
         case .url(let url):
             #if canImport(AVFoundation)
             let asset = AVURLAsset(url: url)

@@ -655,24 +655,371 @@ public class ToolCallProcessor {
                 // call. Report it rather than leaking protocol text as response.
                 state = .normal
                 toolCallBuffer = ""
-
-                // If the token contains the start character, there may be more tool calls to come
-                let nextOutput: String?
-                if let trailingToken, let startChar = startTagFirstChar,
-                    trailingToken.contains(startChar)
+                if !leadingTokenWasRecorded {
+                    recordResponse(leadingToken ?? "")
+                }
+                let reason = classifyCompletePayload(bufferedToolCall)
+                appendRejectedToolCall(
+                    reason: reason,
+                    rawText: bufferedToolCall,
+                    detail: reason.diagnosticDetail)
+                if let trailingToken,
+                    tokenCouldContainToolStart(trailingToken, startChar: startChar)
                 {
-                    nextOutput = processChunk(trailingToken)
-                } else {
-                    // Otherwise, return the collected token, or nil if it's empty
-                    nextOutput = trailingToken?.isEmpty ?? true ? nil : trailingToken
+                    return combine(leadingToken, processChunk(trailingToken))
                 }
-                
-                if let leading = leadingToken, !leading.isEmpty {
-                    return leading + (nextOutput ?? "")
+                if let trailingToken { recordResponse(trailingToken) }
+                return combine(leadingToken, trailingToken)
+            }
+
+            return nil
+
+        case .collectingJSONToolCall:
+            return processCollectingJSONToolCall(
+                startTag: startTag,
+                startChar: startChar,
+                leadingToken: leadingToken
+            )
+        }
+    }
+
+    private func processCollectingJSONToolCall(
+        startTag: String,
+        startChar: Character,
+        leadingToken: String?
+    ) -> String? {
+        if toolCallBuffer.count > maxJSONFallbackBufferLength {
+            // Safety valve: flush pathological unmatched JSON-like buffers as text.
+            state = .normal
+            let buffered = toolCallBuffer
+            toolCallBuffer = ""
+            let response = (leadingToken ?? "") + buffered
+            recordResponse(sanitizingProtocol: response)
+            return response
+        }
+
+        switch jsonObjectScanner.evaluatePrefix(in: toolCallBuffer) {
+        case .invalidObject:
+            state = .normal
+            let buffered = toolCallBuffer
+            toolCallBuffer = ""
+            // vLLM-style recovery: if a tagged tool call exists later, retry tagged parsing.
+            if buffered.contains(startTag) {
+                recordResponse(leadingToken ?? "")
+                return combine(leadingToken, processChunk(buffered))
+            }
+            let response = (leadingToken ?? "") + buffered
+            recordResponse(sanitizingProtocol: response)
+            return response
+        case .needsMore, .validObject:
+            break
+        }
+
+        guard let split = jsonObjectScanner.splitLeadingObject(from: toolCallBuffer) else {
+            // Continue buffering until a complete top-level JSON object is available.
+            recordResponse(leadingToken ?? "")
+            return leadingToken?.isEmpty ?? true ? nil : leadingToken
+        }
+
+        let jsonCandidate = split.object
+        let trailingToken = split.trailing
+        recordResponse(leadingToken ?? "")
+
+        if let toolCall = parser.parse(content: jsonCandidate, tools: tools) {
+            appendToolCall(toolCall, rawText: jsonCandidate)
+
+            state = .normal
+            toolCallBuffer = ""
+
+            if trailingToken.isEmpty {
+                return leadingToken?.isEmpty ?? true ? nil : leadingToken
+            }
+
+            if tokenCouldContainToolStart(trailingToken, startChar: startChar) {
+                return combine(leadingToken, processChunk(trailingToken))
+            }
+
+            recordResponse(trailingToken)
+            return combine(leadingToken, trailingToken)
+        }
+
+        // Bare JSON remains response text unless it carries clear tool-call
+        // intent. This avoids classifying ordinary JSON as malformed protocol.
+        let rejected = rejectBareJSONPayloadIfNeeded(jsonCandidate)
+        state = .normal
+        toolCallBuffer = ""
+        if tokenCouldContainToolStart(trailingToken, startChar: startChar) {
+            if !rejected {
+                recordResponse(jsonCandidate)
+            }
+            return combine(
+                leadingToken,
+                combine(rejected ? nil : jsonCandidate, processChunk(trailingToken)))
+        }
+        let response = (rejected ? "" : jsonCandidate) + trailingToken
+        recordResponse(sanitizingProtocol: response)
+        return combine(leadingToken, response)
+    }
+
+    private func taggedStartMode(
+        in chunk: String,
+        startChar: Character
+    ) -> TaggedStartMode {
+        let taggedStartIndex = chunk.firstIndex(of: startChar)
+        let jsonStartIndex =
+            supportsBareJSONFallback
+            ? chunk.firstIndex(of: jsonObjectScanner.startCharacter)
+            : nil
+
+        switch (taggedStartIndex, jsonStartIndex) {
+        case (nil, nil):
+            return .none
+        case (.some, nil):
+            return .tagged
+        case (nil, .some):
+            return .bareJSON
+        case (.some(let tagged), .some(let json)):
+            if json >= tagged {
+                return .tagged
+            }
+
+            // If the earlier `{` cannot begin a JSON object, prefer tagged parsing.
+            if case .invalidObject = jsonObjectScanner.evaluatePrefix(in: chunk, from: json) {
+                return .tagged
+            }
+
+            return .bareJSON
+        }
+    }
+
+    private func tokenCouldContainToolStart(_ token: String, startChar: Character) -> Bool {
+        token.contains(startChar)
+            || (supportsBareJSONFallback && token.contains(jsonObjectScanner.startCharacter))
+    }
+
+    private func combine(_ first: String?, _ second: String?) -> String? {
+        let merged = (first ?? "") + (second ?? "")
+        return merged.isEmpty ? nil : merged
+    }
+
+    private func appendToolCalls(_ calls: [ToolCall], rawText: String) {
+        for call in calls {
+            appendToolCall(call, rawText: rawText)
+        }
+    }
+
+    private func appendToolCall(_ call: ToolCall, rawText: String) {
+        guard allowedToolNames?.contains(call.function.name) ?? true else {
+            appendRejectedToolCall(
+                reason: .undeclaredTool,
+                rawText: rawText,
+                toolName: call.function.name,
+                callID: call.id,
+                detail: RejectedToolCall.Reason.undeclaredTool.diagnosticDetail)
+            return
+        }
+
+        let normalized = normalizedToolCall(call)
+        toolCalls.append(normalized)
+        if orderedOutputEnabled {
+            orderedOutputQueue.append(.toolCall(normalized))
+        }
+    }
+
+    private func appendRejectedToolCall(
+        reason: RejectedToolCall.Reason,
+        rawText: String,
+        toolName: String? = nil,
+        callID: String? = nil,
+        detail: String? = nil
+    ) {
+        let rejection = RejectedToolCall(
+            reason: reason,
+            format: format,
+            toolName: toolName,
+            callID: callID,
+            rawText: rawText,
+            detail: detail)
+        rejectedToolCalls.append(rejection)
+        rejectedToolCallCount += 1
+        if orderedOutputEnabled {
+            orderedOutputQueue.append(.rejectedToolCall(rejection))
+        }
+    }
+
+    private func rejectionReasonForResidual(
+        _ text: String,
+        state: State,
+        explicitInlineMarker: Bool
+    ) -> RejectedToolCall.Reason? {
+        switch state {
+        case .normal:
+            return nil
+        case .potentialToolCall:
+            guard let startTag = parser.startTag,
+                protocolMarkerAttempt(in: text, startTag: startTag) != nil
+            else { return nil }
+            return partialMatch(buffer: text, tag: startTag)
+                ? .incompleteOutput : .malformedSyntax
+        case .collectingToolCall:
+            if isInlineFormat {
+                guard explicitInlineMarker || inspectJSONToolIntent(text) != nil else {
+                    return nil
                 }
-                return nextOutput
-            } else {
-                return nil
+                if jsonObjectScanner.splitLeadingObject(from: text) == nil {
+                    return .incompleteOutput
+                }
+                return classifyCompletePayload(text)
+            }
+            if let endTag = parser.endTag, text.contains(endTag) {
+                return classifyCompletePayload(text)
+            }
+            return .incompleteOutput
+        case .collectingJSONToolCall:
+            guard inspectJSONToolIntent(text) != nil else { return nil }
+            if jsonObjectScanner.splitLeadingObject(from: text) == nil {
+                return .incompleteOutput
+            }
+            return classifyCompletePayload(text)
+        }
+    }
+
+    private func rejectInlinePayloadIfNeeded(
+        _ text: String, explicitMarker: Bool
+    ) -> Bool {
+        guard explicitMarker || inspectJSONToolIntent(text) != nil else { return false }
+        let inspection = inspectJSONToolIntent(text)
+        let reason = inspection?.reason ?? classifyCompletePayload(text)
+        appendRejectedToolCall(
+            reason: reason,
+            rawText: text,
+            toolName: inspection?.toolName,
+            callID: inspection?.callID,
+            detail: reason.diagnosticDetail)
+        return true
+    }
+
+    private func rejectBareJSONPayloadIfNeeded(_ text: String) -> Bool {
+        guard let inspection = inspectJSONToolIntent(text) else { return false }
+        appendRejectedToolCall(
+            reason: inspection.reason,
+            rawText: text,
+            toolName: inspection.toolName,
+            callID: inspection.callID,
+            detail: inspection.reason.diagnosticDetail)
+        return true
+    }
+
+    private func classifyCompletePayload(_ text: String) -> RejectedToolCall.Reason {
+        if let inspection = inspectJSONToolIntent(text) {
+            return inspection.reason
+        }
+        if text.range(of: #"<function\s*=\s*>"#, options: .regularExpression) != nil {
+            return .missingToolName
+        }
+        return .malformedSyntax
+    }
+
+    private struct JSONToolIntent {
+        let reason: RejectedToolCall.Reason
+        let toolName: String?
+        let callID: String?
+    }
+
+    /// Identifies JSON as tool protocol only when it has tool-specific keys.
+    /// Ordinary JSON remains response text.
+    private func inspectJSONToolIntent(_ rawText: String) -> JSONToolIntent? {
+        var text =
+            rawText
+            .replacingOccurrences(of: "<|python_tag|>", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let startTag = parser.startTag, let range = text.range(of: startTag) {
+            text = String(text[range.upperBound...])
+        }
+        if let endTag = parser.endTag, let range = text.range(of: endTag) {
+            text = String(text[..<range.lowerBound])
+        }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let data = text.data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            let hasToolKeys =
+                text.contains("\"name\"")
+                && (text.contains("\"arguments\"") || text.contains("\"parameters\""))
+            return hasToolKeys
+                ? JSONToolIntent(reason: .malformedSyntax, toolName: nil, callID: nil)
+                : nil
+        }
+
+        let call = (root["function"] as? [String: Any]) ?? root
+        let name = call["name"] as? String
+        let callID = (root["id"] as? String) ?? (call["id"] as? String)
+        let argumentValue = call["arguments"] ?? call["parameters"]
+        let hasArgumentKey = call.keys.contains("arguments") || call.keys.contains("parameters")
+
+        guard name != nil || hasArgumentKey else { return nil }
+        guard let name, !name.isEmpty else {
+            return JSONToolIntent(
+                reason: .missingToolName, toolName: nil, callID: callID)
+        }
+        guard hasArgumentKey else {
+            // A name by itself is common in ordinary JSON and is not enough to
+            // infer a bare tool call. Explicit tagged formats are classified by
+            // `classifyCompletePayload` instead.
+            return nil
+        }
+
+        let argumentsAreValid: Bool
+        if argumentValue is [String: Any] {
+            argumentsAreValid = true
+        } else if let string = argumentValue as? String,
+            let data = string.data(using: .utf8),
+            (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) != nil
+        {
+            argumentsAreValid = true
+        } else {
+            argumentsAreValid = false
+        }
+
+        return JSONToolIntent(
+            reason: argumentsAreValid ? .malformedSyntax : .invalidArguments,
+            toolName: name,
+            callID: callID)
+    }
+
+    private func protocolMarkerAttempt(in text: String, startTag: String) -> String? {
+        guard let first = startTag.first, let start = text.firstIndex(of: first) else {
+            return nil
+        }
+        let suffix = text[start...]
+        let matchCount = zip(suffix, startTag).prefix { $0 == $1 }.count
+        guard matchCount >= nearCompleteMatchLength(for: startTag) else { return nil }
+        let end =
+            suffix.firstIndex(of: ">")
+            .map { text.index(after: $0) }
+            ?? suffix.firstIndex(of: "]").map { text.index(after: $0) }
+            ?? text.endIndex
+        return String(text[start ..< end])
+    }
+
+    private func cleanInlineLeading(_ text: String) -> String {
+        text.replacingOccurrences(of: "<|python_tag|>", with: "")
+    }
+
+    private func normalizedToolCall(_ call: ToolCall) -> ToolCall {
+        if let id = call.id, !id.isEmpty, emittedToolCallIDs.insert(id).inserted {
+            return call
+        }
+
+        return ToolCall(function: call.function, id: generateToolCallID())
+    }
+
+    private func generateToolCallID() -> String {
+        while true {
+            let id = format.generateToolCallID()
+            if emittedToolCallIDs.insert(id).inserted {
+                return id
             }
         }
     }

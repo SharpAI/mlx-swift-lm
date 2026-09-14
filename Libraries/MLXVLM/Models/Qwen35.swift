@@ -872,7 +872,7 @@ public enum Qwen35Language {
             super.init()
         }
 
-        open func callAsFunction(
+        public func callAsFunction(
             _ inputs: MLXArray,
             inputsEmbeds: MLXArray? = nil,
             cache: [KVCache?]? = nil,
@@ -1454,6 +1454,14 @@ public class Qwen35: Module, VLMModel {
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
+        // Computed on the incoming weights, before the `mtp.` filter below. See
+        // the matching note in MLXLLM/Models/Qwen35.swift — a pre-converted MLX
+        // checkpoint has already been shifted and must not be shifted again.
+        let hasUnsanitizedConv1d = weights.contains { key, value in
+            key.contains("conv1d.weight") && value.dim(-1) != 1
+        }
+        let shouldShiftNormWeights = hasUnsanitizedConv1d
+
         var weights = weights
         if !MTPConfig.retainMTPWeights {
             weights = weights.filter { !$0.key.contains("mtp.") }

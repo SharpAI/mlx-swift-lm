@@ -27,8 +27,15 @@ final class GenerationExecutionTests: XCTestCase {
         var maxTokens: Int? = 1
         var tokenCount = 0
         var promptPrefillTime: TimeInterval { 0 }
+        var streamingError: SSDStreamingError? { nil }
+        var acceptedDraftTokens: Int { 0 }
+        var totalDraftTokens: Int { 0 }
+        var state: LMOutput.State? { nil }
+        var speculativeDecodingTelemetry: SpeculativeDecodingTelemetry? { nil }
         var onNext: @Sendable () -> Void = {}
         var onFinalize: @Sendable () -> Void = {}
+
+        mutating func discardGeneratedToken() {}
 
         mutating func next() -> Int? {
             guard tokenCount < (maxTokens ?? Int.max) else { return nil }

@@ -369,7 +369,8 @@ public func loadWeights(
     modelDirectory: URL, model: BaseLanguageModel,
     quantization: BaseConfiguration.Quantization? = nil,
     perLayerQuantization: BaseConfiguration.PerLayerQuantization? = nil,
-    lazyLoad: Bool = false
+    lazyLoad: Bool = false,
+    weightFileSelection: WeightFileSelection = .automatic
 ) throws {
     // load the weights and collect metadata from the first safetensor file
     var weights = [String: MLXArray]()
@@ -385,9 +386,13 @@ public func loadWeights(
     // `Unhandled keys ["mtp"]`.
     //
     // MTP add-ons stay loadable when the user asks for them via SWIFTLM_MTP_ENABLE.
+    //
+    // ``WeightFileSelection/allFilesPresent`` is an escape hatch for a checkpoint whose
+    // index is known to be wrong -- skip the index-based filter entirely in that case.
     var indexedFiles: Set<String>? = nil
-    if let data = try? Data(
-        contentsOf: modelDirectory.appendingPathComponent("model.safetensors.index.json")),
+    if weightFileSelection != .allFilesPresent,
+        let data = try? Data(
+            contentsOf: modelDirectory.appendingPathComponent("model.safetensors.index.json")),
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
         let weightMap = json["weight_map"] as? [String: String]
     {
@@ -584,5 +589,36 @@ public func loadWeights(
 
     if !lazyLoad {
         eval(model)
+    }
+}
+
+/// Async variant of
+/// ``loadWeights(modelDirectory:model:quantization:perLayerQuantization:lazyLoad:weightFileSelection:)``.
+///
+/// Loading blocks its thread on file I/O and fans out with `DispatchQueue.concurrentPerform`.
+/// Swift concurrency's cooperative threads must never block, so this overload runs the load
+/// on a global queue and suspends the caller instead. Async callers resolve to this overload;
+/// the synchronous one remains for synchronous code such as model conversion.
+public func loadWeights(
+    modelDirectory: URL, model: BaseLanguageModel,
+    quantization: BaseConfiguration.Quantization? = nil,
+    perLayerQuantization: BaseConfiguration.PerLayerQuantization? = nil,
+    lazyLoad: Bool = false,
+    weightFileSelection: WeightFileSelection = .automatic
+) async throws {
+    let model = SendableBox(model)
+    try await withCheckedThrowingContinuation {
+        (continuation: CheckedContinuation<Void, any Error>) in
+        DispatchQueue.global(qos: .userInitiated).async {
+            continuation.resume(
+                with: Result {
+                    try loadWeights(
+                        modelDirectory: modelDirectory, model: model.consume(),
+                        quantization: quantization,
+                        perLayerQuantization: perLayerQuantization,
+                        lazyLoad: lazyLoad,
+                        weightFileSelection: weightFileSelection)
+                })
+        }
     }
 }

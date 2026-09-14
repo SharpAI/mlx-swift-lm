@@ -6,6 +6,8 @@ import MLXLLM
 import MLXNN
 import Testing
 
+@testable import MLXLMCommon
+
 extension MLXTestingSuite {
     @Suite
     struct SpeculativeDecodingTests {
@@ -126,8 +128,8 @@ extension MLXTestingSuite {
         let parameters = GenerateParameters(maxTokens: 16, temperature: 0.0)
 
         // Pass explicit caches so we can inspect their state after generation
-        let mainCache = mainContext.model.newCache(parameters: parameters)
-        let draftCache = draftContext.model.newCache(parameters: parameters)
+        let mainCache = try mainContext.model.newCache(parameters: parameters)
+        let draftCache = try draftContext.model.newCache(parameters: parameters)
         
         // Use the speculative generateTokens overload that takes explicit caches
         for await generation in try generateTokens(
@@ -152,4 +154,46 @@ extension MLXTestingSuite {
         }
     }
 }
+}
+
+/// Deterministic causal model for speculative decoding contract tests.
+///
+/// Each logit row predicts a high-margin transition from the token at the
+/// same position. Batched verification and token-by-token decoding therefore
+/// execute the same mathematical function, so equality failures point at the
+/// speculative iterator rather than at hardware-dependent MLX kernel drift.
+private final class StableTransitionLanguageModel: Module, LanguageModel, KVCacheDimensionProvider {
+    let vocabularySize: Int
+    var kvHeads: [Int] { [] }
+
+    init(vocabularySize: Int) {
+        self.vocabularySize = vocabularySize
+        super.init()
+    }
+
+    func prepare(
+        _ input: LMInput, cache: [KVCache], state _: LMOutput.State?, prefill _: PrefillParameters
+    )
+        throws -> PrepareResult
+    {
+        .tokens(input.text)
+    }
+
+    func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        let tokenIds = inputs.asArray(Int.self)
+        var logits = Array(
+            repeating: Float(-100),
+            count: tokenIds.count * vocabularySize
+        )
+
+        for (position, token) in tokenIds.enumerated() {
+            logits[position * vocabularySize + nextToken(after: token)] = 100
+        }
+
+        return MLXArray(logits, [1, tokenIds.count, vocabularySize])
+    }
+
+    private func nextToken(after token: Int) -> Int {
+        (token * 31 + 7) % vocabularySize
+    }
 }

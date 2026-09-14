@@ -519,7 +519,7 @@ public enum ChatSessionTests {
                 id: call.id)
         ]) {
             switch generation {
-            case .chunk(let text):
+            case .chunk(let text, _):
                 followUpText += text
             case .toolCall(let call):
                 followUpCalls.append(call)

@@ -41,8 +41,9 @@ final class DirectExpertReductionTests: XCTestCase {
 
         let tokens = 19
         let input = MLXRandom.normal([tokens, 64]).asType(.bfloat16)
-        let indexValues: [UInt32] = (0 ..< tokens * 8).map { index in
-            UInt32((index * 5 + index / 8) % 8)
+        let indexValues: [UInt32] = (0 ..< tokens * 8).map { (index: Int) -> UInt32 in
+            let value: Int = (index * 5 + index / 8) % 8
+            return UInt32(value)
         }
         let indices = MLXArray(indexValues).reshaped(tokens, 8)
         let weights = softmax(MLXRandom.normal([tokens, 8]), axis: -1).asType(.bfloat16)

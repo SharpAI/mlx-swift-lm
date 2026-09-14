@@ -1298,7 +1298,7 @@ public struct Qwen2VLMessageGenerator: MessageGenerator {
                 + message.videos.map { _ in
                     ["type": "video"]
                 }
-                + message.audio.map { _ in
+                + message.audios.map { _ in
                     ["type": "audio"]
                 },
         ]

@@ -41,6 +41,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
     let drafter: any MTPDrafterModel
 
     var mainState: LMOutput.State?
+    public var state: LMOutput.State? { mainState }
     let mainCacheStorage: KVCacheStorage
     var mainCache: [KVCache] { mainCacheStorage.cache }
     var kvCachePlan: KVCachePlan { mainCacheStorage.plan }
@@ -50,6 +51,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
     let sampler: LogitSampler
 
     public var tokenCount: Int { telemetry.emittedTokenCount }
+    public let streamingError: SSDStreamingError? = nil
     public let maxTokens: Int?
     /// Total tokens proposed per round (`blockSize - 1` drafted, plus the
     /// bonus token from the previous verify). Mirrors mlx-vlm's
@@ -727,6 +729,7 @@ extension MTPSpeculativeTokenIterator: GenerationFinalizingTokenIterator {
 extension MTPSpeculativeTokenIterator: MTPStatsCollecting {
     public var proposedDraftTokens: Int { proposedCount }
     public var acceptedDraftTokens: Int { acceptedCount }
+    public var totalDraftTokens: Int { proposedCount }
 }
 
 extension MTPSpeculativeTokenIterator {

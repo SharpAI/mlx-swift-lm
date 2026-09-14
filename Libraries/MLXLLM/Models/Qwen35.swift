@@ -55,7 +55,6 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
 
     // MTP fields
     public var numNextnPredictLayers: Int = 0
-    public var mtpNumHiddenLayers: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type"
@@ -88,7 +87,6 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
         case moeIntermediateSize = "moe_intermediate_size"
         case normTopkProb = "norm_topk_prob"
         case numNextnPredictLayers = "num_nextn_predict_layers"
-        case mtpNumHiddenLayers = "mtp_num_hidden_layers"
     }
 
     public init(from decoder: Decoder) throws {
@@ -1283,6 +1281,7 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
         let hasUnsanitizedConv1d = weights.contains { key, value in
             key.contains("conv1d.weight") && value.dim(-1) != 1
         }
+        let hasMTPWeights = weights.keys.contains { $0.contains("mtp.") }
         // The `+1` below rewrites every RMSNorm weight, so it is only meaningful for
         // checkpoints that store norms zero-centered (mean ≈ 0). Applying it to a
         // checkpoint whose norms are already in standard form (mean ≈ 1 or above)
