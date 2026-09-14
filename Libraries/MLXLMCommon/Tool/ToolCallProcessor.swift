@@ -33,12 +33,15 @@ public class ToolCallProcessor {
 
     // MARK: - Properties
 
+    private let validationPolicy: ToolCallValidationPolicy
     private let format: ToolCallFormat
     private let parser: any ToolCallParser
     private let tools: [[String: any Sendable]]?
     private let allowedToolNames: Set<String>?
     private let supportsBareJSONFallback: Bool
+    private var recoveryScanner: TextToolCallRecoveryScanner?
     private let maxJSONFallbackBufferLength = 32_768
+    private let maximumToolCallBufferByteCount = 65_536
     private let jsonObjectScanner = JSONLeadingObjectScanner(startCharacter: "{")
     private var state = State.normal
     private var toolCallBuffer = ""
@@ -57,6 +60,14 @@ public class ToolCallProcessor {
     /// Total rejected calls observed by this processor, including drained calls.
     public private(set) var rejectedToolCallCount = 0
 
+    /// Provenance for every call produced by cross-dialect recovery, in source
+    /// order. Calls produced by the selected native parser are not included.
+    public private(set) var recoveryEvents: [ToolCallRecoveryEvent] = []
+
+    /// Total calls promoted by cross-dialect recovery, including events that
+    /// have already been drained by a diagnostic consumer.
+    public private(set) var recoveredToolCallCount = 0
+
     // MARK: - State Enum
 
     private enum State {
@@ -64,6 +75,9 @@ public class ToolCallProcessor {
         case potentialToolCall
         case collectingToolCall
         case collectingJSONToolCall
+        /// An oversized explicit attempt is ignored until EOS. Resuming in the
+        /// middle of its syntax could turn argument data into a new call.
+        case quarantiningOversizedToolCall
     }
 
     private enum TaggedStartMode {
@@ -80,7 +94,16 @@ public class ToolCallProcessor {
     ///   - tools: Optional tool schemas for type-aware parsing and authorization.
     ///     `nil` accepts any parsed function name; a supplied array, including
     ///     an empty one, authorizes only the names it declares.
-    public init(format: ToolCallFormat = .json, tools: [[String: any Sendable]]? = nil) {
+    ///     A nonempty declaration also enables bounded cross-dialect recovery;
+    ///     only an exactly declared function name can be promoted by recovery.
+    ///   - toolCallPolicy: Recovery and validation rules. Defaults to conservative
+    ///     recovery and permissive schema validation; tool-name authorization always applies.
+    public init(
+        format: ToolCallFormat = .json,
+        tools: [[String: any Sendable]]? = nil,
+        toolCallPolicy: ToolCallPolicy = .init()
+    ) {
+        self.validationPolicy = toolCallPolicy.validation
         self.format = format
         self.parser = format.createParser()
         self.tools = tools
@@ -90,7 +113,12 @@ public class ToolCallProcessor {
                     (tool["function"] as? [String: any Sendable])?["name"] as? String
                 })
         }
-        self.supportsBareJSONFallback = format == .json
+        self.supportsBareJSONFallback = parser.supportsBareJSON
+        self.recoveryScanner = TextToolCallRecoveryScanner(
+            primaryFormat: format,
+            policy: toolCallPolicy.recovery,
+            tools: tools,
+            allowedToolNames: self.allowedToolNames)
     }
 
     // MARK: - Computed Properties
@@ -105,12 +133,38 @@ public class ToolCallProcessor {
         parser.startTag?.first
     }
 
+    /// Whether the selected format frames calls with `<tool_call>` tags and
+    /// therefore closes frames only after a structurally complete payload.
+    private var usesStructuralToolCallFrame: Bool {
+        parser.startTag == ToolCallFrameScanner.startTag
+            && parser.endTag == ToolCallFrameScanner.endTag
+    }
+
     // MARK: - Public Methods
 
     /// Process a generated text chunk and extract any tool call content.
     /// - Parameter chunk: The text chunk to process
     /// - Returns: Regular text that should be displayed (non-tool call content), or `nil` if buffering
     public func processChunk(_ chunk: String) -> String? {
+        guard recoveryScanner != nil else {
+            return processNativeChunk(chunk)
+        }
+        if recoveryScanner!.consumeIfPassThrough(chunk) {
+            if state == .normal,
+                isInlineFormat || startTagFirstChar == "<" || startTagFirstChar == "["
+            {
+                recordResponse(chunk)
+                return chunk
+            }
+            return processNativeChunk(chunk)
+        }
+
+        let recovered = recoveryScanner!.process(chunk)
+        return processRecoveryOutputs(recovered)
+    }
+
+    /// Sends text not claimed by recovery through the selected native parser.
+    private func processNativeChunk(_ chunk: String) -> String? {
         if isInlineFormat {
             return processInlineChunk(chunk)
         }
@@ -153,6 +207,15 @@ public class ToolCallProcessor {
         return drained
     }
 
+    /// Removes and returns every cross-dialect recovery event in source order.
+    /// A second call returns an empty array until more calls are recovered.
+    public func drainRecoveryEvents() -> [ToolCallRecoveryEvent] {
+        guard !recoveryEvents.isEmpty else { return [] }
+        let drained = recoveryEvents
+        recoveryEvents.removeAll(keepingCapacity: true)
+        return drained
+    }
+
     /// Process end-of-sequence, parsing any buffered content as tool call(s).
     ///
     /// Call this when generation ends (e.g., on EOS token) to handle formats
@@ -177,6 +240,19 @@ public class ToolCallProcessor {
     ///   `returnBufferedText` is `false`).
     @discardableResult
     public func processEOS(returnBufferedText: Bool = true) -> String? {
+        let recoveredText = finishRecoveryStream()
+        return combine(
+            recoveredText,
+            processNativeEOS(returnBufferedText: returnBufferedText))
+    }
+
+    private func processNativeEOS(returnBufferedText: Bool) -> String? {
+        if state == .quarantiningOversizedToolCall {
+            state = .normal
+            toolCallBuffer = ""
+            hasExplicitInlineMarker = false
+            return nil
+        }
         guard
             state == .collectingToolCall || state == .potentialToolCall
                 || state == .collectingJSONToolCall
@@ -189,8 +265,15 @@ public class ToolCallProcessor {
 
         let buffered = toolCallBuffer
         let terminalState = state
-        let parsedCalls = parser.parseEOS(buffered, tools: tools)
-        appendToolCalls(parsedCalls, rawText: buffered)
+        var parsedCalls = parser.parseEOS(buffered, tools: tools)
+        let usedRecovery = parsedCalls.isEmpty
+        if parsedCalls.isEmpty {
+            parsedCalls = recoveryScanner?.recoverEOSPayloads(buffered) ?? []
+        }
+        let acceptedCalls = appendToolCalls(parsedCalls, rawText: buffered)
+        if usedRecovery {
+            collectRecoveryEvents(acceptedCandidates: acceptedCalls)
+        }
 
         let didReject: Bool
         if parsedCalls.isEmpty,
@@ -219,6 +302,7 @@ public class ToolCallProcessor {
     /// this API with the legacy processing and draining APIs.
     public func processEOSOutputs() -> [Output] {
         orderedOutputEnabled = true
+        _ = finishRecoveryStream()
         if format == .mistral, let outputs = processMistralEOSOutputs() {
             orderedOutputQueue.removeAll(keepingCapacity: true)
             return outputs
@@ -229,13 +313,61 @@ public class ToolCallProcessor {
         }
 
         let outputCount = orderedOutputQueue.count
-        let visible = processEOS(returnBufferedText: true)
+        let visible = processNativeEOS(returnBufferedText: true)
         if orderedOutputQueue.count == outputCount, let visible {
             recordEOSResidual(visible)
         }
         _ = drainToolCalls()
         _ = drainRejectedToolCalls()
         return drainOrderedOutputs()
+    }
+
+    private func processRecoveryOutputs(_ outputs: [TextToolCallRecoveryScanner.Output])
+        -> String?
+    {
+        var visible: String?
+        var acceptedCandidates: [Bool] = []
+        for output in outputs {
+            switch output {
+            case .text(let text):
+                visible = combine(visible, processNativeChunk(text))
+            case .protectedText(let text):
+                // The recovery lexer has already classified this as inert
+                // response data. Routing it through the native parser would
+                // reopen the trust boundary and allow calls hidden in
+                // reasoning, code, or JSON strings to execute.
+                recordResponse(text)
+                visible = combine(visible, text)
+            case .toolCall(let call, let rawText):
+                acceptedCandidates.append(appendToolCall(call, rawText: rawText))
+            case .rejected(let rawText, let reason, let toolName):
+                appendRejectedToolCall(
+                    reason: reason,
+                    rawText: rawText,
+                    toolName: toolName,
+                    detail: reason.diagnosticDetail)
+            }
+        }
+        collectRecoveryEvents(acceptedCandidates: acceptedCandidates)
+        return visible
+    }
+
+    /// Moves provenance for executable promotions into the public log.
+    /// Candidates rejected by the common authorization/schema boundary are
+    /// rejection telemetry, not successful recoveries.
+    private func collectRecoveryEvents(acceptedCandidates: [Bool]) {
+        guard let drained = recoveryScanner?.drainEvents(), !drained.isEmpty else { return }
+        assert(drained.count == acceptedCandidates.count)
+        let acceptedEvents = zip(drained, acceptedCandidates).compactMap { event, accepted in
+            accepted ? event : nil
+        }
+        recoveredToolCallCount += acceptedEvents.count
+        recoveryEvents.append(contentsOf: acceptedEvents)
+    }
+
+    private func finishRecoveryStream() -> String? {
+        guard recoveryScanner != nil else { return nil }
+        return processRecoveryOutputs(recoveryScanner!.finish())
     }
 
     // MARK: - Private Methods
@@ -278,7 +410,7 @@ public class ToolCallProcessor {
                     toolCallBuffer = ""
                     hasExplicitInlineMarker = false
                     let response = rejected ? visibleLeading : visibleLeading + buffered
-                    if !rejected { recordResponse(sanitizingProtocol: buffered) }
+                    if !rejected { recordResponse(buffered) }
                     return response
                 }
 
@@ -295,6 +427,11 @@ public class ToolCallProcessor {
 
         case .potentialToolCall, .collectingToolCall, .collectingJSONToolCall:
             toolCallBuffer += chunk
+
+            if toolCallBuffer.utf8.count > maximumToolCallBufferByteCount {
+                rejectOversizedNativeBuffer()
+                return nil
+            }
 
             if let toolCall = parser.parse(content: toolCallBuffer, tools: tools) {
                 appendToolCall(toolCall, rawText: toolCallBuffer)
@@ -313,11 +450,14 @@ public class ToolCallProcessor {
                 toolCallBuffer = ""
                 hasExplicitInlineMarker = false
                 guard !rejected else { return nil }
-                recordResponse(sanitizingProtocol: buffered)
+                recordResponse(buffered)
                 return buffered
             }
 
             // Still collecting
+            return nil
+
+        case .quarantiningOversizedToolCall:
             return nil
         }
     }
@@ -413,11 +553,10 @@ public class ToolCallProcessor {
         else { return nil }
 
         let startTag = "[TOOL_CALLS]"
-        let argsTag = "[ARGS]"
         var remaining = toolCallBuffer
 
         while remaining.hasPrefix(startTag) {
-            guard let argsRange = remaining.range(of: argsTag) else {
+            guard let brace = remaining.firstIndex(of: "{") else {
                 appendRejectedToolCall(
                     reason: .incompleteOutput,
                     rawText: remaining,
@@ -425,7 +564,7 @@ public class ToolCallProcessor {
                 remaining = ""
                 break
             }
-            let arguments = String(remaining[argsRange.upperBound...])
+            let arguments = String(remaining[brace...])
             guard let split = jsonObjectScanner.splitLeadingObject(from: arguments) else {
                 appendRejectedToolCall(
                     reason: .incompleteOutput,
@@ -435,9 +574,13 @@ public class ToolCallProcessor {
                 break
             }
 
-            let callText = String(remaining[..<argsRange.upperBound]) + split.object
-            if let call = parser.parse(content: callText, tools: tools) {
-                appendToolCall(call, rawText: callText)
+            let callEnd = remaining.index(brace, offsetBy: split.object.count)
+            let callText = String(remaining[..<callEnd])
+            if let call = parser.parse(content: callText, tools: tools)
+                ?? recoveryScanner?.recoverCompletePayload(callText)
+            {
+                let accepted = appendToolCall(call, rawText: callText)
+                collectRecoveryEvents(acceptedCandidates: [accepted])
             } else {
                 let reason = classifyCompletePayload(callText)
                 appendRejectedToolCall(
@@ -586,48 +729,36 @@ public class ToolCallProcessor {
             fallthrough
 
         case .potentialToolCall:
-            if partialMatch(buffer: toolCallBuffer, tag: startTag) {
-                if toolCallBuffer.starts(with: startTag) {
-                    state = .collectingToolCall
-                    recordResponse(leadingToken ?? "")
-                    leadingTokenWasRecorded = true
-                    fallthrough
-                } else {
-                    recordResponse(leadingToken ?? "")
-                    leadingTokenWasRecorded = true
-                    return nil
-                }
-            } else {
-                // Otherwise, return the collected text and reset the state.
-                state = .normal
-                let buffer = toolCallBuffer
-                toolCallBuffer = ""
-                if let attempt = protocolMarkerAttempt(in: buffer, startTag: startTag) {
-                    recordResponse(leadingToken ?? "")
-                    appendRejectedToolCall(
-                        reason: .malformedSyntax,
-                        rawText: attempt,
-                        detail: RejectedToolCall.Reason.malformedSyntax.diagnosticDetail)
-                    let remainder = buffer.replacingOccurrences(of: attempt, with: "")
-                    recordResponse(sanitizingProtocol: remainder)
-                    return combine(leadingToken, stripProtocolSpans(from: remainder))
-                }
-                let response = (leadingToken ?? "") + buffer
-                recordResponse(sanitizingProtocol: response)
-                return response
-            }
+            leadingToken = scanTaggedStart(
+                startTag: startTag, startChar: startChar, leadingToken: leadingToken)
+            leadingTokenWasRecorded = true
+            guard toolCallBuffer.hasPrefix(startTag) else { return leadingToken }
+            state = .collectingToolCall
+            fallthrough
 
         case .collectingToolCall:
-            guard let endTag = parser.endTag else {
-                return nil
+            if toolCallBuffer.utf8.count > maximumToolCallBufferByteCount {
+                if !leadingTokenWasRecorded { recordResponse(leadingToken ?? "") }
+                rejectOversizedNativeBuffer()
+                return leadingToken
             }
 
-            if toolCallBuffer.contains(endTag) {
-                // Separate the trailing token.
-                let trailingToken = separateToken(
-                    from: &toolCallBuffer, separator: endTag, returnLeading: false)
+            guard let endTag = parser.endTag else {
+                return leadingToken
+            }
 
-                let bufferedToolCall = toolCallBuffer
+            // `<tool_call>` frames close only after a structurally complete
+            // payload, so a literal close marker inside a JSON string argument
+            // cannot truncate the frame and expose its suffix as new input.
+            // Other dialects keep the first textual close their parsers use.
+            let frameEnd =
+                usesStructuralToolCallFrame
+                ? ToolCallFrameScanner.frameEnd(in: toolCallBuffer)
+                : toolCallBuffer.range(of: endTag).map(\.upperBound)
+
+            if let frameEnd {
+                let bufferedToolCall = String(toolCallBuffer[..<frameEnd])
+                let trailingToken = String(toolCallBuffer[frameEnd...])
 
                 // Parse the tool call using the parser.
                 if let toolCall = parser.parse(content: bufferedToolCall, tools: tools) {
@@ -639,16 +770,33 @@ public class ToolCallProcessor {
                     toolCallBuffer = ""
 
                     // If trailing content may contain another tool call, recurse.
-                    if let trailingToken,
-                        tokenCouldContainToolStart(trailingToken, startChar: startChar)
-                    {
+                    if tokenCouldContainToolStart(trailingToken, startChar: startChar) {
                         return combine(leadingToken, processChunk(trailingToken))
                     }
 
                     // Otherwise, return trailing text if non-empty.
-                    let trailingText = trailingToken?.isEmpty ?? true ? nil : trailingToken
+                    let trailingText = trailingToken.isEmpty ? nil : trailingToken
                     if let trailingText { recordResponse(trailingText) }
                     return combine(leadingToken, trailingText)
+                }
+
+                // The native parser owns its advertised syntax. Only after it
+                // declines a complete payload do we try the cross-dialect
+                // healer, preserving the native path and its performance.
+                if let toolCall = recoveryScanner?.recoverCompletePayload(bufferedToolCall) {
+                    if !leadingTokenWasRecorded {
+                        recordResponse(leadingToken ?? "")
+                    }
+                    let accepted = appendToolCall(toolCall, rawText: bufferedToolCall)
+                    collectRecoveryEvents(acceptedCandidates: [accepted])
+                    state = .normal
+                    toolCallBuffer = ""
+
+                    if tokenCouldContainToolStart(trailingToken, startChar: startChar) {
+                        return combine(leadingToken, processChunk(trailingToken))
+                    }
+                    if !trailingToken.isEmpty { recordResponse(trailingToken) }
+                    return combine(leadingToken, trailingToken.isEmpty ? nil : trailingToken)
                 }
 
                 // A complete tagged payload is unambiguously intended as a tool
@@ -663,16 +811,14 @@ public class ToolCallProcessor {
                     reason: reason,
                     rawText: bufferedToolCall,
                     detail: reason.diagnosticDetail)
-                if let trailingToken,
-                    tokenCouldContainToolStart(trailingToken, startChar: startChar)
-                {
+                if tokenCouldContainToolStart(trailingToken, startChar: startChar) {
                     return combine(leadingToken, processChunk(trailingToken))
                 }
-                if let trailingToken { recordResponse(trailingToken) }
-                return combine(leadingToken, trailingToken)
+                if !trailingToken.isEmpty { recordResponse(trailingToken) }
+                return combine(leadingToken, trailingToken.isEmpty ? nil : trailingToken)
             }
 
-            return nil
+            return leadingToken
 
         case .collectingJSONToolCall:
             return processCollectingJSONToolCall(
@@ -680,7 +826,58 @@ public class ToolCallProcessor {
                 startChar: startChar,
                 leadingToken: leadingToken
             )
+
+        case .quarantiningOversizedToolCall:
+            return nil
         }
+    }
+
+    private func scanTaggedStart(
+        startTag: String, startChar: Character, leadingToken: String?
+    ) -> String? {
+        let buffer = toolCallBuffer
+        var candidate = buffer.startIndex
+        var responseStart = candidate
+        var response = leadingToken ?? ""
+        var rejectedMarker = false
+        recordResponse(response)
+
+        func emitText(until end: String.Index) {
+            let text = String(buffer[responseStart ..< end])
+            recordResponse(sanitizingProtocol: text)
+            response += rejectedMarker ? stripProtocolSpans(from: text) : text
+        }
+
+        // A disproven opener only rules out that candidate, not the remaining chunk.
+        while candidate < buffer.endIndex {
+            let suffix = buffer[candidate...]
+            if suffix.hasPrefix(startTag) || startTag.hasPrefix(suffix) {
+                emitText(until: candidate)
+                toolCallBuffer = String(suffix)
+                return response.isEmpty ? nil : response
+            }
+
+            let next =
+                buffer[buffer.index(after: candidate)...].firstIndex(of: startChar)
+                ?? buffer.endIndex
+            if let attempt = protocolMarkerAttempt(
+                in: String(buffer[candidate ..< next]), startTag: startTag)
+            {
+                emitText(until: candidate)
+                appendRejectedToolCall(
+                    reason: .malformedSyntax,
+                    rawText: attempt,
+                    detail: RejectedToolCall.Reason.malformedSyntax.diagnosticDetail)
+                rejectedMarker = true
+                responseStart = buffer.index(candidate, offsetBy: attempt.count)
+            }
+            candidate = next
+        }
+
+        emitText(until: buffer.endIndex)
+        toolCallBuffer = ""
+        state = .normal
+        return response.isEmpty ? nil : response
     }
 
     private func processCollectingJSONToolCall(
@@ -757,7 +954,7 @@ public class ToolCallProcessor {
                 combine(rejected ? nil : jsonCandidate, processChunk(trailingToken)))
         }
         let response = (rejected ? "" : jsonCandidate) + trailingToken
-        recordResponse(sanitizingProtocol: response)
+        recordResponse(response)
         return combine(leadingToken, response)
     }
 
@@ -802,13 +999,12 @@ public class ToolCallProcessor {
         return merged.isEmpty ? nil : merged
     }
 
-    private func appendToolCalls(_ calls: [ToolCall], rawText: String) {
-        for call in calls {
-            appendToolCall(call, rawText: rawText)
-        }
+    private func appendToolCalls(_ calls: [ToolCall], rawText: String) -> [Bool] {
+        calls.map { appendToolCall($0, rawText: rawText) }
     }
 
-    private func appendToolCall(_ call: ToolCall, rawText: String) {
+    @discardableResult
+    private func appendToolCall(_ call: ToolCall, rawText: String) -> Bool {
         guard allowedToolNames?.contains(call.function.name) ?? true else {
             appendRejectedToolCall(
                 reason: .undeclaredTool,
@@ -816,7 +1012,23 @@ public class ToolCallProcessor {
                 toolName: call.function.name,
                 callID: call.id,
                 detail: RejectedToolCall.Reason.undeclaredTool.diagnosticDetail)
-            return
+            return false
+        }
+
+        let call = ToolArgumentNormalization.normalize(call, tools: tools)
+        if validationPolicy == .strict,
+            case .invalid(let violations) = ToolSchemaValidator.validate(
+                arguments: call.function.arguments,
+                forToolNamed: call.function.name,
+                in: tools)
+        {
+            appendRejectedToolCall(
+                reason: .invalidArguments,
+                rawText: rawText,
+                toolName: call.function.name,
+                callID: call.id,
+                detail: ToolSchemaValidator.describe(violations))
+            return false
         }
 
         let normalized = normalizedToolCall(call)
@@ -824,6 +1036,7 @@ public class ToolCallProcessor {
         if orderedOutputEnabled {
             orderedOutputQueue.append(.toolCall(normalized))
         }
+        return true
     }
 
     private func appendRejectedToolCall(
@@ -881,7 +1094,20 @@ public class ToolCallProcessor {
                 return .incompleteOutput
             }
             return classifyCompletePayload(text)
+        case .quarantiningOversizedToolCall:
+            return .resourceLimitExceeded
         }
+    }
+
+    private func rejectOversizedNativeBuffer() {
+        let raw = toolCallBuffer
+        toolCallBuffer = ""
+        state = .quarantiningOversizedToolCall
+        hasExplicitInlineMarker = false
+        appendRejectedToolCall(
+            reason: .resourceLimitExceeded,
+            rawText: raw,
+            detail: RejectedToolCall.Reason.resourceLimitExceeded.diagnosticDetail)
     }
 
     private func rejectInlinePayloadIfNeeded(

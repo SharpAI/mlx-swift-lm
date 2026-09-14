@@ -11,6 +11,7 @@ import Foundation
 struct PythonLiteralParser {
     private let source: Substring
     private var index: String.Index
+    private var depth = 0
 
     private init(_ source: Substring) {
         self.source = source
@@ -21,6 +22,17 @@ struct PythonLiteralParser {
         var parser = Self(source)
         guard let value = parser.parseValue() else { return nil }
         parser.skipWhitespace()
+        if parser.consume(",") {
+            var values = [value]
+            repeat {
+                parser.skipWhitespace()
+                if parser.current == nil { return values }
+                guard let next = parser.parseValue() else { return nil }
+                values.append(next)
+                parser.skipWhitespace()
+            } while parser.consume(",")
+            return parser.current == nil ? values : nil
+        }
         return parser.index == source.endIndex ? value : nil
     }
 
@@ -29,12 +41,15 @@ struct PythonLiteralParser {
     }
 
     private mutating func parseValue() -> (any Sendable)? {
+        guard depth < 32 else { return nil }
+        depth += 1
+        defer { depth -= 1 }
         skipWhitespace()
 
         switch current {
         case "'", "\"":
             return parseString()
-        case "[":
+        case "[", "(":
             return parseArray()
         case "{":
             return parseObject()
@@ -46,21 +61,25 @@ struct PythonLiteralParser {
     }
 
     private mutating func parseArray() -> (any Sendable)? {
-        guard consume("[") else { return nil }
+        let tuple = current == "("
+        guard consume(tuple ? "(" : "[") else { return nil }
+        let close: Character = tuple ? ")" : "]"
+        var hasComma = false
         skipWhitespace()
 
         var values: [any Sendable] = []
-        if consume("]") { return values }
+        if consume(close) { return values }
 
         while true {
             guard let value = parseValue() else { return nil }
             values.append(value)
             skipWhitespace()
 
-            if consume("]") { return values }
+            if consume(close) { return tuple && !hasComma ? value : values }
             guard consume(",") else { return nil }
+            hasComma = true
             skipWhitespace()
-            if consume("]") { return values }
+            if consume(close) { return values }
         }
     }
 
@@ -146,7 +165,7 @@ struct PythonLiteralParser {
         let start = index
         while let character = current,
             !character.isWhitespace,
-            ![",", "]", "}"].contains(character)
+            ![",", "]", "}", ")"].contains(character)
         {
             advance()
         }

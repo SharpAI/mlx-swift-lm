@@ -145,6 +145,68 @@ struct ContinuationAssertions {
         }
     }
 
+    /// An append-only media turn: turn 2 adds its own image to an unchanged turn 1.
+    /// `split` carves the suffix out of the full prepared input, and prefilling that
+    /// suffix on turn 1's cache must land where a cold prefill of the whole prompt
+    /// does -- but only if the vision encoder computes each image independently.
+    ///
+    /// `expectsIsolation` says which model this is. `Qwen25VL` masks each frame to
+    /// itself, so the split is exact; `Qwen2VL` attends across the concatenated
+    /// buffer, so dropping the cached image changes the kept image's features and
+    /// the logits must differ. Asserting the divergence is what makes the
+    /// conformance a measured claim rather than a stated one.
+    func assertAppendOnlyMediaSplit<M: LanguageModel>(
+        _ model: M, split: (LMInput, Int) -> LMInput?, expectsIsolation: Bool,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        try withRandomState(MLXRandom.RandomState(seed: 17)) {
+            let imageA = image()
+            let imageB = image()
+            let t1 = concatenated([textTokens(10), imageRun(), textTokens(8, seed: 5)], axis: 1)
+            let t2 = concatenated(
+                [textTokens(6, seed: 2), imageRun(), textTokens(4, seed: 9)], axis: 1)
+
+            // The prepared input a VL processor hands over for the whole transcript:
+            // both images' patch rows concatenated, one grid each.
+            let bothImages = LMInput.ProcessedImage(
+                pixels: concatenated([imageA.pixels, imageB.pixels], axis: 0),
+                frames: (imageA.frames ?? []) + (imageB.frames ?? []))
+            let fullInput = LMInput(
+                text: .init(tokens: concatenated([t1, t2], axis: 1)), image: bothImages)
+
+            let cacheF = try model.newCache(parameters: nil)
+            let (logitsF, _) = try lastLogits(
+                model.prepare(
+                    fullInput, cache: cacheF, state: nil, prefill: PrefillParameters()))
+
+            let cacheW = try model.newCache(parameters: nil)
+            let (_, s1) = try prefill(model, t1, image: imageA, cache: cacheW)
+
+            let suffix = try XCTUnwrap(
+                split(fullInput, t1.dim(1)), "the split was declined", file: file, line: line)
+            XCTAssertEqual(suffix.text.tokens.dim(-1), t2.dim(1), file: file, line: line)
+            XCTAssertEqual(
+                suffix.image?.frames?.count, 1, "the suffix must carry only the new image",
+                file: file, line: line)
+
+            let (logitsW, _) = try lastLogits(
+                model.prepare(
+                    suffix, cache: cacheW, state: s1, prefill: PrefillParameters()))
+
+            let diff = maxAbsDiff(logitsW, logitsF)
+            if expectsIsolation {
+                XCTAssertLessThanOrEqual(
+                    diff, 1e-3,
+                    "split-suffix prefill diverged from full prefill", file: file, line: line)
+            } else {
+                XCTAssertGreaterThan(
+                    diff, 1e-3,
+                    "cross-image vision attention should have changed the logits",
+                    file: file, line: line)
+            }
+        }
+    }
+
     /// Three turns, with the image in the middle one. The continuation must place that image at
     /// the anchor *and* hand back a resume state that positions the following turn — the two
     /// halves of the anchor invariant, which a single-turn test cannot separate.

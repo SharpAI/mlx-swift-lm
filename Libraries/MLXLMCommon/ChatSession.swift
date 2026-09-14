@@ -315,6 +315,12 @@ public final class ChatSession {
 
     public var additionalContext: [String: any Sendable]?
     public var tools: [ToolSpec]?
+
+    /// Optional automatic dispatcher for accepted tool calls.
+    ///
+    /// Automatic dispatch is fail-closed: only calls naming a function declared
+    /// in ``tools`` can reach this callback. If `tools` is `nil` or empty, every
+    /// tool-call-shaped model output is rejected without invoking the callback.
     public var toolDispatch: (@Sendable (ToolCall) async throws -> String)?
 
     /// Speculative decoding configuration, nil if disabled.
@@ -898,6 +904,12 @@ public final class ChatSession {
                 speculativeDecoding
             ] in
             do {
+                // Automatic dispatch must always be schema-authorized. Treat a missing
+                // declaration list as an empty allowlist when a dispatcher is installed,
+                // rather than allowing the processor's schema-less parsing mode.
+                let toolValidationSchemas: [ToolSpec]? =
+                    toolDispatch == nil ? tools : (tools ?? [])
+
                 try await cache.update { cache in
 
                     // these are all Sendable
@@ -1094,7 +1106,8 @@ public final class ChatSession {
                                 previousGenerationUncommittedTokens:
                                     currentConversation.uncommittedTokens,
                                 structuredToolCallCount: structuredToolCallCount,
-                                usesSpeculativeDecoding: speculativeDecoding != nil)
+                                usesSpeculativeDecoding: speculativeDecoding != nil,
+                                canSplitPreparedMedia: model is PreparedInputSplitting)
                             let cacheState = PromptCacheState(
                                 cachedTokens: cachedTokenIds,
                                 processedTokenCount: kvCache.processedTokenCount,
@@ -1128,6 +1141,28 @@ public final class ChatSession {
                                 }
                             }
 
+                            // Splitting a prepared input is the other decision that
+                            // can fail while being applied: only the model can carve
+                            // a media-carrying suffix, and it declines any boundary
+                            // it cannot prove equivalent to a cold prefill. Verify
+                            // and downgrade to a rebuild before prefilling.
+                            var mediaSuffixInput: LMInput?
+                            if case .appendMediaSuffix(let suffixStart, _) = decision {
+                                let splitInput = (model as? PreparedInputSplitting)?
+                                    .splitPreparedInput(
+                                        preparedInput, droppingFirst: suffixStart)
+                                // Only the exact tokens the boundary names may be prefilled;
+                                // the ledger below advances on the strength of that boundary.
+                                if let splitInput,
+                                    splitInput.text.tokens.asArray(Int.self)
+                                        == Array(promptTokenIds[suffixStart...])
+                                {
+                                    mediaSuffixInput = splitInput
+                                } else {
+                                    decision = .rebuild
+                                }
+                            }
+
                             switch decision {
                             case .prefillAll:
                                 break
@@ -1146,6 +1181,14 @@ public final class ChatSession {
                                 // cache and use it alone for this continuation.
                                 draftKVCache = nil
                                 requiresMainOnlyContinuation = true
+
+                            case .appendMediaSuffix(let suffixStart, _):
+                                // A declined split was downgraded to `.rebuild`
+                                // above, so this is always populated here.
+                                if let mediaSuffixInput {
+                                    input = mediaSuffixInput
+                                }
+                                cachedPromptTokenCount = suffixStart
 
                             case .trimToCommonPrefix(let commonPrefixLength, _):
                                 input = LMInput(
@@ -1171,7 +1214,8 @@ public final class ChatSession {
                             // keep generated tokens the cold render cannot reproduce.
                             switch decision {
                             case .appendSuffix(_, let representedTokens),
-                                .appendSuffixToMain(_, let representedTokens):
+                                .appendSuffixToMain(_, let representedTokens),
+                                .appendMediaSuffix(_, let representedTokens):
                                 currentConversation.cachedTokens = representedTokens
                             case .prefillAll, .trimToCommonPrefix, .rebuild:
                                 currentConversation.cachedTokens = promptTokenIds
@@ -1201,7 +1245,8 @@ public final class ChatSession {
                                     modelConfiguration: modelConfiguration,
                                     tokenizer: tokenizer,
                                     iterator: iterator,
-                                    tools: tools)
+                                    tools: toolValidationSchemas,
+                                    toolCallPolicy: generateParameters.toolCallPolicy)
                             )
                         }
 
@@ -1324,7 +1369,8 @@ public final class ChatSession {
                                             modelConfiguration: modelConfiguration,
                                             tokenizer: tokenizer,
                                             iterator: iterator,
-                                            tools: tools))
+                                            tools: toolValidationSchemas,
+                                            toolCallPolicy: generateParameters.toolCallPolicy))
                                 }
                             }
                         } else {

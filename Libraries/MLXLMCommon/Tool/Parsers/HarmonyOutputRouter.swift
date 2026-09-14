@@ -28,13 +28,39 @@ package struct HarmonyOutputRouter {
     /// Declared tool names the caller is willing to dispatch. `nil` means no
     /// tools were offered for this generation, so no tool calls are accepted.
     private let allowedToolNames: Set<String>?
+    /// The declared tools, kept for argument schema validation.
+    private let tools: [[String: any Sendable]]?
+    private let validationPolicy: ToolCallValidationPolicy
     private var hasEmittedToolCall = false
     private var reasoningDetokenizer: NaiveStreamingDetokenizer
     private var responseDetokenizer: NaiveStreamingDetokenizer
     private let tokenizer: any Tokenizer
 
+    package init(
+        tokenizer: any Tokenizer, tools: [[String: any Sendable]]?,
+        toolCallPolicy: ToolCallPolicy = .init()
+    ) {
+        self.init(
+            tokenizer: tokenizer,
+            allowedToolNames: Self.allowedToolNames(from: tools),
+            tools: tools, toolCallPolicy: toolCallPolicy)
+    }
+
+    /// Compatibility entry point for package clients that only need the
+    /// authorization boundary. Calls routed through it have no schema to check.
     package init(tokenizer: any Tokenizer, allowedToolNames: Set<String>?) {
+        self.init(tokenizer: tokenizer, allowedToolNames: allowedToolNames, tools: nil)
+    }
+
+    private init(
+        tokenizer: any Tokenizer,
+        allowedToolNames: Set<String>?,
+        tools: [[String: any Sendable]]?,
+        toolCallPolicy: ToolCallPolicy = .init()
+    ) {
         self.tokenizer = tokenizer
+        self.tools = tools
+        self.validationPolicy = toolCallPolicy.validation
         self.allowedToolNames = allowedToolNames
         self.reasoningDetokenizer = NaiveStreamingDetokenizer(tokenizer: tokenizer)
         self.responseDetokenizer = NaiveStreamingDetokenizer(tokenizer: tokenizer)
@@ -116,7 +142,7 @@ package struct HarmonyOutputRouter {
             // One committed tool call per generation turn.
             return []
         }
-        guard let arguments = strictJSONObject(payload) else {
+        guard var arguments = strictJSONObject(payload) else {
             return [
                 .rejectedToolCall(
                     rejection(.invalidArguments, name: name, rawText: payload))
@@ -126,6 +152,22 @@ package struct HarmonyOutputRouter {
             return [
                 .rejectedToolCall(
                     rejection(.undeclaredTool, name: name, rawText: payload))
+            ]
+        }
+        let normalized = ToolArgumentNormalization.normalize(
+            ToolCall(function: .init(name: name, arguments: arguments)), tools: tools)
+        arguments = normalized.function.arguments
+        if validationPolicy == .strict,
+            case .invalid(let violations) = ToolSchemaValidator.validate(
+                arguments: arguments,
+                forToolNamed: name,
+                in: tools)
+        {
+            return [
+                .rejectedToolCall(
+                    rejection(
+                        .invalidArguments, name: name, rawText: payload,
+                        detail: ToolSchemaValidator.describe(violations)))
             ]
         }
 
@@ -139,14 +181,15 @@ package struct HarmonyOutputRouter {
     private func rejection(
         _ reason: RejectedToolCall.Reason,
         name: String?,
-        rawText: String
+        rawText: String,
+        detail: String? = nil
     ) -> RejectedToolCall {
         RejectedToolCall(
             reason: reason,
             format: .gptOSS,
             toolName: name,
             rawText: rawText,
-            detail: reason.diagnosticDetail)
+            detail: detail ?? reason.diagnosticDetail)
     }
 
     private func isAllowed(_ name: String) -> Bool {

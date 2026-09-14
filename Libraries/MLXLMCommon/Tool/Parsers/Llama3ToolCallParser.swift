@@ -8,6 +8,7 @@ import Foundation
 public struct Llama3ToolCallParser: ToolCallParser, Sendable {
     public let startTag: String? = nil
     public let endTag: String? = nil
+    public let supportsBareJSON = true
 
     public init() {}
 

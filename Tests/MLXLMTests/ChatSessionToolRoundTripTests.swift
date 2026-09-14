@@ -217,6 +217,48 @@ public class ChatSessionToolRoundTripTests: XCTestCase {
         XCTAssertEqual(function["name"] as? String, "get_weather")
     }
 
+    func testGenerationPolicyControlsValidationBeforeAutomaticDispatch() async throws {
+        let restrictedTool: ToolSpec = [
+            "type": "function",
+            "function": [
+                "name": "get_weather",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "city": ["type": "string", "enum": ["Rome"]] as [String: any Sendable]
+                    ],
+                    "required": ["city"],
+                ] as [String: any Sendable],
+            ] as [String: any Sendable],
+        ]
+        for validation in ToolCallValidationPolicy.allCases {
+            let dispatched = DispatchLog()
+            let context = Self.makeContext(
+                tokenizer: ScriptedToolCallTokenizer(),
+                messageGenerator: DefaultMessageGenerator())
+            var policy = ToolCallPolicy(recovery: .disabled)
+            if validation == .strict { policy.validation = .strict }
+            let session = ChatSession(
+                context,
+                generateParameters: .init(maxTokens: 24, toolCallPolicy: policy),
+                tools: [restrictedTool],
+                toolDispatch: { call in
+                    dispatched.record(call)
+                    return "sunny"
+                })
+            do {
+                _ = try await session.respond(to: "Weather in Paris?")
+                XCTAssertEqual(validation, .permissive)
+                XCTAssertEqual(dispatched.all.count, 1)
+                XCTAssertEqual(dispatched.all.first?.function.arguments["city"], .string("Paris"))
+            } catch let error as RejectedToolCallError {
+                XCTAssertEqual(validation, .strict)
+                XCTAssertEqual(error.rejection.reason, .invalidArguments)
+                XCTAssertTrue(dispatched.all.isEmpty)
+            }
+        }
+    }
+
     func testRawCacheToolRestartPreservesLegacyFragmentShape() async throws {
         let log = MessageLog()
         let tokenizer = ScriptedToolCallTokenizer(

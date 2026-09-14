@@ -7,9 +7,11 @@ import Foundation
 public struct JSONToolCallParser: ToolCallParser, Sendable {
     public let startTag: String?
     public let endTag: String?
+    public let supportsBareJSON: Bool
     private let jsonObjectScanner = JSONLeadingObjectScanner(startCharacter: "{")
 
-    public init(startTag: String, endTag: String) {
+    public init(startTag: String, endTag: String, supportsBareJSON: Bool = false) {
+        self.supportsBareJSON = supportsBareJSON
         self.startTag = startTag
         self.endTag = endTag
     }
@@ -17,20 +19,27 @@ public struct JSONToolCallParser: ToolCallParser, Sendable {
     public func parse(content: String, tools: [[String: any Sendable]]?) -> ToolCall? {
         guard let start = startTag, let end = endTag else { return nil }
 
-        // Find the JSON content between tags
-        var text = content
-
-        // Strip tags if present
-        if let startRange = text.range(of: start) {
-            text = String(text[startRange.upperBound...])
+        var text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A bare JSON payload may contain literal protocol markers in its
+        // strings. Only wrapper tags outside that payload are delimiters.
+        if !text.hasPrefix("{"), let startRange = text.range(of: start) {
+            text = String(text[startRange.upperBound...]).trimmingCharacters(
+                in: .whitespacesAndNewlines)
         }
-        if let endRange = text.range(of: end) {
-            text = String(text[..<endRange.lowerBound])
+        if text.hasSuffix(end) {
+            text.removeLast(end.count)
         }
 
-        let jsonStr = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return parsePayload(text)
+    }
 
-        return parseToolCall(from: jsonStr) ?? parseRedundantOuterBraces(from: jsonStr)
+    /// Parse an already-extracted JSON payload without searching for protocol
+    /// delimiters again. Framing-aware callers use this after finding the
+    /// structural outer close, so a literal end-tag string inside an argument
+    /// remains JSON data rather than truncating the payload.
+    func parsePayload(_ payload: String) -> ToolCall? {
+        let json = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        return parseToolCall(from: json) ?? parseRedundantOuterBraces(from: json)
     }
 
     /// Some Qwen chat templates emit an EOS-delimited JSON call with a

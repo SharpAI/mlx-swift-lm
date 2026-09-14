@@ -430,7 +430,8 @@ final class Qwen35GatedDeltaNet: Module {
                 aLog: aLog,
                 dtBias: dtBias,
                 state: recState,
-                mask: prefixMask)
+                mask: prefixMask,
+                useKernel: !training)
             let (suffixOut, suffixState) = gatedDeltaUpdate(
                 q: qNormed[0..., split..., 0..., 0...],
                 k: kNormed[0..., split..., 0..., 0...],
@@ -440,7 +441,8 @@ final class Qwen35GatedDeltaNet: Module {
                 aLog: aLog,
                 dtBias: dtBias,
                 state: prefixState,
-                mask: suffixMask)
+                mask: suffixMask,
+                useKernel: !training)
             out = concatenated([prefixOut, suffixOut], axis: 1)
             newRecState = suffixState
 
@@ -464,7 +466,8 @@ final class Qwen35GatedDeltaNet: Module {
                 aLog: aLog,
                 dtBias: dtBias,
                 state: recState,
-                mask: mask)
+                mask: mask,
+                useKernel: !training)
             checkpoint = nil
         }
 

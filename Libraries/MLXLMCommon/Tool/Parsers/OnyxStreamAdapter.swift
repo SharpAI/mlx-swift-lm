@@ -166,15 +166,20 @@ private struct OnyxProtocolDecoder {
     private let tokenizer: any Tokenizer
     private let toolParser = ATEMToolCallParser()
     private let tools: [[String: any Sendable]]?
+    private let validationPolicy: ToolCallValidationPolicy
     private var reasoningDetokenizer: NaiveStreamingDetokenizer
     private var responseDetokenizer: NaiveStreamingDetokenizer
     private(set) var isInsideReasoning = false
 
-    init?(tokenizer: any Tokenizer, tools: [[String: any Sendable]]?) {
+    init?(
+        tokenizer: any Tokenizer, tools: [[String: any Sendable]]?,
+        toolCallPolicy: ToolCallPolicy = .init()
+    ) {
         guard let parser = OnyxFrameParser(tokenizer: tokenizer) else { return nil }
         self.parser = parser
         self.tokenizer = tokenizer
         self.tools = tools
+        self.validationPolicy = toolCallPolicy.validation
         self.reasoningDetokenizer = NaiveStreamingDetokenizer(tokenizer: tokenizer)
         self.responseDetokenizer = NaiveStreamingDetokenizer(tokenizer: tokenizer)
     }
@@ -220,10 +225,27 @@ private struct OnyxProtocolDecoder {
                 responseDetokenizer = NaiveStreamingDetokenizer(tokenizer: tokenizer)
             case .tool(let recipient):
                 let text = tokenizer.decode(tokenIds: payload, skipSpecialTokens: false)
-                guard let call = toolParser.parse(content: text, tools: tools),
+                guard var call = toolParser.parse(content: text, tools: tools),
                     call.function.name == recipient
                 else {
                     return .protocolError("Rejected Onyx tool frame for recipient \(recipient)")
+                }
+                // The ATEM parser already enforces required parameters and
+                // typed values; check the full schema before the call leaves.
+                call = ToolArgumentNormalization.normalize(call, tools: tools)
+                if validationPolicy == .strict,
+                    case .invalid(let violations) = ToolSchemaValidator.validate(
+                        arguments: call.function.arguments,
+                        forToolNamed: call.function.name,
+                        in: tools)
+                {
+                    return .rejectedToolCall(
+                        RejectedToolCall(
+                            reason: .invalidArguments,
+                            format: .atem,
+                            toolName: call.function.name,
+                            rawText: text,
+                            detail: ToolSchemaValidator.describe(violations)))
                 }
                 return .toolCall(
                     ToolCall(
@@ -244,6 +266,7 @@ private struct OnyxProtocolDecoder {
 struct OnyxStreamAdapter: TokenStreamDecoder {
     private var protocolDecoder: OnyxProtocolDecoder
     private var stopStringFilter: StopStringFilter
+    private(set) var rejectedToolCallCount = 0
     let additionalStopTokenIDs: Set<Int>
     let receivesStopTokens = true
 
@@ -252,9 +275,13 @@ struct OnyxStreamAdapter: TokenStreamDecoder {
     init?(
         tokenizer: any Tokenizer,
         tools: [[String: any Sendable]]?,
-        stopStrings: Set<String>
+        stopStrings: Set<String>,
+        toolCallPolicy: ToolCallPolicy = .init()
     ) {
-        guard let decoder = OnyxProtocolDecoder(tokenizer: tokenizer, tools: tools) else {
+        guard
+            let decoder = OnyxProtocolDecoder(
+                tokenizer: tokenizer, tools: tools, toolCallPolicy: toolCallPolicy)
+        else {
             return nil
         }
         self.protocolDecoder = decoder
@@ -295,6 +322,7 @@ struct OnyxStreamAdapter: TokenStreamDecoder {
             }
             return emit(.toolCall(call))
         case .rejectedToolCall(let rejection):
+            rejectedToolCallCount += 1
             if let response = stopStringFilter.finish(), !emit(.response(response)) {
                 return false
             }

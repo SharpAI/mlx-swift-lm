@@ -70,8 +70,10 @@ public struct MiniMaxM2ToolCallParser: ToolCallParser, Sendable {
 
             // Get types from schema for this parameter
             let paramSchema = paramConfig[paramName] as? [String: any Sendable]
-            let paramTypes = extractTypesFromSchema(paramSchema)
-            arguments[paramName] = convertValueWithTypes(paramValue, types: paramTypes)
+            arguments[paramName] =
+                ToolArgumentNormalization.normalize(
+                    .string(paramValue), schema: paramSchema
+                ).sendableValue
 
             searchRange = paramEnd.upperBound ..< paramSection.endIndex
         }

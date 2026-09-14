@@ -11,8 +11,9 @@
 import Foundation
 import MLX
 import MLXLMCommon
-import MLXVLM
 import XCTest
+
+@testable import MLXVLM
 
 final class Qwen25VLContinuationTests: XCTestCase {
 
@@ -135,6 +136,16 @@ final class Qwen25VLContinuationTests: XCTestCase {
         try continuation.assertWindowedImagePrefill(makeTinyQwen25VL())
     }
 
+    /// Through the `PreparedInputSplitting` conformance, so the config-derived token
+    /// ids and merge size are exercised alongside the split itself.
+    func testQwen25VLAppendOnlyMediaSplitMatchesFullPrefill() throws {
+        let model = try makeTinyQwen25VL()
+        try continuation.assertAppendOnlyMediaSplit(
+            model,
+            split: { (model as PreparedInputSplitting).splitPreparedInput($0, droppingFirst: $1) },
+            expectsIsolation: true)
+    }
+
     // MARK: - Qwen2-VL
 
     func testQwen2VLWarmTextContinuationMatchesFullPrefill() throws {
@@ -155,5 +166,23 @@ final class Qwen25VLContinuationTests: XCTestCase {
 
     func testQwen2VLWindowedImagePrefillMatchesSingleShot() throws {
         try continuation.assertWindowedImagePrefill(makeTinyQwen2VL())
+    }
+
+    /// The counterexample the conformance rests on. `Qwen2VL` does not conform, so
+    /// the split runs through `QwenVL` directly with this model's ids; the logits
+    /// must diverge because its vision attention is unmasked across images.
+    func testQwen2VLAppendOnlyMediaSplitDiverges() throws {
+        let model = try makeTinyQwen2VL()
+        try continuation.assertAppendOnlyMediaSplit(
+            model,
+            split: {
+                QwenVL.splitPreparedInput(
+                    $0,
+                    droppingFirst: $1,
+                    imageTokenId: model.config.baseConfiguration.imageTokenId,
+                    videoTokenId: model.config.baseConfiguration.videoTokenId,
+                    mergeSize: model.config.visionConfiguration.spatialMergeSize)
+            },
+            expectsIsolation: false)
     }
 }

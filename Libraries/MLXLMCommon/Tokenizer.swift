@@ -113,8 +113,21 @@ public struct NaiveStreamingDetokenizer: StreamingDetokenizer {
         // boundary, so that holds; a decode that rewrote an already-emitted
         // interior character would re-emit the tail (no worse than the old
         // behavior, and not observed in practice).
-        let common = newSegment.commonPrefix(with: segment)
-        let new = newSegment.dropFirst(common.count)
+        //
+        // The prefix is measured in Unicode scalars, not `Character`s. A
+        // `Character` is a grapheme cluster, and a token routinely appends a
+        // combining scalar to the cluster the previous token ended: a
+        // variation selector (`🏳` then U+FE0F), a zero-width joiner, a
+        // combining accent (`e` then U+0301). Compared as `Character`s the
+        // old text's last cluster no longer equals the merged cluster, so a
+        // `Character`-level prefix (`commonPrefix(with:)`) stops one cluster
+        // early and the whole merged cluster is emitted a second time — the
+        // consumer receives `🏳🏳️`, `''️`, `eé`. Scalars compare exactly (no
+        // canonical equivalence), and the emitted tail is precisely the
+        // scalars the new token added.
+        let common = zip(newSegment.unicodeScalars, segment.unicodeScalars)
+            .prefix { $0 == $1 }.count
+        let new = String(newSegment.unicodeScalars.dropFirst(common))
 
         // if the new segment ends with REPLACEMENT CHARACTER this means
         // that the token didn't produce a complete unicode character
@@ -128,6 +141,6 @@ public struct NaiveStreamingDetokenizer: StreamingDetokenizer {
             self.segment = newSegment
         }
 
-        return String(new)
+        return new
     }
 }

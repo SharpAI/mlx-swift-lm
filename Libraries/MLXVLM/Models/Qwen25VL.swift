@@ -1278,6 +1278,23 @@ public class Qwen25VL: Module, VLMModel, KVCacheDimensionProvider {
     }
 }
 
+extension Qwen25VL: PreparedInputSplitting {
+
+    /// Opt into `ChatSession` warm-cache reuse for append-only media turns by
+    /// delegating to `QwenVL.splitPreparedInput` with this model's image and video
+    /// token ids and spatial merge size.
+    public func splitPreparedInput(_ input: LMInput, droppingFirst prefixTokenCount: Int)
+        -> LMInput?
+    {
+        QwenVL.splitPreparedInput(
+            input,
+            droppingFirst: prefixTokenCount,
+            imageTokenId: config.baseConfiguration.imageTokenId,
+            videoTokenId: config.baseConfiguration.videoTokenId,
+            mergeSize: config.visionConfiguration.spatialMergeSize)
+    }
+}
+
 // MARK: - Configuration
 
 /// Configuration for ``Qwen25VL``
