@@ -67,8 +67,9 @@ class OlmoEAttention: Module {
         keys = keys.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
         values = values.reshaped(B, L, nKVHeads, -1).transposed(0, 2, 1, 3)
 
-        queries = applyRotaryPosition(rope, to: queries, cache: cache)
-        keys = applyRotaryPosition(rope, to: keys, cache: cache)
+        let offset = cache?.ropeOffset
+        queries = applyRotaryPosition(rope, to: queries, offset: offset)
+        keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
         let output = attentionWithCacheUpdate(
             queries: queries,
@@ -112,15 +113,23 @@ class OlmoeSparseMoeBlock: Module, UnaryLayer {
         let routingWeights = MLX.softmax(routerLogits, axis: -1, precise: true)
 
         let k = topK
-        let inds = MLX.argPartition(-routingWeights, kth: k - 1, axis: -1)[.ellipsis, ..<k]
-        var scores = MLX.takeAlong(routingWeights, inds, axis: -1)
-
-        if normTopkProb {
-            scores = scores / MLX.sum(scores, axis: -1, keepDims: true)
+        let inds: MLXArray
+        let scores: MLXArray
+        if supportsFusedRouterTopK(routingWeights, k: k) {
+            (inds, scores) = fusedRouterTopK(
+                selection: routingWeights, values: routingWeights, k: k,
+                normalize: normTopkProb, order: .descending)
+        } else {
+            inds = MLX.argPartition(-routingWeights, kth: k - 1, axis: -1)[.ellipsis, ..<k]
+            var selected = MLX.takeAlong(routingWeights, inds, axis: -1)
+            if normTopkProb {
+                selected = selected / MLX.sum(selected, axis: -1, keepDims: true)
+            }
+            scores = selected
         }
 
         let y = switchMLP(x, inds)
-        return (y * scores[.ellipsis, .newAxis]).sum(axis: -2)
+        return weightedExpertSum(y, scores)
     }
 }
 
@@ -218,7 +227,8 @@ public class OlmoEModel: Module, LLMModel, KVCacheDimensionProvider {
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
-        var sanitized = weights
+        var sanitized = filterLMHeadWeights(
+            from: weights, tiedWordEmbeddings: configuration.tieWordEmbeddings)
         if sanitized["model.layers.0.mlp.experts.0.up_proj.weight"] == nil {
             return sanitized
         }

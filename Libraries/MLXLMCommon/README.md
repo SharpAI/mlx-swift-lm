@@ -7,12 +7,16 @@
 - [MLXLLM](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxllm) -- large language model example implementations
 - [MLXVLM](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxvlm) -- vision language model example implementations
 
+Tool-call handling is configured through `GenerateParameters.toolCallPolicy`,
+which defaults to conservative recovery and permissive argument validation.
+
 # Quick Start
 
 Using LLMs and VLMs is as easy as:
 
 ```swift
 import MLXLLM
+import MLXLMCommon
 import MLXLMHuggingFace
 import MLXLMTokenizers
 
