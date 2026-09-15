@@ -139,6 +139,7 @@ public struct ModelConfiguration: Sendable {
         tokenizerSource: TokenizerSource? = nil,
         defaultPrompt: String = "",
         extraEOSTokens: Set<String> = [],
+        stopStrings: Set<String>? = nil,
         eosTokenIds: Set<Int> = [],
         toolCallFormat: ToolCallFormat? = nil,
         lazyLoad: Bool = false
@@ -147,6 +148,7 @@ public struct ModelConfiguration: Sendable {
         self.tokenizerSource = tokenizerSource
         self.defaultPrompt = defaultPrompt
         self.extraEOSTokens = extraEOSTokens
+        self.stopStrings = stopStrings
         self.eosTokenIds = eosTokenIds
         self.toolCallFormat = toolCallFormat
         self.lazyLoad = lazyLoad
@@ -166,6 +168,7 @@ public struct ModelConfiguration: Sendable {
             name: name,
             defaultPrompt: defaultPrompt,
             extraEOSTokens: extraEOSTokens,
+            stopStrings: stopStrings,
             eosTokenIds: eosTokenIds,
             toolCallFormat: toolCallFormat,
             lazyLoad: lazyLoad)
@@ -175,6 +178,35 @@ public struct ModelConfiguration: Sendable {
 
 extension ModelConfiguration: Equatable {
 
+    // Keep in sync with the stored properties above: synthesis is impossible because
+    // `messageGenerator` is not `Equatable`, so a new property will not appear here on its own.
+    public static func == (lhs: ModelConfiguration, rhs: ModelConfiguration) -> Bool {
+        lhs.id == rhs.id
+            && lhs.tokenizerSource == rhs.tokenizerSource
+            && lhs.defaultPrompt == rhs.defaultPrompt
+            && lhs.extraEOSTokens == rhs.extraEOSTokens
+            && lhs.stopStrings == rhs.stopStrings
+            && lhs.eosTokenIds == rhs.eosTokenIds
+            && lhs.toolCallFormat == rhs.toolCallFormat
+            && lhs.reasoningConfig == rhs.reasoningConfig
+            && lhs.weightFileSelection == rhs.weightFileSelection
+            && sameMessageGenerator(lhs.messageGenerator, rhs.messageGenerator)
+    }
+
+    /// ``MessageGenerator`` is not `Equatable` -- generators are stateless, so identity of
+    /// the concrete type is the meaningful comparison.
+    private static func sameMessageGenerator(
+        _ lhs: (any MessageGenerator)?, _ rhs: (any MessageGenerator)?
+    ) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            true
+        case (.some(let lhs), .some(let rhs)):
+            ObjectIdentifier(type(of: lhs)) == ObjectIdentifier(type(of: rhs))
+        default:
+            false
+        }
+    }
 }
 
 extension ModelConfiguration.Identifier: Equatable {

@@ -124,7 +124,7 @@ class GraniteMoeHybridMamba2Mixer: Module {
         if let cache {
             let end = padded.dim(1)
             let start = max(0, end - (convKernelSize - 1))
-            cache[0] = padded[0..., start ..< end, 0...]
+            cache[0] = contiguous(padded[0..., start ..< end, 0...])
         }
 
         let convOutput = conv1d(padded)
@@ -181,6 +181,7 @@ class GraniteMoeHybridMamba2Mixer: Module {
 
         if let cache {
             cache[1] = nextState
+            cache.advance(hiddenStates.dim(1))
         }
 
         let flattenedY = y.flattened(start: 2)
@@ -245,8 +246,9 @@ class GraniteMoeHybridAttention: Module {
         values = values.reshaped(B, L, args.kvHeads, headDim).transposed(0, 2, 1, 3)
 
         if let rope {
-            queries = applyRotaryPosition(rope, to: queries, cache: cache)
-            keys = applyRotaryPosition(rope, to: keys, cache: cache)
+            let offset = cache?.ropeOffset
+            queries = applyRotaryPosition(rope, to: queries, offset: offset)
+            keys = applyRotaryPosition(rope, to: keys, offset: offset)
         }
 
         let output = attentionWithCacheUpdate(
@@ -279,8 +281,16 @@ class GraniteMoeHybridTopKGating: Module {
 
     func callAsFunction(_ hiddenStates: MLXArray) -> (MLXArray, MLXArray) {
         let logits = layer(hiddenStates)
-        let indices = MLX.argPartition(-logits, kth: topK - 1, axis: -1)[.ellipsis, ..<topK]
-        let topKLogits = MLX.takeAlong(logits, indices, axis: -1)
+        let indices: MLXArray
+        let topKLogits: MLXArray
+        if supportsFusedRouterTopK(logits, k: topK) {
+            (indices, topKLogits) = fusedRouterTopK(
+                selection: logits, values: logits, k: topK,
+                normalize: false, order: .descending)
+        } else {
+            indices = MLX.argPartition(-logits, kth: topK - 1, axis: -1)[.ellipsis, ..<topK]
+            topKLogits = MLX.takeAlong(logits, indices, axis: -1)
+        }
         let gates = MLX.softmax(topKLogits, axis: -1, precise: true)
         return (indices, gates)
     }
@@ -314,7 +324,7 @@ class GraniteMoeHybridMoE: Module, UnaryLayer {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let (indices, gates) = router(x)
         let expertOutputs = switchMLP(x, indices)
-        return (expertOutputs * gates[.ellipsis, .newAxis]).sum(axis: -2)
+        return weightedExpertSum(expertOutputs, gates)
     }
 }
 
@@ -515,12 +525,12 @@ public class GraniteMoeHybridModel: Module, LLMModel, KVCacheDimensionProvider {
         return out / logitsScaling
     }
 
-    public func newCache(parameters: GenerateParameters?) -> [KVCache] {
-        configuration.layerTypes.map { layerType in
+    public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try configuration.layerTypes.map { layerType in
             if layerType == "mamba" {
                 return MambaCache()
             } else {
-                return KVCacheSimple()
+                return try makeAttentionKVCache(parameters: parameters)
             }
         }
     }
@@ -528,9 +538,8 @@ public class GraniteMoeHybridModel: Module, LLMModel, KVCacheDimensionProvider {
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         var sanitized = weights
 
-        if configuration.tieWordEmbeddings {
-            sanitized["lm_head.weight"] = nil
-        }
+        sanitized = filterLMHeadWeights(
+            from: sanitized, tiedWordEmbeddings: configuration.tieWordEmbeddings)
 
         for (key, value) in weights {
             if key.contains("conv1d.weight"), value.dim(-1) != 1 {

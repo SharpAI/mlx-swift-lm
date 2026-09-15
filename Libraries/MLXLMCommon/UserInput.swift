@@ -1,9 +1,14 @@
 // Copyright © 2024 Apple Inc.
 
-@preconcurrency import AVFoundation
-import CoreImage
 import Foundation
 import MLX
+
+#if canImport(AVFoundation)
+@preconcurrency import AVFoundation
+#endif
+#if canImport(CoreImage)
+import CoreImage
+#endif
 
 public typealias Message = [String: any Sendable]
 
@@ -40,22 +45,46 @@ public struct UserInput {
     }
 
     public struct VideoFrame {
-        public let frame: CIImage
+        public let image: Image
         public let timeStamp: CMTime
 
-        public init(frame: CIImage, timeStamp: CMTime) {
-            self.frame = frame
+        public init(image: Image, timeStamp: CMTime) {
+            self.image = image
             self.timeStamp = timeStamp
         }
+
+        #if canImport(CoreImage)
+
+        @available(
+            *, deprecated,
+            message: "Use init(image:, timeStamp:) instead"
+        )
+        public init(frame: CIImage, timeStamp: CMTime) {
+            self.image = .ciImage(frame)
+            self.timeStamp = timeStamp
+        }
+
+        @available(
+            *, deprecated,
+            message: "Use image.asCIImage()"
+        )
+        public var frame: CIImage {
+            return try! image.asCIImage()
+        }
+
+        #endif
     }
 
     /// Representation of a video resource.
     public enum Video {
+        #if canImport(AVFoundation)
         case avAsset(AVAsset)
+        #endif
         case url(URL)
         /// Useful for decoded frames held in memory
         case frames([VideoFrame])
 
+        #if canImport(AVFoundation)
         @available(
             *, deprecated,
             message: "Use MediaProcessing.asProcessedSequence() with the Video directly"
@@ -72,14 +101,18 @@ public struct UserInput {
                 )
             }
         }
+        #endif
     }
 
     /// Representation of an image resource.
     public enum Image {
+        #if canImport(CoreImage)
         case ciImage(CIImage)
+        #endif
         case url(URL)
         case array(MLXArray)
 
+        #if canImport(CoreImage)
         public func asCIImage() throws -> CIImage {
             switch self {
             case .ciImage(let image):
@@ -93,7 +126,8 @@ public struct UserInput {
 
             case .array(let array):
                 guard array.ndim == 3 else {
-                    throw UserInputError.arrayError("array must have 3 dimensions: \(array.ndim)")
+                    throw UserInputError.arrayError(
+                        "array must have 3 dimensions: \(array.ndim)")
                 }
 
                 var array = array
@@ -135,6 +169,20 @@ public struct UserInput {
                     format: .RGBA8, colorSpace: cs)
             }
         }
+        #endif
+    }
+
+    /// Representation of an audio resource.
+    public enum Audio {
+        case url(URL)
+        case array(MLXArray)
+
+        // See also UserInput+Audio
+    }
+
+    /// Representation of the audio format.
+    public enum AudioFormat: Sendable {
+        case linearPCM
     }
 
     /// Representation of an audio resource.
@@ -147,8 +195,104 @@ public struct UserInput {
     public struct Processing: Sendable {
         public var resize: CGSize?
 
-        public init(resize: CGSize? = nil) {
+        public var video = VideoProcessing()
+        public var audio = AudioProcessing()
+
+        /// Optional per-call overrides for the image resize budget. When set,
+        /// they replace the model's configured `min_pixels` / `max_pixels` for
+        /// this request; when `nil` the model configuration is used. This lets
+        /// a caller request the resolution a model was tuned for without
+        /// hard-coding pixel counts in the processor.
+        public var minPixels: Int?
+        public var maxPixels: Int?
+
+        public init(
+            resize: CGSize? = nil,
+            video: VideoProcessing = VideoProcessing(),
+            audio: AudioProcessing = AudioProcessing(),
+            minPixels: Int? = nil,
+            maxPixels: Int? = nil
+        ) {
             self.resize = resize
+            self.video = video
+            self.audio = audio
+            self.minPixels = minPixels
+            self.maxPixels = maxPixels
+        }
+    }
+
+    /// Representation of video processing options.
+    public struct VideoProcessing: Sendable, Equatable {
+        /// Strategy for temporal frame sampling.
+        public enum SamplingMethod: Sendable, Equatable {
+            /// Sample a fixed total count of frames distributed evenly across the video duration.
+            case targetFrames(Int)
+
+            /// Derive a target frame count from frames per second, then distribute those frames
+            /// evenly across the video duration.
+            case framesPerSecond(Double)
+        }
+
+        /// The sampling strategy to use, or `nil` to use model default behavior.
+        public var sampling: SamplingMethod?
+
+        public init(sampling: SamplingMethod? = nil) {
+            self.sampling = sampling
+        }
+
+        /// Convenience initializer to sample a fixed number of frames across the video.
+        public init(targetFrames: Int) {
+            self.sampling = .targetFrames(targetFrames)
+        }
+
+        /// Convenience initializer to target a sampling density in frames per second.
+        public init(targetFramesPerSecond: Double) {
+            self.sampling = .framesPerSecond(targetFramesPerSecond)
+        }
+
+        /// Target number of frames to sample from the video, regardless of duration.
+        public var targetFrames: Int? {
+            get {
+                if case .targetFrames(let count) = sampling { return count }
+                return nil
+            }
+            set {
+                if let newValue {
+                    sampling = .targetFrames(newValue)
+                } else if case .targetFrames = sampling {
+                    sampling = nil
+                }
+            }
+        }
+
+        /// Target frame rate (frames per second) to sample from the video.
+        public var targetFramesPerSecond: Double? {
+            get {
+                if case .framesPerSecond(let fps) = sampling { return fps }
+                return nil
+            }
+            set {
+                if let newValue {
+                    sampling = .framesPerSecond(newValue)
+                } else if case .framesPerSecond = sampling {
+                    sampling = nil
+                }
+            }
+        }
+    }
+
+    /// Representation of audio processing
+    public struct AudioProcessing: Sendable {
+        /// Sample rate
+        public var sampleRate = 48_000.0
+
+        /// Number of channels of audio.  If 1, convert to mono
+        public var channels = 1
+
+        /// Audio format
+        public var audioFormat: AudioFormat = .linearPCM
+
+        public init() {
         }
     }
 
@@ -204,6 +348,7 @@ public struct UserInput {
     ///   - prompt: text prompt
     ///   - images: optional images
     ///   - videos: optional videos
+    ///   - audios: optional audios
     ///   - tools: optional tool specifications
     ///   - additionalContext: optional context (model specific)
     /// ### See Also
@@ -218,6 +363,10 @@ public struct UserInput {
         self.prompt = .chat([
             .user(prompt, images: images, videos: videos, audio: audio)
         ])
+        // note: prompt.didSet is not triggered in init
+        self.images = images
+        self.videos = videos
+        self.audios = audios
         self.tools = tools
         self.additionalContext = additionalContext
     }
@@ -243,13 +392,15 @@ public struct UserInput {
     /// ]
     /// ```
     ///
-    /// Typically the ``init(chat:processing:tools:additionalContext:)`` should be used instead
-    /// along with a model specific ``MessageGenerator`` (supplied by the ``UserInputProcessor``).
+    /// Typically the ``init(chat:processing:tools:additionalContext:)``
+    /// should be used instead along with a model specific
+    /// ``MessageGenerator`` (supplied by the ``UserInputProcessor``).
     ///
     /// - Parameters:
     ///   - messages: array of dictionaries representing the prompt in a model specific format
     ///   - images: optional images
     ///   - videos: optional videos
+    ///   - audios: optional audios
     ///   - tools: optional tool specifications
     ///   - additionalContext: optional context (model specific)
     /// ### See Also
@@ -318,12 +469,14 @@ public struct UserInput {
 
     /// Initialize the `UserInput` with a preconfigured ``Prompt-swift.enum``.
     ///
-    /// ``init(chat:processing:tools:additionalContext:)`` is the preferred mechanism.
+    /// ``init(chat:processing:tools:additionalContext:)`` is
+    /// the preferred mechanism.
     ///
     /// - Parameters:
     ///   - prompt: the prompt
     ///   - images: optional images
     ///   - videos: optional videos
+    ///   - audios: optional audios
     ///   - tools: optional tool specifications
     ///   - processing: optional processing to be applied to media
     ///   - additionalContext: optional context (model specific)
@@ -339,6 +492,7 @@ public struct UserInput {
         tools: [ToolSpec]? = nil, additionalContext: [String: any Sendable]? = nil
     ) {
         self.prompt = prompt
+        // note: prompt.didSet is not triggered in init
         switch prompt {
         case .text, .messages:
             self.images = images
@@ -360,10 +514,39 @@ public protocol UserInputProcessor: Sendable {
     func prepare(input: UserInput) async throws -> LMInput
 }
 
+/// Applies a configured message generator before delegating input processing.
+///
+/// This lets a model configuration override a VLM processor's built-in generator without
+/// changing the processor implementation.
+///
+/// - Important: the override fully replaces the model's own generator, including any
+///   image/video placeholder content that generator would emit. A text-only generator on a
+///   VLM configuration therefore loses media conditioning: Qwen-family processors throw on
+///   the placeholder-count mismatch, others silently ignore the attached media.
+public struct MessageGeneratorUserInputProcessor: UserInputProcessor {
+    private let processor: any UserInputProcessor
+    private let messageGenerator: any MessageGenerator
+
+    public init(
+        processor: any UserInputProcessor,
+        messageGenerator: any MessageGenerator
+    ) {
+        self.processor = processor
+        self.messageGenerator = messageGenerator
+    }
+
+    public func prepare(input: UserInput) async throws -> LMInput {
+        var input = input
+        input.prompt = .messages(messageGenerator.generate(from: input))
+        return try await processor.prepare(input: input)
+    }
+}
+
 internal enum UserInputError: LocalizedError {
     case notImplemented
     case unableToLoad(URL)
     case arrayError(String)
+    case noAudioData(URL)
 
     var errorDescription: String? {
         switch self {
@@ -373,6 +556,8 @@ internal enum UserInputError: LocalizedError {
             return String(localized: "Unable to load image from URL: \(url.path).")
         case .arrayError(let message):
             return String(localized: "Error processing image array: \(message).")
+        case .noAudioData(let url):
+            return String(localized: "No audio data in file: \(url.path)")
         }
     }
 }

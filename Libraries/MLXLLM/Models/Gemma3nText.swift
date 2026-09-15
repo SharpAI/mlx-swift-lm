@@ -14,52 +14,11 @@ import MLXNN
 
 // MARK: - Configuration
 
-/// A type that can be decoded as either a single Int or an array of Ints.
-/// This is needed because some models (like Gemma 3n) specify intermediate_size
-/// as a per-layer array, while others use a single value.
-public struct IntOrArray: Codable {
-    public let values: [Int]
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let array = try? container.decode([Int].self) {
-            self.values = array
-        } else if let single = try? container.decode(Int.self) {
-            self.values = [single]
-        } else {
-            throw DecodingError.typeMismatch(
-                IntOrArray.self,
-                DecodingError.Context(
-                    codingPath: decoder.codingPath,
-                    debugDescription: "Expected Int or [Int]"
-                )
-            )
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        if values.count == 1 {
-            try container.encode(values[0])
-        } else {
-            try container.encode(values)
-        }
-    }
-
-    /// Get the intermediate size for a specific layer
-    public subscript(layerIdx: Int) -> Int {
-        if values.count == 1 {
-            return values[0]
-        }
-        return values[layerIdx]
-    }
-}
-
 public struct Gemma3nTextConfiguration: Codable {
     let modelType: String
     let hiddenSize: Int
     let numHiddenLayers: Int
-    let intermediateSize: IntOrArray
+    let intermediateSize: IntOrIntArray
     let numAttentionHeads: Int
     let headDim: Int
     let rmsNormEps: Float
@@ -132,7 +91,7 @@ public struct Gemma3nTextConfiguration: Codable {
         modelType = try container.decode(String.self, forKey: .modelType)
         hiddenSize = try container.decode(Int.self, forKey: .hiddenSize)
         numHiddenLayers = try container.decode(Int.self, forKey: .numHiddenLayers)
-        intermediateSize = try container.decode(IntOrArray.self, forKey: .intermediateSize)
+        intermediateSize = try container.decode(IntOrIntArray.self, forKey: .intermediateSize)
         numAttentionHeads = try container.decode(Int.self, forKey: .numAttentionHeads)
         headDim = try container.decode(Int.self, forKey: .headDim)
         rmsNormEps = try container.decode(Float.self, forKey: .rmsNormEps)
@@ -158,6 +117,39 @@ public struct Gemma3nTextConfiguration: Codable {
         ropeScaling = try container.decodeIfPresent([String: String].self, forKey: .ropeScaling)
         slidingWindowPattern = try container.decodeIfPresent(
             Int.self, forKey: .slidingWindowPattern)
+    }
+
+    package init() {
+        // smallish defaults for testing
+        activationSparsityPattern = [0.95, 0.95, 0, 0]
+        altupActiveIdx = 0
+        altupCoefClip = 120
+        altupCorrectScale = true
+        altupNumInputs = 4
+        finalLogitSoftcapping = 30
+        headDim = 64
+        hiddenSize = 512
+        hiddenSizePerLayerInput = 256
+        intermediateSize = .init([8192, 8192, 8192, 8192])
+        laurelRank = 64
+        layerTypes = [
+            "sliding_attention", "sliding_attention", "sliding_attention", "full_attention",
+        ]
+        maxPositionEmbeddings = 32768
+        modelType = "gemma3n"
+        numAttentionHeads = 8
+        numHiddenLayers = 4
+        numKeyValueHeads = 2
+        numKvSharedLayers = 0
+        queryPreAttnScalar = nil
+        rmsNormEps = 1e-6
+        ropeLocalBaseFreq = 10000
+        ropeScaling = nil
+        ropeTheta = 1_000_000
+        slidingWindow = 512
+        slidingWindowPattern = nil
+        vocabSize = 262400
+        vocabSizePerLayerInput = 262144
     }
 }
 
@@ -193,6 +185,20 @@ class Gemma3nTextLaurelBlock: Module {
         let normedLaurelX = postLaurelNorm(laurelX)
         return x + normedLaurelX
     }
+}
+
+/// Slices an array mask down to the key sequence length, preserving its dtype.
+///
+/// Masks created internally through `createAttentionMask` already match the key
+/// length, so this only applies to caller-supplied masks wider than the keys.
+func gemma3nAdjustedAttentionMask(
+    _ mask: MLXFast.ScaledDotProductAttentionMaskMode?,
+    keySequenceLength: Int
+) -> MLXFast.ScaledDotProductAttentionMaskMode? {
+    guard case .array(let maskArray) = mask, maskArray.dim(-1) > keySequenceLength else {
+        return mask
+    }
+    return .array(maskArray[.ellipsis, 0 ..< keySequenceLength])
 }
 
 class Gemma3nAttention: Module {
@@ -263,6 +269,7 @@ class Gemma3nAttention: Module {
         queries = queries.reshaped(B, L, -1, headDim)
         queries = qNorm(queries)
 
+        let offset = cache?.ropeOffset
         var keys: MLXArray
         var values: MLXArray
 
@@ -275,7 +282,7 @@ class Gemma3nAttention: Module {
                 keys = kProj(x).reshaped(B, L, -1, headDim)
                 keys = kNorm(keys)
                 keys = keys.transposed(0, 2, 1, 3)
-                keys = applyRotaryPosition(rope, to: keys, cache: cache)
+                keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
                 values = vProj(x).reshaped(B, L, -1, headDim)
                 values = vNorm(values)
@@ -289,7 +296,7 @@ class Gemma3nAttention: Module {
             keys = kProj(x).reshaped(B, L, -1, headDim)
             keys = kNorm(keys)
             keys = keys.transposed(0, 2, 1, 3)
-            keys = applyRotaryPosition(rope, to: keys, cache: cache)
+            keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
             values = vProj(x).reshaped(B, L, -1, headDim)
             values = vNorm(values)
@@ -301,18 +308,12 @@ class Gemma3nAttention: Module {
         }
 
         queries = queries.transposed(0, 2, 1, 3)
-        queries = applyRotaryPosition(rope, to: queries, cache: cache)
+        queries = applyRotaryPosition(rope, to: queries, offset: offset)
 
-        var adjustedMask = mask
-        if case .array(let maskArray) = mask {
-            let keysSeqLen = keys.shape[keys.shape.count - 2]
-            if maskArray.dim(-1) != keysSeqLen {
-                let slicedMask = maskArray[.ellipsis, 0 ..< keysSeqLen].asType(queries.dtype)
-                adjustedMask = .array(slicedMask)
-            } else {
-                adjustedMask = .array(maskArray.asType(queries.dtype))
-            }
-        }
+        let adjustedMask = gemma3nAdjustedAttentionMask(
+            mask,
+            keySequenceLength: keys.dim(-2)
+        )
 
         let output = MLXFast.scaledDotProductAttention(
             queries: queries,
@@ -505,8 +506,6 @@ class Gemma3nDecoderLayer: Module {
     let config: Gemma3nTextConfiguration
     let hiddenSize: Int
     let layerIdx: Int
-    let isSliding: Bool
-    let slidingWindow: Int
     let hiddenSizePerLayerInput: Int
 
     @ModuleInfo(key: "self_attn") var selfAttn: Gemma3nAttention
@@ -525,14 +524,9 @@ class Gemma3nDecoderLayer: Module {
         self.config = config
         self.hiddenSize = config.hiddenSize
         self.layerIdx = layerIdx
-        self.slidingWindow = config.slidingWindow
         self.hiddenSizePerLayerInput = config.hiddenSizePerLayerInput
 
         self._selfAttn.wrappedValue = Gemma3nAttention(config, layerIdx: layerIdx)
-        self.isSliding =
-            (config.layerTypes
-            ?? Array(repeating: "global_attention", count: config.numHiddenLayers))[layerIdx]
-            == "sliding_attention"
 
         self._mlp.wrappedValue = Gemma3nMLP(config, layerIdx: layerIdx)
         self._inputLayernorm.wrappedValue = RMSNorm(
@@ -578,30 +572,11 @@ class Gemma3nDecoderLayer: Module {
         _ x: MLXArray,
         mask: MLXFast.ScaledDotProductAttentionMaskMode? = nil,
         cache: KVCache? = nil,
-        perLayerInput: MLXArray? = nil,
-        caches: [KVCache?]? = nil,
-        cachePosition: MLXArray? = nil
+        perLayerInput: MLXArray? = nil
     ) -> MLXArray {
         var x = x
         if x.ndim == 1 {
             x = expandedDimensions(x, axis: 0)
-        }
-
-        var finalMask = mask
-        if isSliding, case .array(let maskArray) = mask {
-            let effectiveSeqLen = max(cachePosition?.dim(0) ?? 0, slidingWindow)
-            let minDtype = MLXArray(Float.leastNormalMagnitude, dtype: maskArray.dtype)
-
-            let slidingWindowMask = tril(
-                MLXArray.ones(maskArray.shape, dtype: .bool),
-                k: -slidingWindow
-            )
-            let updatedMask = MLX.where(slidingWindowMask, minDtype, maskArray)
-
-            let offset = max(0, (cachePosition?.max().item() ?? 0) - effectiveSeqLen + 1)
-            let maskIndexes = MLXArray(0 ..< min(effectiveSeqLen, updatedMask.dim(-1))) + offset
-            let slicedMask = take(updatedMask, maskIndexes.asType(.int32), axis: -1)
-            finalMask = .array(slicedMask)
         }
 
         let predictions = altup.predict(x)
@@ -612,7 +587,7 @@ class Gemma3nDecoderLayer: Module {
 
         let attn = selfAttn(
             activePredictionNormed,
-            mask: finalMask,
+            mask: mask,
             cache: cache
         )
 
@@ -681,24 +656,24 @@ public class Gemma3nLanguageModel: Module {
 
     @ModuleInfo var norm: RMSNorm
 
-    public func newCache(parameters: GenerateParameters?) -> [any KVCache] {
-        var caches: [any KVCache] = []
+    public func newCache(parameters: GenerateParameters?) throws -> [any KVCache] {
         let slidingWindow = config.slidingWindow > 0 ? config.slidingWindow : 4096
         let firstKvSharedLayerIdx = config.numHiddenLayers - config.numKvSharedLayers
         let layerTypes =
             config.layerTypes ?? Array(repeating: "global_attention", count: config.numHiddenLayers)
 
-        for i in 0 ..< firstKvSharedLayerIdx {
+        return try (0 ..< firstKvSharedLayerIdx).map { i in
             let layerType = layerTypes[i]
-            if layerType == "full_attention" {
-                caches.append(StandardKVCache())
-            } else if layerType == "sliding_attention" {
-                caches.append(RotatingKVCache(maxSize: slidingWindow, keep: 0))
-            } else {
+            switch layerType {
+            case "full_attention", "global_attention":
+                return try makeAttentionKVCache(parameters: parameters)
+            case "sliding_attention":
+                return try makeSlidingWindowKVCache(
+                    parameters: parameters, window: slidingWindow)
+            default:
                 fatalError("Unknown layer type: \(layerType) for layer \(i)")
             }
         }
-        return caches
     }
 
     init(_ config: Gemma3nTextConfiguration) {
@@ -821,9 +796,6 @@ public class Gemma3nLanguageModel: Module {
         let requiredCacheSize = max(firstKvSharedLayerIdx, maxCacheIdx + 1)
         let cacheArray = cache ?? Array(repeating: nil as KVCache?, count: requiredCacheSize)
 
-        let pastSeenTokens = cacheArray.first??.offset ?? 0
-        let cachePosition = MLXArray(pastSeenTokens ..< (pastSeenTokens + h.dim(1)))
-
         var fullMask: MLXFast.ScaledDotProductAttentionMaskMode = .none
         var slidingWindowMask: MLXFast.ScaledDotProductAttentionMaskMode = .none
 
@@ -878,9 +850,7 @@ public class Gemma3nLanguageModel: Module {
                 h,
                 mask: localMask,
                 cache: layerCache,
-                perLayerInput: perLayerInput,
-                caches: cacheArray,
-                cachePosition: cachePosition
+                perLayerInput: perLayerInput
             )
         }
 
@@ -972,8 +942,8 @@ public class Gemma3nTextModel: Module, LLMModel {
         super.init()
     }
 
-    public func newCache(parameters: GenerateParameters?) -> [any KVCache] {
-        return languageModel.newCache(parameters: parameters)
+    public func newCache(parameters: GenerateParameters?) throws -> [any KVCache] {
+        return try languageModel.newCache(parameters: parameters)
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
@@ -1027,7 +997,8 @@ public class Gemma3nTextModel: Module, LLMModel {
 
     /// Handles prompt processing for sequences
     public func prepare(
-        _ input: LMInput, cache: [KVCache], windowSize: Int? = nil
+        _ input: LMInput, cache: [KVCache], state _: LMOutput.State? = nil,
+        prefill _: PrefillParameters = .init()
     ) throws -> PrepareResult {
         let promptTokens = input.text.tokens
         let promptCount = promptTokens.dim(0)
