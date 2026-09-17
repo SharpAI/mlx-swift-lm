@@ -32,9 +32,22 @@ jobs:
       - name: Create or Update Sync Branch
         run: |
           git checkout -B sync/upstream-latest
-          # Merge upstream instead of hard reset so SharpAI-specific changes
-          # (Package.swift fork dependencies, custom op hooks) are preserved.
-          git merge upstream/main --no-edit --strategy-option=ours --allow-unrelated-histories || true
+          # A real three-way merge, not -X ours: that option silently kept our
+          # side of every hunk both sides touched (no conflict markers, no
+          # review), which is how upstream fixes to shared code kept getting
+          # dropped without anyone noticing. If upstream and SharpAI both
+          # changed the same code, that must show up as a merge conflict.
+          if git merge upstream/main --no-edit --allow-unrelated-histories; then
+            CONFLICTS=false
+          else
+            # Keep the conflict markers instead of aborting: `git add -A`
+            # marks paths as resolved from git's point of view without
+            # touching their contents, so the markers ride into the commit
+            # and the PR diff, where a human resolves them through review
+            # instead of the bot silently picking a side.
+            CONFLICTS=true
+            git add -A
+          fi
           # Always restore the SharpAI fork dependency — upstream will overwrite
           # this with ml-explore/mlx-swift, which lacks TurboKV/SSD Metal ops.
           # The tag is bumped separately by update_dependencies.yml.
@@ -55,8 +68,13 @@ jobs:
           rm -rf .github/workflows
           git checkout origin/main -- .github/workflows
           git add -A .github/workflows
-          git diff --cached --quiet || git commit -m "chore(sync): restore SharpAI mlx-swift fork dependency after upstream merge"
+          if [ "$CONFLICTS" = true ]; then
+            git commit -m "chore(sync): merge upstream/main (UNRESOLVED CONFLICTS — needs manual review)"
+          else
+            git diff --cached --quiet || git commit -m "chore(sync): restore SharpAI mlx-swift fork dependency after upstream merge"
+          fi
           git push -f origin sync/upstream-latest
+          echo "CONFLICTS=$CONFLICTS" >> "$GITHUB_ENV"
 
       - name: Create Pull Request to Main
         env:
@@ -69,6 +87,11 @@ jobs:
           # every run; this applies the same fallback here.
           GH_TOKEN: ${{ secrets.SWIFTLM_PR_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          gh pr create --base main --head sync/upstream-latest \
-            --title "🔄 Auto-Sync: Apple Upstream Repository" \
-            --body "Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. Please review merge conflicts (if any) and verify CI pipelines." || echo "PR already exists or no changes"
+          if [ "$CONFLICTS" = true ]; then
+            TITLE="🔄⚠️ Auto-Sync: Apple Upstream Repository (CONFLICTS — do not merge as-is)"
+            BODY="Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. The merge left unresolved conflicts (search for \`<<<<<<<\`) — resolve them by hand before merging. Do not assume either side is automatically correct."
+          else
+            TITLE="🔄 Auto-Sync: Apple Upstream Repository"
+            BODY="Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. Please review merge conflicts (if any) and verify CI pipelines."
+          fi
+          gh pr create --base main --head sync/upstream-latest --title "$TITLE" --body "$BODY" || echo "PR already exists or no changes"
