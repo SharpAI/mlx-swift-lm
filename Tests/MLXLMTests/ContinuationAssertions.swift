@@ -177,15 +177,24 @@ struct ContinuationAssertions {
     ) throws {
         try withRandomState(MLXRandom.RandomState(seed: 17)) {
             let imageA = image()
-            // Scaled well past imageA's own magnitude so an unmasked vision
-            // tower's cross-image attention pulls imageA's features by more
-            // than float32 rounding noise, on any hardware or build
-            // configuration. The isolating case (`expectsIsolation`) is
-            // unaffected: its model masks each frame to itself, so imageB's
-            // magnitude never reaches imageA's features regardless of scale.
-            let imageBUnscaled = image()
+            // A per-dimension offset, not a uniform scale: the vision tower's
+            // pre-attention LayerNorm removes each patch's own mean and
+            // rescales by its own std, so multiplying imageB's pixels by a
+            // constant survives normalization unchanged (confirmed against
+            // CI: it produced the exact same diff, bit for bit). Shifting
+            // each feature dimension by a different fixed amount changes the
+            // *direction* LayerNorm normalizes toward, not just the
+            // magnitude it removes -- so imageB's patches land far from
+            // imageA's in the normalized space unmasked attention sees. The
+            // isolating case (`expectsIsolation`) is unaffected: its model
+            // masks each frame to itself, so imageB's content never reaches
+            // imageA's features regardless of how it's perturbed.
+            let imageBUnshifted = image()
+            let featureCount = imageBUnshifted.pixels.dim(-1)
+            let directionalBias = MLXArray(
+                (0 ..< featureCount).map { Float($0 % 2 == 0 ? 1 : -1) * 40 })
             let imageB = LMInput.ProcessedImage(
-                pixels: imageBUnscaled.pixels * 25, frames: imageBUnscaled.frames)
+                pixels: imageBUnshifted.pixels + directionalBias, frames: imageBUnshifted.frames)
             let t1 = concatenated([textTokens(10), imageRun(), textTokens(8, seed: 5)], axis: 1)
             let t2 = concatenated(
                 [textTokens(6, seed: 2), imageRun(), textTokens(4, seed: 9)], axis: 1)
