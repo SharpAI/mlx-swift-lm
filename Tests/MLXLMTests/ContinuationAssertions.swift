@@ -210,40 +210,50 @@ struct ContinuationAssertions {
                     suffix, cache: cacheW, state: s1, prefill: PrefillParameters()))
 
             let diff = maxAbsDiff(logitsW, logitsF)
-            if expectsIsolation {
-                // The suffix carries new image data as one atomic prepare() call, so
-                // there's no token-by-token decode analog for its noise floor (unlike
-                // assertWarmImageContinuation). Proxy it with the same kind of split
-                // this test itself performs, on t1's own image: prefill through the
-                // image, then decode its trailing text step by step, against t1's
-                // single-shot prefill. Both isolate the noise a vision-tower forward
-                // picks up from being broken across calls, which is what the append-
-                // only split does too.
-                let head = concatenated([textTokens(10), imageRun()], axis: 1)
-                let tail = textTokens(8, seed: 5)
-                let cacheD = try model.newCache(parameters: nil)
-                let (_, d0) = try prefill(model, head, image: imageA, cache: cacheD)
-                var state = d0
-                var logitsD = MLXArray(0)
-                for j in 0 ..< tail.dim(1) {
-                    let out = model(
-                        LMInput.Text(tokens: tail[0..., j ..< (j + 1)]), cache: cacheD,
-                        state: state)
-                    state = out.state
-                    logitsD = out.logits[0..., -1, 0...]
-                }
-                let (logitsT1, _) = try prefill(
-                    model, t1, image: imageA, cache: try model.newCache(parameters: nil))
-                let noiseFloor = maxAbsDiff(logitsD, logitsT1)
 
+            // The suffix carries new image data as one atomic prepare() call, so
+            // there's no token-by-token decode analog for its noise floor (unlike
+            // assertWarmImageContinuation). Proxy it with the same kind of split
+            // this test itself performs, on t1's own image: prefill through the
+            // image, then decode its trailing text step by step, against t1's
+            // single-shot prefill. Both isolate the noise a vision-tower forward
+            // picks up from being broken across calls, which is what the append-
+            // only split does too. Both branches below need this same-image floor:
+            // the isolating branch uses it as a ceiling ("no bigger than noise"),
+            // the diverging branch uses it as a baseline the real signal must clear
+            // ("bigger than noise"), since fixed absolute thresholds don't track the
+            // precision/kernel differences between build configurations and GPUs.
+            let head = concatenated([textTokens(10), imageRun()], axis: 1)
+            let tail = textTokens(8, seed: 5)
+            let cacheD = try model.newCache(parameters: nil)
+            let (_, d0) = try prefill(model, head, image: imageA, cache: cacheD)
+            var state = d0
+            var logitsD = MLXArray(0)
+            for j in 0 ..< tail.dim(1) {
+                let out = model(
+                    LMInput.Text(tokens: tail[0..., j ..< (j + 1)]), cache: cacheD,
+                    state: state)
+                state = out.state
+                logitsD = out.logits[0..., -1, 0...]
+            }
+            let (logitsT1, _) = try prefill(
+                model, t1, image: imageA, cache: try model.newCache(parameters: nil))
+            let noiseFloor = maxAbsDiff(logitsD, logitsT1)
+
+            if expectsIsolation {
                 XCTAssertLessThanOrEqual(
                     diff, max(noiseFloor * 10, 1e-3),
                     "split-suffix prefill diverged from full prefill (noise floor \(noiseFloor))",
                     file: file, line: line)
             } else {
+                // Unlike the isolation ceiling above (which wants a generous margin
+                // to avoid false failures on noisy hardware), this wants the
+                // smallest margin that still rules out "diff is just noise": 2x
+                // the same-image floor, or a small absolute epsilon on hardware
+                // where that floor rounds to ~0.
                 XCTAssertGreaterThan(
-                    diff, 1e-3,
-                    "cross-image vision attention should have changed the logits",
+                    diff, max(noiseFloor * 2, 1e-5),
+                    "cross-image vision attention should have changed the logits by more than same-image split noise (noise floor \(noiseFloor))",
                     file: file, line: line)
             }
         }
