@@ -177,7 +177,15 @@ struct ContinuationAssertions {
     ) throws {
         try withRandomState(MLXRandom.RandomState(seed: 17)) {
             let imageA = image()
-            let imageB = image()
+            // Scaled well past imageA's own magnitude so an unmasked vision
+            // tower's cross-image attention pulls imageA's features by more
+            // than float32 rounding noise, on any hardware or build
+            // configuration. The isolating case (`expectsIsolation`) is
+            // unaffected: its model masks each frame to itself, so imageB's
+            // magnitude never reaches imageA's features regardless of scale.
+            let imageBUnscaled = image()
+            let imageB = LMInput.ProcessedImage(
+                pixels: imageBUnscaled.pixels * 25, frames: imageBUnscaled.frames)
             let t1 = concatenated([textTokens(10), imageRun(), textTokens(8, seed: 5)], axis: 1)
             let t2 = concatenated(
                 [textTokens(6, seed: 2), imageRun(), textTokens(4, seed: 9)], axis: 1)
