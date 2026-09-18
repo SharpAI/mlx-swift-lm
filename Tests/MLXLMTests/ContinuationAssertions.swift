@@ -134,13 +134,29 @@ struct ContinuationAssertions {
             let (logitsF, _) = try prefill(
                 model, concatenated([t1, t2], axis: 1), image: image, cache: cacheF)
 
+            // The decode path (token by token, state threaded) is the offset-correct
+            // control, same as in assertWarmTextContinuation: the vision tower makes
+            // this floor larger than the text-only case, so it must be measured rather
+            // than assumed away.
+            let cacheD = try model.newCache(parameters: nil)
+            let (_, s0) = try prefill(model, t1, image: image, cache: cacheD)
+            var state = s0
+            var logitsD = MLXArray(0)
+            for j in 0 ..< t2.dim(1) {
+                let out = model(
+                    LMInput.Text(tokens: t2[0..., j ..< (j + 1)]), cache: cacheD, state: state)
+                state = out.state
+                logitsD = out.logits[0..., -1, 0...]
+            }
+            let noiseFloor = maxAbsDiff(logitsD, logitsF)
+
             let cacheW = try model.newCache(parameters: nil)
             let (_, s1) = try prefill(model, t1, image: image, cache: cacheW)
             let (logitsW, _) = try prefill(model, t2, cache: cacheW, state: s1)
 
             XCTAssertLessThanOrEqual(
-                maxAbsDiff(logitsW, logitsF), 1e-3,
-                "state-threaded warm continuation diverged from full prefill",
+                maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, 1e-3),
+                "state-threaded warm continuation diverged from full prefill (noise floor \(noiseFloor))",
                 file: file, line: line)
         }
     }
@@ -195,9 +211,35 @@ struct ContinuationAssertions {
 
             let diff = maxAbsDiff(logitsW, logitsF)
             if expectsIsolation {
+                // The suffix carries new image data as one atomic prepare() call, so
+                // there's no token-by-token decode analog for its noise floor (unlike
+                // assertWarmImageContinuation). Proxy it with the same kind of split
+                // this test itself performs, on t1's own image: prefill through the
+                // image, then decode its trailing text step by step, against t1's
+                // single-shot prefill. Both isolate the noise a vision-tower forward
+                // picks up from being broken across calls, which is what the append-
+                // only split does too.
+                let head = concatenated([textTokens(10), imageRun()], axis: 1)
+                let tail = textTokens(8, seed: 5)
+                let cacheD = try model.newCache(parameters: nil)
+                let (_, d0) = try prefill(model, head, image: imageA, cache: cacheD)
+                var state = d0
+                var logitsD = MLXArray(0)
+                for j in 0 ..< tail.dim(1) {
+                    let out = model(
+                        LMInput.Text(tokens: tail[0..., j ..< (j + 1)]), cache: cacheD,
+                        state: state)
+                    state = out.state
+                    logitsD = out.logits[0..., -1, 0...]
+                }
+                let (logitsT1, _) = try prefill(
+                    model, t1, image: imageA, cache: try model.newCache(parameters: nil))
+                let noiseFloor = maxAbsDiff(logitsD, logitsT1)
+
                 XCTAssertLessThanOrEqual(
-                    diff, 1e-3,
-                    "split-suffix prefill diverged from full prefill", file: file, line: line)
+                    diff, max(noiseFloor * 10, 1e-3),
+                    "split-suffix prefill diverged from full prefill (noise floor \(noiseFloor))",
+                    file: file, line: line)
             } else {
                 XCTAssertGreaterThan(
                     diff, 1e-3,
@@ -224,14 +266,31 @@ struct ContinuationAssertions {
             let (logitsF, _) = try prefill(
                 model, concatenated([t1, t2, t3], axis: 1), image: image, cache: cacheF)
 
+            // Decode-step control (see assertWarmTextContinuation): the same warm
+            // prefix, but t3 threaded token by token instead of split as a whole
+            // prefill. This measures the floor that any post-image split carries,
+            // independent of whether the resume state is positioned correctly.
+            let cacheD = try model.newCache(parameters: nil)
+            let (_, d1) = try prefill(model, t1, cache: cacheD)
+            let (_, d2) = try prefill(model, t2, image: image, cache: cacheD, state: d1)
+            var state = d2
+            var logitsD = MLXArray(0)
+            for j in 0 ..< t3.dim(1) {
+                let out = model(
+                    LMInput.Text(tokens: t3[0..., j ..< (j + 1)]), cache: cacheD, state: state)
+                state = out.state
+                logitsD = out.logits[0..., -1, 0...]
+            }
+            let noiseFloor = maxAbsDiff(logitsD, logitsF)
+
             let cacheW = try model.newCache(parameters: nil)
             let (_, s1) = try prefill(model, t1, cache: cacheW)
             let (_, s2) = try prefill(model, t2, image: image, cache: cacheW, state: s1)
             let (logitsW, _) = try prefill(model, t3, cache: cacheW, state: s2)
 
             XCTAssertLessThanOrEqual(
-                maxAbsDiff(logitsW, logitsF), 1e-3,
-                "post-image resume state positioned the following turn wrong",
+                maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, 1e-3),
+                "post-image resume state positioned the following turn wrong (noise floor \(noiseFloor))",
                 file: file, line: line)
         }
     }
@@ -246,12 +305,30 @@ struct ContinuationAssertions {
             let cacheS = try model.newCache(parameters: nil)
             let (logitsS, _) = try prefill(model, prompt, cache: cacheS)
 
+            // Decode-step control (see assertWarmTextContinuation): the same
+            // prompt, but its last chunk threaded token by token instead of
+            // prefilled as a chunked window.
+            let head = prompt[0..., 0 ..< (prompt.dim(1) - 8)]
+            let tail = prompt[0..., (prompt.dim(1) - 8)...]
+            let cacheD = try model.newCache(parameters: nil)
+            let (_, d1) = try prefill(model, head, cache: cacheD)
+            var state = d1
+            var logitsD = MLXArray(0)
+            for j in 0 ..< tail.dim(1) {
+                let out = model(
+                    LMInput.Text(tokens: tail[0..., j ..< (j + 1)]), cache: cacheD, state: state)
+                state = out.state
+                logitsD = out.logits[0..., -1, 0...]
+            }
+            let noiseFloor = maxAbsDiff(logitsD, logitsS)
+
             let cacheC = try model.newCache(parameters: nil)
             let (logitsC, _) = try prefill(model, prompt, cache: cacheC, stepSize: 8)
 
             XCTAssertLessThanOrEqual(
-                maxAbsDiff(logitsC, logitsS), 1e-3,
-                "windowed prefill diverged from single-shot", file: file, line: line)
+                maxAbsDiff(logitsC, logitsS), max(noiseFloor * 10, 1e-3),
+                "windowed prefill diverged from single-shot (noise floor \(noiseFloor))",
+                file: file, line: line)
         }
     }
 
@@ -268,11 +345,30 @@ struct ContinuationAssertions {
     ) throws {
         try withRandomState(MLXRandom.RandomState(seed: 13)) {
             let image = image()
-            let prompt = concatenated(
-                [textTokens(10), imageRun(), textTokens(12, seed: 7)], axis: 1)
+            let head = textTokens(10)
+            let mid = imageRun()
+            let tail = textTokens(12, seed: 7)
+            let prompt = concatenated([head, mid, tail], axis: 1)
 
             let cacheS = try model.newCache(parameters: nil)
             let (logitsS, _) = try prefill(model, prompt, image: image, cache: cacheS)
+
+            // Decode-step control (see assertWarmTextContinuation): the same
+            // head+image prefix, but the tail threaded token by token instead of
+            // prefilled as a chunked window. Computed once, since it does not depend
+            // on stepSize — it measures the floor any split of this prompt carries.
+            let cacheD = try model.newCache(parameters: nil)
+            let (_, d1) = try prefill(
+                model, concatenated([head, mid], axis: 1), image: image, cache: cacheD)
+            var state = d1
+            var logitsD = MLXArray(0)
+            for j in 0 ..< tail.dim(1) {
+                let out = model(
+                    LMInput.Text(tokens: tail[0..., j ..< (j + 1)]), cache: cacheD, state: state)
+                state = out.state
+                logitsD = out.logits[0..., -1, 0...]
+            }
+            let noiseFloor = maxAbsDiff(logitsD, logitsS)
 
             for stepSize in [3, 5, 8] {
                 let cacheC = try model.newCache(parameters: nil)
@@ -280,8 +376,8 @@ struct ContinuationAssertions {
                     model, prompt, image: image, cache: cacheC, stepSize: stepSize)
 
                 XCTAssertLessThanOrEqual(
-                    maxAbsDiff(logitsC, logitsS), 1e-3,
-                    "windowed image prefill diverged from single-shot at stepSize \(stepSize)",
+                    maxAbsDiff(logitsC, logitsS), max(noiseFloor * 10, 1e-3),
+                    "windowed image prefill diverged from single-shot at stepSize \(stepSize) (noise floor \(noiseFloor))",
                     file: file, line: line)
             }
         }
