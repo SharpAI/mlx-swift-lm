@@ -76,6 +76,30 @@ jobs:
           git push -f origin sync/upstream-latest
           echo "CONFLICTS=$CONFLICTS" >> "$GITHUB_ENV"
 
+      - name: Verify Swift Syntax
+        run: |
+          # A merge git reports as clean (no <<<<<<< markers) can still be
+          # broken: line-based 3-way merge can auto-combine two nearby edits
+          # into invalid Swift (a dropped function signature, an orphaned
+          # body) without ever flagging a conflict. This happened once
+          # already and went unnoticed because nothing checked the merge
+          # result before it was pushed. This step only parses every Swift
+          # file for syntax errors — it is not a full build (no
+          # macOS/Metal toolchain here) and can't catch semantic breakage,
+          # but it catches exactly the "structurally invalid code" failure
+          # mode seen last time. No attempt is made to fix anything: on
+          # failure we just flag it below, the same way CONFLICTS is
+          # flagged, so a human pulls the branch and fixes it by hand.
+          SYNTAX_OK=true
+          while IFS= read -r -d '' f; do
+            if ! docker run --rm -v "$PWD:/src" -w /src swift:6.2 \
+                swiftc -parse -suppress-warnings "$f" 2>&1; then
+              echo "::error::Syntax error in $f"
+              SYNTAX_OK=false
+            fi
+          done < <(find . -name '*.swift' -not -path './.build/*' -print0)
+          echo "SYNTAX_OK=$SYNTAX_OK" >> "$GITHUB_ENV"
+
       - name: Create Pull Request to Main
         env:
           # Bare GITHUB_TOKEN fails here with "Resource not accessible by
@@ -87,9 +111,15 @@ jobs:
           # every run; this applies the same fallback here.
           GH_TOKEN: ${{ secrets.SWIFTLM_PR_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          if [ "$CONFLICTS" = true ]; then
+          if [ "$CONFLICTS" = true ] && [ "$SYNTAX_OK" = false ]; then
+            TITLE="🔄⚠️ Auto-Sync: Apple Upstream Repository (CONFLICTS + SYNTAX ERRORS — do not merge as-is)"
+            BODY="Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. The merge left unresolved conflicts (search for \`<<<<<<<\`) AND the post-merge syntax check failed. Resolve conflicts by hand, then fix the reported syntax errors, before merging. Do not assume either side is automatically correct."
+          elif [ "$CONFLICTS" = true ]; then
             TITLE="🔄⚠️ Auto-Sync: Apple Upstream Repository (CONFLICTS — do not merge as-is)"
             BODY="Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. The merge left unresolved conflicts (search for \`<<<<<<<\`) — resolve them by hand before merging. Do not assume either side is automatically correct."
+          elif [ "$SYNTAX_OK" = false ]; then
+            TITLE="🔄⚠️ Auto-Sync: Apple Upstream Repository (SYNTAX ERRORS — do not merge as-is)"
+            BODY="Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. Git reported a clean merge, but the post-merge syntax check found invalid Swift (see the workflow run log for file/line). Pull the branch and fix it by hand before merging — do not assume a 'clean' merge is safe."
           else
             TITLE="🔄 Auto-Sync: Apple Upstream Repository"
             BODY="Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. Please review merge conflicts (if any) and verify CI pipelines."
