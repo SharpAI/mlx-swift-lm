@@ -13,6 +13,45 @@ private func debug(_ message: @autoclosure () -> String) {
 }
 
 public struct QwenVL {
+    /// The position new tokens are placed from when resuming on a warm cache: the cache offset
+    /// plus the rope delta the cached images accumulated, carried in `state` under `key`.
+    ///
+    /// A cold cache (offset zero) needs no anchor and returns zero, so long cold prefills share
+    /// the continuation path. A warm one fails closed: anchoring at zero instead would place the
+    /// continuation as if the cached prefix held no images, silently changing the output.
+    ///
+    /// Pair with ``continuationResumeState(ropeDeltas:cacheOffset:key:)`` — one adds the offset
+    /// on the way in, the other subtracts it on the way out.
+    static func continuationAnchor(
+        model: String, key: LMOutput.Key<MLXArray>, cacheOffset: Int, batchSize: Int,
+        state: LMOutput.State?
+    ) throws -> Int {
+        guard cacheOffset > 0 else { return 0 }
+        // The anchor is one scalar, so it cannot describe several rows resuming at different
+        // positions. Checked before the anchor itself: this covers an anchor that cannot span
+        // the batch, the guard below an absent one.
+        guard batchSize == 1 else {
+            throw ContinuationStateError.unsupportedBatchContinuation(model: model)
+        }
+        guard let anchor = state?[key] else {
+            throw ContinuationStateError.missingState(model: model, key: key.id)
+        }
+        return cacheOffset + anchor.asType(.int32).item(Int.self)
+    }
+
+    /// The state a continuation hands back so the next turn re-anchors correctly.
+    ///
+    /// `getRopeIndex` returns a delta in the offset frame; the next turn adds its own cache
+    /// offset back, which by then includes this remainder. Storing `ropeDeltas - cacheOffset`
+    /// keeps the value offset-relative, so it survives extending or trimming the cache.
+    static func continuationResumeState(
+        ropeDeltas: MLXArray, cacheOffset: Int, key: LMOutput.Key<MLXArray>
+    ) -> LMOutput.State {
+        var resumeState = LMOutput.State()
+        resumeState[key] = ropeDeltas - MLXArray(Int32(cacheOffset))
+        return resumeState
+    }
+
     /// Rotates half the hidden dims of the input
     static func rotateHalf(_ x: MLXArray) -> MLXArray {
         let index = x.dim(-1) / 2
@@ -113,6 +152,12 @@ public struct QwenVL {
                 -1, inChannels, temporalPatchSize, patchSize, patchSize
             ).movedAxis(source: 1, destination: 4)
 
+            // mlx's conv3d silently returns all zeros here unless both operands have
+            // been forced off the lazy reshaped/movedAxis view: a real host round trip
+            // for the input, and any op reading the weight (the cheap dot below).
+            let shape = hiddenStates.shape
+            hiddenStates = MLXArray(hiddenStates.asArray(Float.self)).reshaped(shape)
+            _ = (hiddenStates[0] * proj.weight[0]).sum().item(Float.self)
             hiddenStates = proj(hiddenStates)
             hiddenStates = hiddenStates.reshaped(-1, outputDimensions)
             return hiddenStates
@@ -253,6 +298,145 @@ public struct QwenVL {
         )
 
         return (flattenedPatches, .init(gridT, gridH, gridW))
+    }
+
+    // MARK: - Prepared input splitting
+
+    /// Split a Qwen VL prepared input at `prefixTokenCount`, keeping only the media
+    /// whose placeholder tokens fall in the suffix.
+    ///
+    /// Shared by ``Qwen25VL`` and ``Qwen2VL``, whose prepared-input layout is the
+    /// same: `pixels` is the images' patch rows concatenated along axis 0 in prompt
+    /// order, and `frames` carries one `THW` per image, so image *i* owns
+    /// `frames[i].product` rows and `frames[i].product / (mergeSize * mergeSize)`
+    /// placeholder tokens (see ``patchify(images:mergeSize:patchSize:temporalPatchSize:)``
+    /// and ``replacePaddingTokens(in:frames:paddingToken:mergeSize:tokenizer:)``).
+    ///
+    /// Returns `nil` -- meaning "fall back to a full prefill" -- unless every
+    /// assumption above is checked against the input actually handed in.
+    static func splitPreparedInput(
+        _ input: LMInput,
+        droppingFirst prefixTokenCount: Int,
+        imageTokenId: Int,
+        videoTokenId: Int,
+        mergeSize: Int
+    ) -> LMInput? {
+        // Audio is not part of the Qwen VL prepared-input contract.
+        guard input.audio == nil else { return nil }
+
+        // Images only. Both models pass `videoGridTHW: nil` to `getRopeIndex`,
+        // so video positions are degenerate and a split cannot be verified.
+        guard input.video == nil else { return nil }
+
+        // Only the processor's own `[1, seq]` layout. A rank-1 suffix would route
+        // back to the cold path in `prepare(_:cache:state:prefill:)`, which
+        // computes positions from zero -- silently wrong against a warm cache.
+        let tokens = input.text.tokens
+        guard tokens.ndim == 2, tokens.dim(0) == 1 else { return nil }
+
+        let ids = tokens.asArray(Int.self)
+        guard prefixTokenCount > 0, prefixTokenCount < ids.count else { return nil }
+
+        // The processor pairs media with an all-ones mask. Anything else is a real
+        // padding mask this routine will not reinterpret.
+        if let mask = input.text.mask {
+            guard mask.size == ids.count else { return nil }
+            guard mask.asType(.int32).asArray(Int32.self).allSatisfy({ $0 == 1 }) else {
+                return nil
+            }
+        }
+
+        var splitImage: LMInput.ProcessedImage?
+        if let image = input.image {
+            guard
+                let split = splitVisionPayload(
+                    pixels: image.pixels, positionIds: image.positionIds, frames: image.frames,
+                    ids: ids, prefixTokenCount: prefixTokenCount, padTokenId: imageTokenId,
+                    mergeSize: mergeSize)
+            else { return nil }
+            splitImage = LMInput.ProcessedImage(pixels: split.pixels, frames: split.frames)
+        }
+
+        // A video placeholder inside an image-only payload would mean the prompt
+        // carries media this routine is not accounting for.
+        guard !ids.contains(videoTokenId) else { return nil }
+
+        let suffixIds = Array(ids[prefixTokenCount...])
+        let suffixTokens = MLXArray(suffixIds).expandedDimensions(axis: 0)
+        let suffixMask = input.text.mask.map { mask in
+            ones([1, suffixIds.count]).asType(mask.dtype)
+        }
+
+        return LMInput(
+            text: .init(tokens: suffixTokens, mask: suffixMask),
+            image: splitImage)
+    }
+
+    /// Drop the leading media items that the cached prefix already covers.
+    ///
+    /// Returns `nil` when the payload cannot be attributed item-by-item, or when the
+    /// cut falls *inside* a media block -- in that case the suffix would carry a
+    /// partial set of placeholders and neither the feature merge nor the position
+    /// walk would line up.
+    private static func splitVisionPayload(
+        pixels: MLXArray,
+        positionIds: MLXArray?,
+        frames: [THW]?,
+        ids: [Int],
+        prefixTokenCount: Int,
+        padTokenId: Int,
+        mergeSize: Int
+    ) -> (pixels: MLXArray, frames: [THW])? {
+        // Precomputed position ids describe the full prompt; slicing them is not
+        // attempted here.
+        guard positionIds == nil else { return nil }
+        guard let frames, !frames.isEmpty else { return nil }
+
+        let mergeLength = mergeSize * mergeSize
+        guard mergeLength > 0 else { return nil }
+
+        var prefixPadCount = 0
+        var totalPadCount = 0
+        for (index, id) in ids.enumerated() where id == padTokenId {
+            totalPadCount += 1
+            if index < prefixTokenCount { prefixPadCount += 1 }
+        }
+
+        var padCounts: [Int] = []
+        var rowCounts: [Int] = []
+        padCounts.reserveCapacity(frames.count)
+        rowCounts.reserveCapacity(frames.count)
+        // Still images only. A `t > 1` grid is a temporal stack, and `getRopeIndex`
+        // is handed `videoGridTHW: nil` for it too, so its positions are degenerate.
+        for frame in frames {
+            guard frame.t == 1 else { return nil }
+            guard frame.product > 0, frame.product % mergeLength == 0 else { return nil }
+            padCounts.append(frame.product / mergeLength)
+            rowCounts.append(frame.product)
+        }
+
+        // The payload must describe exactly the placeholders in the prompt, and the
+        // rows must account for the whole pixel buffer. If either is off, the layout
+        // is not the one documented above.
+        guard padCounts.reduce(0, +) == totalPadCount else { return nil }
+        guard pixels.ndim == 2, pixels.dim(0) == rowCounts.reduce(0, +) else { return nil }
+
+        var consumedPads = 0
+        var consumedRows = 0
+        var droppedItems = 0
+        while droppedItems < frames.count, consumedPads < prefixPadCount {
+            consumedPads += padCounts[droppedItems]
+            consumedRows += rowCounts[droppedItems]
+            droppedItems += 1
+        }
+        // Overshoot means the boundary landed inside a media block.
+        guard consumedPads == prefixPadCount else { return nil }
+
+        let remainingFrames = Array(frames[droppedItems...])
+        guard !remainingFrames.isEmpty else { return nil }
+
+        let remainingPixels = pixels[consumedRows ..< pixels.dim(0), 0...]
+        return (remainingPixels, remainingFrames)
     }
 
 }

@@ -96,7 +96,7 @@ extension MLXTestingSuite {
             let model = GlmOcr(config)
 
             let input = MLXArray(0 ..< 6).reshaped(1, 6)
-            let result = model(input, cache: nil)
+            let result = model(LMInput.Text(tokens: input), cache: nil, state: nil).logits
 
             // The output width is text_config.vocab_size, which is why the tiny config
             // sets it to match the top-level vocab_size used for model.vocabularySize
@@ -114,8 +114,8 @@ extension MLXTestingSuite {
             let model = GlmOcr(config)
 
             let input = MLXArray(0 ..< 5).reshaped(1, 5)
-            let a = model(input, cache: nil)
-            let b = model(input, cache: nil)
+            let a = model(LMInput.Text(tokens: input), cache: nil, state: nil).logits
+            let b = model(LMInput.Text(tokens: input), cache: nil, state: nil).logits
             #expect(allClose(a, b).item(Bool.self))
         }
     }

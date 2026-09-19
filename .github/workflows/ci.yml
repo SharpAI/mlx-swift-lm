@@ -72,7 +72,12 @@ jobs:
           find .build -type f -executable -exec cp $MLX_LIB $(dirname "{}")/ \; 2>/dev/null || true
 
       - name: Run Library Tests (Metal Accelerated)
-        run: swift test -c release --skip-build
+        run: |
+          # --no-parallel: GPU-heavy tests submit Metal command buffers that
+          # aren't safe under concurrent access from multiple tests at once
+          # (observed as a fatal `_status < MTLCommandBufferStatusCommitted`
+          # assertion when two such tests overlapped on CI's runner).
+          swift test -c release --skip-build --no-parallel
 
       - name: Gemma 4 PLE Stabilization Gate
         run: |
@@ -116,6 +121,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: SharpAI/SwiftLM
+          # TEMPORARY: same override as downstream_integration.yml — main
+          # doesn't yet have the fix for the `newCache` throws API change
+          # from this PR. Drop this once that branch merges to main.
+          ref: fix/mlx-swift-lm-throwing-newcache
           path: SwiftLM
           submodules: recursive
 

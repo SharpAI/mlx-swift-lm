@@ -8,10 +8,12 @@ import Foundation
 public struct Llama3ToolCallParser: ToolCallParser, Sendable {
     public let startTag: String? = nil
     public let endTag: String? = nil
+    public let supportsBareJSON = true
 
     public init() {}
 
     private struct LlamaFunction: Codable {
+        let id: String?
         let name: String
         let parameters: [String: JSONValue]?
         let arguments: [String: JSONValue]?
@@ -37,7 +39,7 @@ public struct Llama3ToolCallParser: ToolCallParser, Sendable {
                 name: llamaFunc.name,
                 arguments: args
             )
-            return ToolCall(function: function)
+            return ToolCall(function: function, id: llamaFunc.id)
         }
 
         // Fallback to Pythonic format
@@ -67,7 +69,7 @@ public struct Llama3ToolCallParser: ToolCallParser, Sendable {
                     name: llamaFunc.name,
                     arguments: args
                 )
-                return ToolCall(function: function)
+                return ToolCall(function: function, id: llamaFunc.id)
             }
         }
 
@@ -78,7 +80,7 @@ public struct Llama3ToolCallParser: ToolCallParser, Sendable {
                 name: llamaFunc.name,
                 arguments: args
             )
-            return [ToolCall(function: function)]
+            return [ToolCall(function: function, id: llamaFunc.id)]
         }
 
         // Try Pythonic list like [func1(args), func2(args)] or single func1(args)
