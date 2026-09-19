@@ -24,63 +24,12 @@ struct MatcherTests {
     ///   - eos bit is NOT set (grammar has not yet completed)
     @Test
     func testInitialMaskShape() throws {
-        let fixture = try Self.loadGemmaFixture()
+        let context = try Self.makeConstraintContext()
+        defer { context.tearDown() }
 
-        let vocabSize = Int(fixture.vocabSize)
-        let eosId = Int(fixture.eosTokenId)
-        let openBraceTokenId = 2  // Placed at word 0, bit 2; must not collide with eos.
-        #expect(openBraceTokenId != eosId, "brace token must not collide with eos")
-
-        let placeholder = "<|tok|>"
-        var vocabStrings = Array(repeating: placeholder, count: vocabSize)
-        if eosId >= 0 && eosId < vocabSize {
-            vocabStrings[eosId] = fixture.eosTokenString
-        }
-        vocabStrings[openBraceTokenId] = "{"
-
-        let cStrings = vocabStrings.map { $0.utf8CString }
-        var vocabPtrs: [UnsafePointer<CChar>?] = cStrings.map { arr in
-            arr.withUnsafeBufferPointer { buf in buf.baseAddress }
-        }
-
-        var info: OpaquePointer?
-        let stopTokens: [Int32] = [Int32(eosId)]
-
-        let tokenizerStatus: XGStatus = vocabPtrs.withUnsafeMutableBufferPointer { vocabBuf in
-            stopTokens.withUnsafeBufferPointer { stopBuf in
-                xg_tokenizer_info_new(
-                    vocabBuf.baseAddress,
-                    vocabBuf.count,
-                    XG_VOCAB_TYPE_RAW,
-                    stopBuf.baseAddress,
-                    stopBuf.count,
-                    &info
-                )
-            }
-        }
-        #expect(tokenizerStatus == XG_OK)
-        defer { xg_tokenizer_info_free(info) }
-
-        var compiler: OpaquePointer?
-        #expect(xg_grammar_compiler_new(info, &compiler) == XG_OK)
-        defer { xg_grammar_compiler_free(compiler) }
-
-        let schema = #"{"type":"object","properties":{"name":{"type":"string"}}}"#
-        var compiled: OpaquePointer?
-        let compileStatus = schema.withCString { schemaPtr in
-            xg_compile_json_schema(compiler, schemaPtr, &compiled)
-        }
-        #expect(compileStatus == XG_OK)
-        defer { xg_compiled_grammar_free(compiled) }
-
-        var matcher: OpaquePointer?
-        let matcherStatus = xg_matcher_new(compiled, &matcher)
-        #expect(
-            matcherStatus == XG_OK,
-            "xg_matcher_new returned \(matcherStatus); last error: \(xg_last_error_message().map { String(cString: $0) } ?? "<nil>")"
-        )
-        #expect(matcher != nil)
-        defer { xg_matcher_free(matcher) }
+        let vocabSize = context.vocabSize
+        let openBraceTokenId = context.openBraceTokenId
+        let eosId = try Self.loadGemmaFixture().eosTokenId
 
         // Length check — shim's helper must agree with the formula.
         let expectedWords = Int((vocabSize + 31) / 32)
@@ -92,7 +41,7 @@ struct MatcherTests {
 
         let fillStatus = bitmask.withUnsafeMutableBufferPointer { buf in
             xg_matcher_fill_next_token_bitmask(
-                matcher,
+                context.matcher,
                 buf.baseAddress,
                 buf.count,
                 Int32(vocabSize),
@@ -127,8 +76,6 @@ struct MatcherTests {
             (word0 & eosBit) == 0,
             "eos bit \(eosId) must NOT be set in the initial mask (grammar has not completed yet)"
         )
-
-        _ = cStrings.count
     }
 
     /// Committing a token advances matcher state.

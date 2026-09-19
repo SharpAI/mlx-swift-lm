@@ -2440,7 +2440,7 @@ func testTurboKVMultiRoundEvictionPreservesAllTokens() async throws {
     #expect(legacyMetaState.count == 6)
 
     let restored = RotatingKVCache(maxSize: 8, keep: 0)
-    restored.state = cache.state.map { $0[.ellipsis] }
+    restored.state = cache.state.map { $0[0...] }
     restored.metaState = legacyMetaState
 
     let view = try #require(restored.logicalView(tail: 8))
@@ -2456,7 +2456,7 @@ func testRotatingRestoredTrimAtRingBoundary(metadataCount: Int) throws {
     fillOneAtATime(source, positions: 0 ..< 16)
 
     let restored = RotatingKVCache(maxSize: 8)
-    restored.state = source.state.map { $0[.ellipsis] }
+    restored.state = source.state.map { $0[0...] }
     restored.metaState = Array(source.metaState.prefix(metadataCount))
 
     #expect(restored.trim(3) == 3)
@@ -2473,7 +2473,7 @@ func testRotatingRestoredTrimKeepsKeysAndValuesAligned(metadataCount: Int) throw
     fillOneAtATime(source, positions: 0 ..< 20)
 
     let restored = RotatingKVCache(maxSize: 8)
-    restored.state = source.state.map { $0[.ellipsis] }
+    restored.state = source.state.map { $0[0...] }
     restored.metaState = Array(source.metaState.prefix(metadataCount))
 
     // The shortened key buffer ends before the old write index. Its new shape
@@ -2515,7 +2515,7 @@ func testRotatingRestorationAcceptsEitherSetterOrder(
                 fillOneAtATime(source, positions: 0 ..< count)
             }
             let metadata = Array(source.metaState.prefix(metadataCount))
-            let arrays = source.state.map { $0[.ellipsis] }
+            let arrays = source.state.map { $0[0...] }
             // The saved capacity must replace the constructor's capacity before inference.
             let restored = RotatingKVCache(maxSize: 1)
             if metadataFirst {
@@ -2549,7 +2549,7 @@ func testRotatingRestoredShortChronologicalBufferCanGrow(
 
     let restored = RotatingKVCache(maxSize: 8)
     let metadata = Array(source.metaState.prefix(metadataCount))
-    let arrays = source.state.map { $0[.ellipsis] }
+    let arrays = source.state.map { $0[0...] }
     if metadataFirst {
         restored.metaState = metadata
         restored.state = arrays
@@ -2571,7 +2571,7 @@ func testRotatingRestoredTrimPreservesPinnedPrefix(metadataCount: Int, count: In
 
     for firstTrim in [3, 100] {
         let restored = RotatingKVCache(maxSize: 8)
-        restored.state = source.state.map { $0[.ellipsis] }
+        restored.state = source.state.map { $0[0...] }
         restored.metaState = Array(source.metaState.prefix(metadataCount))
         let removed = min(firstTrim, 6)
         #expect(restored.trim(firstTrim) == removed)
@@ -2685,7 +2685,7 @@ func testRotatingRestoredTrimAttentionMatchesSurvivingContext(
             values: values[.ellipsis, p ..< (p + 1), 0...])
     }
     let restored = RotatingKVCache(maxSize: 8)
-    restored.state = source.state.map { $0[.ellipsis] }
+    restored.state = source.state.map { $0[0...] }
     restored.metaState = Array(source.metaState.prefix(metadataCount))
     #expect(restored.trim(5) == 5)  // only positions 12, 13, 14 survive
     let mask = restored.makeMask(n: queryCount, windowSize: 4, returnArray: false)

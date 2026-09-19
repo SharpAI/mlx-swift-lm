@@ -13,7 +13,7 @@ extension MLXArray {
     /// on `MLXArray`; our fork of mlx-swift hasn't picked that up yet, so this
     /// mirrors the same computation locally via `DType.finfo`.
     static func maskFill(for dtype: DType) -> MLXArray {
-        MLXArray(Float(dtype.finfo?.min ?? -Double(Float.greatestFiniteMagnitude)))
+        MLXArray(Float(dtype.finfo?.min ?? -Double(Float.greatestFiniteMagnitude))).asType(dtype)
     }
 }
 
@@ -720,7 +720,7 @@ public class KVCacheSimple: BaseKVCache, CustomDebugStringConvertible {
         new.step = self.step
         let s = self.state
         if !s.isEmpty {
-            new.state = s.map { $0[.ellipsis] }
+            new.state = s.map { $0[0...] }
         }
         return new
     }
@@ -1138,7 +1138,7 @@ public class RotatingKVCache: BaseKVCache, CustomDebugStringConvertible {
         let new = RotatingKVCache(maxSize: maxCacheSize, keep: keep, step: step)
         let s = self.state
         if !s.isEmpty {
-            new.state = s.map { $0[.ellipsis] }
+            new.state = s.map { $0[0...] }
         }
         new.metaState = self.metaState
         return new
@@ -1438,7 +1438,7 @@ public class QuantizedKVCache: BaseKVCache, QuantizedKVCacheProtocol {
         let new = QuantizedKVCache(groupSize: groupSize, bits: bits, mode: mode)
         let s = self.state
         if !s.isEmpty {
-            new.state = s.map { $0[.ellipsis] }
+            new.state = s.map { $0[0...] }
         }
         new.metaState = self.metaState
         return new
@@ -1538,7 +1538,7 @@ public class ChunkedKVCache: KVCacheSimple {
         new.step = self.step
         let s = self.state
         if !s.isEmpty {
-            new.state = s.map { $0[.ellipsis] }
+            new.state = s.map { $0[0...] }
         }
         new.metaState = self.metaState
         return new
@@ -1600,7 +1600,7 @@ open class ArraysCache: BaseKVCache {
     }
 
     internal func copyContents(to new: ArraysCache) {
-        new.cache = cache.map { $0?[.ellipsis] }
+        new.cache = cache.map { $0?[0...] }
         new.offset = self.offset
         new.leftPadding = self.leftPadding
         new.lengths = self.lengths
@@ -1791,7 +1791,7 @@ open class MambaCache: ArraysCache {
     open func checkpoint() {
         let s = self.state
         if !s.isEmpty {
-            savedState = s.map { $0[.ellipsis] }  // deep copy
+            savedState = s.map { $0[0...] }  // deep copy
         }
     }
 
@@ -2692,21 +2692,21 @@ package func rewindSpeculativePromptCache(
 ) -> Int {
     guard numTokens == 1,
         cache.allSatisfy({ entry in
-            if entry.isTrimmable {
-                return entry.offset >= numTokens
+            if let mamba = entry as? MambaCache {
+                return mamba.hasSpeculativeCheckpoint
             }
-            return (entry as? MambaCache)?.hasSpeculativeCheckpoint == true
+            return entry.isTrimmable && entry.offset >= numTokens
         })
     else { return 0 }
 
     for entry in cache {
-        if entry.isTrimmable {
-            guard entry.trim(numTokens) == numTokens else {
-                preconditionFailure("Speculative cache validation and rewind diverged")
+        if let mamba = entry as? MambaCache {
+            guard mamba.restoreSpeculativeCheckpoint() else {
+                preconditionFailure("Missing recurrent speculative checkpoint")
             }
         } else {
-            guard (entry as? MambaCache)?.restoreSpeculativeCheckpoint() == true else {
-                preconditionFailure("Missing recurrent speculative checkpoint")
+            guard entry.trim(numTokens) == numTokens else {
+                preconditionFailure("Speculative cache validation and rewind diverged")
             }
         }
     }

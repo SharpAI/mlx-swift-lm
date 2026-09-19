@@ -138,10 +138,11 @@ final class RotatingRoundStrategy: KVCacheRoundStrategy {
         let snapshot = live.state
         guard snapshot.count == 2 else { return nil }
         return RotatingRestorePoint(
-            // Detached the same way `RotatingKVCache.copy()` detaches: a full-range slice shares
-            // the node but is a new object, and an in-place write rebinds the *receiver*. Holding
-            // `live.state` directly would hold the very objects the commit is about to rebind.
-            state: snapshot.map { $0[.ellipsis] },
+            // Detached the same way `RotatingKVCache.copy()` detaches: `[0...]` forces a real
+            // slice copy, unlike `[.ellipsis]`, which returns the same object and would leave
+            // this snapshot aliased to `live` -- a later in-place update on `live` would corrupt
+            // it right before a rewind needed it intact.
+            state: snapshot.map { $0[0...] },
             metaState: live.metaState,
             replay: staged.stagedArrays)
     }
@@ -149,9 +150,9 @@ final class RotatingRoundStrategy: KVCacheRoundStrategy {
 
 /// Restores a rotating leaf by putting its ring back and replaying the accepted rows.
 ///
-/// Capture is cheap -- a full-range slice reuses the underlying node -- so the price is deferred:
-/// while the snapshot is alive the next ring write cannot donate its buffer. It is dropped as
-/// soon as another round opens.
+/// Capture makes a real slice copy of the key/value arrays, so the snapshot stays valid even
+/// after `live` is mutated in place by a later round. It is dropped as soon as another round
+/// opens.
 struct RotatingRestorePoint: KVCacheLeafRestorePoint {
     let state: [MLXArray]
     let metaState: [String]

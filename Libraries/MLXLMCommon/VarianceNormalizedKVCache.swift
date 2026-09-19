@@ -1091,7 +1091,7 @@ public class VarianceNormalizedKVCache: BaseKVCache, KVCacheAttentionProtocol,
         new.metaState = metaState
         let s = state
         if !s.isEmpty {
-            new.state = s.map { $0[.ellipsis] }
+            new.state = s.map { $0[0...] }
         }
         return new
     }
