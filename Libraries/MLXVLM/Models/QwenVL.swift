@@ -152,6 +152,12 @@ public struct QwenVL {
                 -1, inChannels, temporalPatchSize, patchSize, patchSize
             ).movedAxis(source: 1, destination: 4)
 
+            // mlx's conv3d silently returns all zeros here unless both operands have
+            // been forced off the lazy reshaped/movedAxis view: a real host round trip
+            // for the input, and any op reading the weight (the cheap dot below).
+            let shape = hiddenStates.shape
+            hiddenStates = MLXArray(hiddenStates.asArray(Float.self)).reshaped(shape)
+            _ = (hiddenStates[0] * proj.weight[0]).sum().item(Float.self)
             hiddenStates = proj(hiddenStates)
             hiddenStates = hiddenStates.reshaped(-1, outputDimensions)
             return hiddenStates

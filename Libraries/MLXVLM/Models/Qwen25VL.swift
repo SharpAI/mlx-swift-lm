@@ -586,8 +586,10 @@ private enum Vision {
                 let index = MLXArray(0 ..< (gridT * llmGridH * llmGridW)).reshaped(
                     gridT, llmGridH, llmGridW)
 
-                let padH = vitMergerWindowSize - llmGridH % vitMergerWindowSize
-                let padW = vitMergerWindowSize - llmGridW % vitMergerWindowSize
+                // Pad up to the next window boundary; 0 when already aligned (not a
+                // full extra window, which `size - n % size` would give here).
+                let padH = (vitMergerWindowSize - llmGridH % vitMergerWindowSize) % vitMergerWindowSize
+                let padW = (vitMergerWindowSize - llmGridW % vitMergerWindowSize) % vitMergerWindowSize
                 let numWindowsH = (llmGridH + padH) / vitMergerWindowSize
                 let numWindowsW = (llmGridW + padW) / vitMergerWindowSize
 
@@ -676,6 +678,10 @@ private enum Vision {
 
         public func callAsFunction(_ hiddenStates: MLXArray, frames: [THW]) -> MLXArray {
             var hiddenStates = patchEmbed(hiddenStates)
+            // Materialize before building more graph on top: a large enough fused
+            // graph can hit the same mlx conv3d zero-output bug worked around inside
+            // patchEmbed itself.
+            eval(hiddenStates)
             let rotaryPosEmb = rotaryPositionEmbedding(frames)
 
             // Get window indices and sequence lengths
@@ -973,10 +979,11 @@ public class Qwen25VL: Module, VLMModel, KVCacheDimensionProvider {
         if hiddenStates.ndim == 2 {
             hiddenStates = hiddenStates[.newAxis, 0..., 0...]
         }
-        return QwenVL.mergeInputIdsWithImageFeatures(
+        let merged = QwenVL.mergeInputIdsWithImageFeatures(
             inputIds: inputIds, inputEmbeds: inputEmbeds, imageFeatures: hiddenStates,
             imageTokenId: config.baseConfiguration.imageTokenId,
             videoTokenId: config.baseConfiguration.videoTokenId)
+        return merged
     }
 
     private func faCacheOffset(_ cache: [any KVCache]) -> Int {

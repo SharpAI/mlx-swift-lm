@@ -176,28 +176,26 @@ struct ContinuationAssertions {
         file: StaticString = #filePath, line: UInt = #line
     ) throws {
         try withRandomState(MLXRandom.RandomState(seed: 17)) {
-            let imageA = image()
-            // A per-dimension offset, not a uniform scale: the vision tower's
-            // pre-attention LayerNorm removes each patch's own mean and
-            // rescales by its own std, so multiplying imageB's pixels by a
-            // constant survives normalization unchanged (confirmed against
-            // CI: it produced the exact same diff, bit for bit). Shifting
-            // each feature dimension by a different fixed amount changes the
-            // *direction* LayerNorm normalizes toward, not just the
-            // magnitude it removes -- so imageB's patches land far from
-            // imageA's in the normalized space unmasked attention sees. The
-            // isolating case (`expectsIsolation`) is unaffected: its model
-            // masks each frame to itself, so imageB's content never reaches
-            // imageA's features regardless of how it's perturbed.
-            let imageBUnshifted = image()
-            let featureCount = imageBUnshifted.pixels.dim(-1)
-            let directionalBias = MLXArray(
-                (0 ..< featureCount).map { Float($0 % 2 == 0 ? 1 : -1) * 40 })
-            let imageB = LMInput.ProcessedImage(
-                pixels: imageBUnshifted.pixels + directionalBias, frames: imageBUnshifted.frames)
-            let t1 = concatenated([textTokens(10), imageRun(), textTokens(8, seed: 5)], axis: 1)
+            // A bigger grid than `image()`'s (8x8 instead of 4x4 patches, merging to
+            // 16 image tokens instead of 4) gives unmasked cross-image attention many
+            // more patch pairs to mix over.
+            func bigImage() -> LMInput.ProcessedImage {
+                LMInput.ProcessedImage(
+                    pixels: MLXRandom.normal([64, 3 * 2 * 16 * 16]), frames: [THW(1, 8, 8)])
+            }
+            func bigImageRun() -> MLXArray {
+                var ids = [Int32](repeating: imageTokenId, count: 16)
+                if let visionStartTokenId {
+                    ids.insert(visionStartTokenId, at: 0)
+                }
+                return MLXArray(ids).expandedDimensions(axis: 0)
+            }
+            let imageA = bigImage()
+            let imageB = bigImage()
+            let t1 = concatenated(
+                [textTokens(10), bigImageRun(), textTokens(8, seed: 5)], axis: 1)
             let t2 = concatenated(
-                [textTokens(6, seed: 2), imageRun(), textTokens(4, seed: 9)], axis: 1)
+                [textTokens(6, seed: 2), bigImageRun(), textTokens(4, seed: 9)], axis: 1)
 
             // The prepared input a VL processor hands over for the whole transcript:
             // both images' patch rows concatenated, one grid each.
@@ -214,6 +212,9 @@ struct ContinuationAssertions {
 
             let cacheW = try model.newCache(parameters: nil)
             let (_, s1) = try prefill(model, t1, image: imageA, cache: cacheW)
+            // Captured before the suffix prepare call below mutates `cacheW` in
+            // place, extending it past t1's own positions.
+            let wState = cacheW.map(\.state)
 
             let suffix = try XCTUnwrap(
                 split(fullInput, t1.dim(1)), "the split was declined", file: file, line: line)
@@ -228,49 +229,53 @@ struct ContinuationAssertions {
 
             let diff = maxAbsDiff(logitsW, logitsF)
 
-            // The suffix carries new image data as one atomic prepare() call, so
-            // there's no token-by-token decode analog for its noise floor (unlike
-            // assertWarmImageContinuation). Proxy it with the same kind of split
-            // this test itself performs, on t1's own image: prefill through the
-            // image, then decode its trailing text step by step, against t1's
-            // single-shot prefill. Both isolate the noise a vision-tower forward
-            // picks up from being broken across calls, which is what the append-
-            // only split does too. Both branches below need this same-image floor:
-            // the isolating branch uses it as a ceiling ("no bigger than noise"),
-            // the diverging branch uses it as a baseline the real signal must clear
-            // ("bigger than noise"), since fixed absolute thresholds don't track the
-            // precision/kernel differences between build configurations and GPUs.
-            let head = concatenated([textTokens(10), imageRun()], axis: 1)
-            let tail = textTokens(8, seed: 5)
-            let cacheD = try model.newCache(parameters: nil)
-            let (_, d0) = try prefill(model, head, image: imageA, cache: cacheD)
-            var state = d0
-            var logitsD = MLXArray(0)
-            for j in 0 ..< tail.dim(1) {
-                let out = model(
-                    LMInput.Text(tokens: tail[0..., j ..< (j + 1)]), cache: cacheD,
-                    state: state)
-                state = out.state
-                logitsD = out.logits[0..., -1, 0...]
-            }
-            let (logitsT1, _) = try prefill(
-                model, t1, image: imageA, cache: try model.newCache(parameters: nil))
-            let noiseFloor = maxAbsDiff(logitsD, logitsT1)
+            // Whether the vision tower mixed imageB's patches into t1's image is a
+            // claim about the attention computation itself, not about the final
+            // logits: by the time a cross-image signal has propagated through the
+            // rest of a tiny, untrained model's decoder stack, it is the same order
+            // of magnitude as ordinary floating point noise from splitting one
+            // forward into two calls -- confirmed empirically, the final-logits gap
+            // between the diverging and isolating cases could not be reliably pulled
+            // clear of a same-image split-noise floor, however the fixtures or model
+            // size were tuned (larger images, wider or deeper vision towers, and
+            // more contrastive image pairs all left the two the same order of
+            // magnitude).
+            //
+            // Compare the decoder's cached keys/values for t1's own positions
+            // instead: `cacheW` computed them with only imageA in the vision
+            // tower's batch, `cacheF` computed the same positions with both images
+            // concatenated in that batch. This is the exact quantity the isolation
+            // guarantee is about, measured before it has had a chance to be
+            // renormalized away by later layers -- unmasked cross-attention
+            // (Qwen2VL) makes these differ by orders of magnitude more than kernel
+            // noise, while masking each frame to itself (Qwen2.5-VL) makes them
+            // agree almost exactly, since imageB's patches never reach imageA's
+            // features.
+            let t1Length = t1.dim(1)
+            let cacheDivergence =
+                zip(cacheF.map(\.state), wState)
+                .map { fLayerState, wLayerState in
+                    zip(fLayerState, wLayerState)
+                        .map { fState, wState in
+                            maxAbsDiff(fState[.ellipsis, ..<t1Length, 0...], wState)
+                        }
+                        .max() ?? 0
+                }
+                .max() ?? 0
 
             if expectsIsolation {
                 XCTAssertLessThanOrEqual(
-                    diff, max(noiseFloor * 10, 1e-3),
-                    "split-suffix prefill diverged from full prefill (noise floor \(noiseFloor))",
+                    cacheDivergence, 1e-3,
+                    "masked-per-frame vision attention should not have mixed the two images' features (cache divergence \(cacheDivergence))",
+                    file: file, line: line)
+                XCTAssertLessThanOrEqual(
+                    diff, 1e-2,
+                    "split-suffix prefill diverged from full prefill",
                     file: file, line: line)
             } else {
-                // Unlike the isolation ceiling above (which wants a generous margin
-                // to avoid false failures on noisy hardware), this wants the
-                // smallest margin that still rules out "diff is just noise": 2x
-                // the same-image floor, or a small absolute epsilon on hardware
-                // where that floor rounds to ~0.
                 XCTAssertGreaterThan(
-                    diff, max(noiseFloor * 2, 1e-5),
-                    "cross-image vision attention should have changed the logits by more than same-image split noise (noise floor \(noiseFloor))",
+                    cacheDivergence, 1e-2,
+                    "unmasked cross-image vision attention should have changed t1's cached features when computed alongside imageB (cache divergence \(cacheDivergence))",
                     file: file, line: line)
             }
         }

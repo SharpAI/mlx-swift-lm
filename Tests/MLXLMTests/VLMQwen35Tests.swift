@@ -111,7 +111,7 @@ extension MLXTestingSuite {
             // model-specific behaviour this test exists to exercise.
             let cache = try model.newCache(parameters: nil)
             let input = MLXArray(0 ..< 6).reshaped(1, 6)
-            let result = model(input, cache: cache)
+            let result = model(LMInput.Text(tokens: input), cache: cache, state: nil).logits
 
             #expect(result.shape == [1, 6, 128])
             let sum = result.sum().item(Float.self)
@@ -126,8 +126,14 @@ extension MLXTestingSuite {
             let model = Qwen35(config)
 
             let input = MLXArray(0 ..< 5).reshaped(1, 5)
-            let a = model(input, cache: try model.newCache(parameters: nil))
-            let b = model(input, cache: try model.newCache(parameters: nil))
+            let a = model(
+                LMInput.Text(tokens: input), cache: try model.newCache(parameters: nil),
+                state: nil
+            ).logits
+            let b = model(
+                LMInput.Text(tokens: input), cache: try model.newCache(parameters: nil),
+                state: nil
+            ).logits
             #expect(allClose(a, b).item(Bool.self))
         }
     }

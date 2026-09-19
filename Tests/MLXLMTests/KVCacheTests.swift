@@ -2274,7 +2274,7 @@ func testCacheListCopyIsIndependent() async throws {
 /// from history with no error. Feeding four `step`-sized (256-token) chunks
 /// through a real cache (hot window at its default of 256, so evictions trigger
 /// every other chunk) must yield back exactly the tokens that went in, in order.
-@Test
+@Test(.serialized)
 func testTurboKVMultiRoundEvictionPreservesAllTokens() async throws {
     let dim = 128
     let nKVHeads = 4

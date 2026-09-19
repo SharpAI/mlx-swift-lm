@@ -102,7 +102,7 @@ extension MLXTestingSuite {
             let model = Qwen25VL(config)
 
             let input = MLXArray(0 ..< 6).reshaped(1, 6)
-            let result = model(input, cache: nil)
+            let result = model(LMInput.Text(tokens: input), cache: nil, state: nil).logits
 
             #expect(result.shape == [1, 6, 128])
             let sum = result.sum().item(Float.self)
@@ -117,8 +117,8 @@ extension MLXTestingSuite {
             let model = Qwen25VL(config)
 
             let input = MLXArray(0 ..< 5).reshaped(1, 5)
-            let a = model(input, cache: nil)
-            let b = model(input, cache: nil)
+            let a = model(LMInput.Text(tokens: input), cache: nil, state: nil).logits
+            let b = model(LMInput.Text(tokens: input), cache: nil, state: nil).logits
             #expect(allClose(a, b).item(Bool.self))
         }
     }
