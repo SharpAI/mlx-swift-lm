@@ -675,7 +675,8 @@ final class Qwen35SparseMoeBlock: Module, UnaryLayer {
         // Decode (S == 1) runs through a compiled trace: fusion merges the
         // elementwise chains into fewer kernels, bit-identically. Prefill
         // stays unfused — it is GEMM-bound and would pay a trace per shape.
-        if x.dim(1) != 1 {
+        // SSD expert streaming evals mid-layer, which a trace cannot contain.
+        if x.dim(1) != 1 || ExpertStreamingConfig.shared.isEnabled {
             return forward(x)
         }
         return compiledForward(self, x)
@@ -788,7 +789,7 @@ final class Qwen35DecoderLayer: Module {
         // Single-token unmasked decode runs the layer as one traced function
         // (two for full attention, split at the KV write). Everything else
         // takes the general body below.
-        if x.dim(1) == 1, ssmMask == nil {
+        if x.dim(1) == 1, ssmMask == nil, !ExpertStreamingConfig.shared.isEnabled {
             if isLinear, let mambaCache = cache as? MambaCache {
                 return decodeLinearLayer(x, cache: mambaCache)
             }
@@ -1105,7 +1106,9 @@ public class Qwen35TextModelInner: Module, LayerPartitionable, StreamableMoE {
     /// everything else on a decode step is static-shaped, so the segments
     /// compile concretely.
     private func decodeStep(_ inputs: MLXArray, _ cache: [KVCache?]) -> MLXArray? {
-        guard cache.count == layers.count else { return nil }
+        guard cache.count == layers.count, !ExpertStreamingConfig.shared.isEnabled else {
+            return nil
+        }
         // The schedule is only valid when the masks the general path would
         // build both come out empty.
         if createSSMMask(h: inputs, cache: cache[ssmIdx] as? MambaCache) != nil { return nil }
