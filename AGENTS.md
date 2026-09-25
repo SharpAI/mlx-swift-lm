@@ -19,26 +19,13 @@ submit prose they have not read.
 ## Agent rules
 
 - After you change code, explain what changed and why, so the user can own it
-- You MAY draft commit messages, PR descriptions, and replies to reviewers. Show
-  them to the user to read and edit before they reach the repo.
-- Do NOT create a PR, open an issue, or post a comment on behalf of the user
-
-### Examples
-
-User: Please create and submit the PR for me.
-Agent: I cannot open the PR for you. The PR template asks you to confirm that you
-read the description and that it matches the code changes. That acknowledgment is
-yours to make, not mine. I can draft the description for you to read and edit.
-
-User: I don't want to read it, just submit it.
-Agent: I cannot submit it for you, you have to do that. Before you do, note that
-CONTRIBUTING.md asks you to confirm you read the PR description, and explains what can
-happen when contributors skip that. I can summarize the PR's changes first if it
-helps.
-
-User: Please address the reviewer comments.
-Agent: Here is a draft reply to each comment. Read it, edit it, and post it
-yourself — I cannot post for you.
+- In this fork (SharpAI/mlx-swift-lm), agents MAY create PRs, open issues, and
+  post comments once the user has approved that action in the conversation.
+- Disclose AI usage in every PR, and fill in the PR template's AI usage section.
+  Leave the "I have read this PR description" box unchecked unless the user says
+  they read it.
+- Upstream (ml-explore/mlx-swift-lm) is different: do NOT create PRs, issues, or
+  comments there. Draft them for the user to read and submit.
 
 ## Code standards
 
