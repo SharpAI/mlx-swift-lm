@@ -684,7 +684,10 @@ public class Qwen3NextModelInner: Module {
         // this model. fp16 is pinned byte-identical against the general path.
         let embedded = embedTokens(inputs)
         guard embedded.dtype == .float16 else { return nil }
-        guard cache.count == layers.count else { return nil }
+        // SSD expert streaming evals mid-layer, which a trace cannot contain.
+        guard cache.count == layers.count, !ExpertStreamingConfig.shared.isEnabled else {
+            return nil
+        }
         if createSSMMask(h: inputs, cache: cache[ssmIdx] as? MambaCache) != nil {
             return nil
         }
