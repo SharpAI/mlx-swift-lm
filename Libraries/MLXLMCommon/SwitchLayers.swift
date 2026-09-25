@@ -1068,9 +1068,7 @@ open class SwitchGLU: Module, @unchecked Sendable {
                 x = downProj.computeExperts(intermediate, buffers: downBuffers, ranges: ranges)
             }
 
-            if doSort {
-                x = scatterUnsort(x: x, invOrder: inverseOrder, shape: indices.shape)
-            }
+            // Callers unsort with `inverseOrder`; unsorting here too scrambled the rows.
             return (x, doSort ? inverseOrder : nil)
         }
 

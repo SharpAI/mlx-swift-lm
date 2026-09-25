@@ -380,7 +380,17 @@ public func loadWeights(
         in: modelDirectory,
         selection: weightFileSelection,
         additionalFiles: additionalFiles ?? [])
-    (weights, metadata) = try loadWeightArrays(urls: weightURLs)
+    if ExpertStreamingConfig.shared.isEnabled {
+        // Load lazily: the concurrent loader reads every tensor, including the experts
+        // that SSD streaming pages in on demand, which fills RAM and pushes into swap.
+        for url in weightURLs {
+            let (w, m) = try loadArraysAndMetadata(url: url)
+            weights.merge(w) { _, new in new }
+            if metadata.isEmpty { metadata = m }
+        }
+    } else {
+        (weights, metadata) = try loadWeightArrays(urls: weightURLs)
+    }
 
     // MTP add-ons (e.g. Qwen3.5/3.6-OptiQ's `optiq/mtp.safetensors`) live in a
     // subdirectory `safetensorWeightURLs` deliberately excludes by default (see its
