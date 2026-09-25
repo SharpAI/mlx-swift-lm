@@ -372,6 +372,7 @@ public func loadWeights(
     lazyLoad: Bool = false,
     weightFileSelection: WeightFileSelection = .automatic
 ) throws {
+    let streamsThisModel = ExpertStreamingConfig.shared.isStreaming(modelDirectory: modelDirectory)
     // load the weights and collect metadata from the first safetensor file
     var weights = [String: MLXArray]()
     var metadata = [String: String]()
@@ -380,7 +381,7 @@ public func loadWeights(
         in: modelDirectory,
         selection: weightFileSelection,
         additionalFiles: additionalFiles ?? [])
-    if ExpertStreamingConfig.shared.isEnabled {
+    if streamsThisModel {
         // Load lazily: the concurrent loader reads every tensor, including the experts
         // that SSD streaming pages in on demand, which fills RAM and pushes into swap.
         for url in weightURLs {
@@ -425,7 +426,7 @@ public func loadWeights(
     // ExpertStreamingConfig: Initialize the ExpertStreamerManager when streaming is active.
     // On macOS: pread() from NVMe at ~5 GB/s.
     // On iOS:   mmap page-cache from APFS at ~2-3 GB/s — same struct, different bandwidth.
-    if ExpertStreamingConfig.shared.isEnabled {
+    if streamsThisModel {
         ExpertStreamerManager.shared = ExpertStreamerManager(modelDirectory: modelDirectory)
     }
 
@@ -489,7 +490,7 @@ public func loadWeights(
     // .noUnusedKeys still catches genuinely stray/misspelled keys without requiring
     // every @ModuleInfo slot to be populated up-front.
     let parameters = ModuleParameters.unflattened(weights)
-    if ExpertStreamingConfig.shared.isEnabled {
+    if streamsThisModel {
         // Expert weights are intentionally absent — paged from SSD on demand.
         // .noUnusedKeys still rejects stray/misspelled keys without requiring
         // every @ModuleInfo slot to be pre-populated.
@@ -498,7 +499,7 @@ public func loadWeights(
         try model.update(parameters: parameters, verify: .all)
     }
 
-    if ExpertStreamingConfig.shared.isEnabled {
+    if streamsThisModel {
         // Assign tensorName to each QuantizedSwitchLinear.
         //
         // CRITICAL: tensorName must be the ORIGINAL key in the safetensors shard
