@@ -673,6 +673,42 @@ extension MLXTestingSuite {
         }
         #expect(count == 8)
     }
+
+    /// Rejected drafts must leave the cache once a sliding-window layer has wrapped.
+    /// `trimPromptCache` skipped every layer then, so the full-attention cache kept
+    /// growing past the tokens actually generated.
+    @Test("Gemma4 MTP — rejected drafts are rolled back after the sliding window wraps")
+    func testMTPTokenIteratorRollsBackAfterSlidingWindowWraps() throws {
+        var config = try JSONSerialization.jsonObject(with: makeTinyConfigData()) as! [String: Any]
+        var text = config["text_config"] as! [String: Any]
+        text["sliding_window"] = 4
+        text["sliding_window_pattern"] = 2
+        config["text_config"] = text
+        let mainCfg = try JSONDecoder().decode(
+            Gemma4Configuration.self, from: JSONSerialization.data(withJSONObject: config))
+        let asstCfg = try JSONDecoder().decode(
+            Gemma4Configuration.self, from: makeTinyAssistantConfigData())
+        let mainModel = Gemma4Model(mainCfg)
+        let asstModel = Gemma4AssistantModel(asstCfg)
+        asstModel.mainModelRef = mainModel
+
+        let maxTokens = 24
+        let params = GenerateParameters(maxTokens: maxTokens, temperature: 0.0)
+        let prompt = MLXArray(Int32(1) ... Int32(12))
+        let cache = try mainModel.newCache(parameters: params)
+        #expect(cache[0] is RotatingKVCache)
+
+        var iterator = try MTPTokenIterator(
+            input: LMInput(tokens: prompt), model: asstModel, cache: cache,
+            parameters: params, numMTPTokens: 3)
+        var count = 0
+        while iterator.next() != nil { count += 1 }
+
+        #expect(count == maxTokens)
+        #expect(iterator.totalDraftTokens > iterator.acceptedDraftTokens)
+        // The cache holds the prompt and every emitted token except the last.
+        #expect(cache[1].offset <= prompt.size + maxTokens)
+    }
     }
 }
 

@@ -1744,10 +1744,8 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         self.acceptedDraftTokens += accepted
         self.totalDraftTokens += draftTokens.count
 
-        // Rewind caches for rejected tokens, layer by layer. `trimPromptCache` is
-        // all-or-nothing on exact trimmability, so once a sliding-window
-        // RotatingKVCache wraps it silently skipped every layer and the rejected
-        // drafts stayed in the context.
+        // Trim each layer. `trimPromptCache` is all-or-nothing, so it skipped every
+        // layer once a sliding-window cache wrapped and left the rejected drafts in.
         let rejectedCount = draftTokens.count - accepted
         if rejectedCount > 0 {
             for layer in cache { layer.trim(rejectedCount) }
