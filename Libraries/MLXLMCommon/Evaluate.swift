@@ -1744,11 +1744,16 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         self.acceptedDraftTokens += accepted
         self.totalDraftTokens += draftTokens.count
 
-        // Rewind caches for rejected tokens
+        // Rewind caches for rejected tokens, layer by layer. `trimPromptCache` is
+        // all-or-nothing on exact trimmability, so once a sliding-window
+        // RotatingKVCache wraps it silently skipped every layer and the rejected
+        // drafts stayed in the context.
         let rejectedCount = draftTokens.count - accepted
-        trimPromptCache(cache, numTokens: rejectedCount)
-        for mtpCache in mtpCaches {
-            trimPromptCache(mtpCache, numTokens: rejectedCount)
+        if rejectedCount > 0 {
+            for layer in cache { layer.trim(rejectedCount) }
+            for mtpCache in mtpCaches {
+                for layer in mtpCache { layer.trim(rejectedCount) }
+            }
         }
 
         // Apply dynamic cache quantization after rewind
