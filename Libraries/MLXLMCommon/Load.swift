@@ -373,6 +373,13 @@ public func loadWeights(
     weightFileSelection: WeightFileSelection = .automatic
 ) throws {
     let streamsThisModel = ExpertStreamingConfig.shared.isStreaming(modelDirectory: modelDirectory)
+    if ExpertStreamingConfig.shared.isEnabled, !streamsThisModel {
+        // Expected for a draft/assistant model. For the main model it means streaming
+        // was activated for a different path, and this load keeps every expert resident.
+        print(
+            "[MLXLMCommon] Expert streaming is active for \(ExpertStreamingConfig.shared.modelDirectory?.path ?? "?"); loading \(modelDirectory.path) without streaming."
+        )
+    }
     // load the weights and collect metadata from the first safetensor file
     var weights = [String: MLXArray]()
     var metadata = [String: String]()
