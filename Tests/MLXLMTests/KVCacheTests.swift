@@ -2334,6 +2334,46 @@ func testTurboKVMultiRoundEvictionPreservesAllTokens() async throws {
     // tokens in the RIGHT order, not lossless, hence a loose tolerance.
     #expect(overallMSE < 0.5)
 }
+
+        /// After an eviction, `offset` must still count every token (RoPE and masks use
+        /// it) and attention must see the compressed history, not only the hot window.
+        @Test(.serialized)
+        func testTurboKVAttentionSeesCompressedHistory() async throws {
+            let dim = 128
+            let totalTokens = 1024
+            let target = 10  // well inside the compressed history
+
+            let cache = KVCacheSimple()
+            cache.turboQuantEnabled = true
+            cache.turboMinActivationTokens = 0
+
+            let keys = MLXRandom.normal([1, 1, totalTokens, dim], key: MLXRandom.key(1))
+                .asType(.float16)
+            let values = MLXRandom.normal([1, 1, totalTokens, dim], key: MLXRandom.key(2))
+                .asType(.float16)
+            eval(keys, values)
+            for start in stride(from: 0, to: totalTokens, by: 256) {
+                _ = cache.update(
+                    keys: keys[.ellipsis, start ..< start + 256, 0...],
+                    values: values[.ellipsis, start ..< start + 256, 0...])
+            }
+            #expect(cache.offset == totalTokens)
+            #expect(cache.compressedOffset > target)
+
+            // A query aligned with one old key should attend almost only to that token.
+            let query = keys[.ellipsis, target ..< target + 1, 0...] * 3
+            let newKV = MLXArray.zeros([1, 1, 1, dim], dtype: .float16)
+            let out = attentionWithCacheUpdate(
+                queries: query, keys: newKV, values: newKV, cache: cache,
+                scale: 1 / Float(dim).squareRoot()
+            ).asType(.float32)
+            #expect(cache.offset == totalTokens + 1)
+
+            let expected = values[.ellipsis, target ..< target + 1, 0...].asType(.float32)
+            let norms = sqrt(sum(out * out)) * sqrt(sum(expected * expected))
+            let cosine = (sum(out * expected) / norms).item(Float.self)
+            #expect(cosine > 0.9)
+        }
 }
 }
 
