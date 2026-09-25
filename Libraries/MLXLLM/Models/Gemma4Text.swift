@@ -1381,7 +1381,7 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
                             // Slice to valid offset (avoid zero-padded buffer positions)
                             // Clamp to the buffer as the rotating branch does: `offset` counts
                             // positions seen, which can outrun the allocated key length.
-                            let validLen = min(c.offset, k.dim(2))
+                            let validLen = min(c.offset - c.compressedOffset, k.dim(2))
                             let validK = k[0..., 0..., 0 ..< validLen, 0...]  // [B, nKVH, S, headDim]
                             let validV = v[0..., 0..., 0 ..< validLen, 0...]
                             sharedKV = .regular(keys: validK, values: validV)
