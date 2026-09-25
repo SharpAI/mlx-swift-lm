@@ -65,7 +65,11 @@ public enum LLMTypeRegistry {
         "gemma4_text": create(Gemma4TextConfiguration.self, Gemma4TextModel.init),
         "gemma4_assistant": { data in
             let fullConfig = try JSONDecoder.json5().decode(Gemma4Configuration.self, from: data)
-            return Gemma4AssistantModel(fullConfig)
+            let model = Gemma4AssistantModel(fullConfig)
+            model.projectionQuantization =
+                try JSONDecoder.json5().decode(BaseConfiguration.self, from: data)
+                .perLayerQuantization
+            return model
         },
         "qwen2": create(Qwen2Configuration.self, Qwen2Model.init),
         "qwen3": createQwen3CompatibleModel,

@@ -511,6 +511,44 @@ extension MLXTestingSuite {
         }
     }
 
+    /// QAT assistants (`gemma-4-26B-A4B-it-qat-assistant-4bit`) quantize the
+    /// pre/post projections too. sanitize used to take only `.weight`, leaving
+    /// `.scales`/`.biases` behind, so loading failed with unhandled keys (and the
+    /// packed weight would have been used as a dense matrix).
+    @Test("Gemma4 MTP — sanitize dequantizes quantized projections")
+    func testAssistantSanitizeDequantizesProjections() async throws {
+        var config = try JSONSerialization.jsonObject(
+            with: makeTinySharedKVAssistantConfigData()) as! [String: Any]
+        config["model_type"] = "gemma4_assistant"
+        config["quantization"] = ["group_size": 64, "bits": 4]
+        let model = try await LLMTypeRegistry.shared.createModel(
+            configuration: JSONSerialization.data(withJSONObject: config),
+            modelType: "gemma4_assistant")
+        let assistant = try #require(model as? Gemma4AssistantModel)
+
+        // pre_projection maps [token embed ‖ hidden] (128) to hidden (64).
+        let pre = MLXRandom.normal([64, 128])
+        let post = MLXRandom.normal([64, 64])
+        var weights = [String: MLXArray]()
+        for (name, w) in [("pre_projection", pre), ("post_projection", post)] {
+            let (wq, scales, biases) = quantized(w, groupSize: 64, bits: 4)
+            weights["\(name).weight"] = wq
+            weights["\(name).scales"] = scales
+            weights["\(name).biases"] = biases!
+        }
+
+        let sanitized = assistant.sanitize(weights: weights)
+
+        #expect(!sanitized.keys.contains { $0.contains("projection") })
+        let dequantizedPre = try #require(assistant.preProjectionWeight)
+        let dequantizedPost = try #require(assistant.postProjectionWeight)
+        #expect(dequantizedPre.shape == [64, 128])
+        #expect(dequantizedPost.shape == [64, 64])
+        // 4-bit round trip: close to the original, far from the packed ints.
+        #expect(abs(dequantizedPre - pre).max().item(Float.self) < 0.5)
+        #expect(abs(dequantizedPost - post).max().item(Float.self) < 0.5)
+    }
+
     @Test("Gemma4 MTP — callMTP returns main logits with correct shape")
     func testGemma4AssistantCallMTPShape() throws {
         let mainCfg = try JSONDecoder().decode(Gemma4Configuration.self, from: makeTinyConfigData())
