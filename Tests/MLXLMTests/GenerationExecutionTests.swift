@@ -198,6 +198,11 @@ final class GenerationExecutionTests: XCTestCase {
 
     func testCancellationDuringTicketAdmissionSkipsNextAndFinalizes() async throws {
         try XCTSkipIf(Device.defaultDevice().deviceType != .gpu, "Admission requires a GPU backend")
+        #if DEBUG
+        // Our mlx-swift asserts when a never-admitted ticket ends. Drop this
+        // once the upstream sync brings ml-explore/mlx-swift#471.
+        try XCTSkipIf(true, "Debug WiredMemory assert; needs ml-explore/mlx-swift#471")
+        #endif
         let finalized = expectation(description: "cancelled iterator finalized")
         let ticket = CancellingPolicy().ticket(size: 0)
         let (stream, task) = generateTaskRecordingTokens(

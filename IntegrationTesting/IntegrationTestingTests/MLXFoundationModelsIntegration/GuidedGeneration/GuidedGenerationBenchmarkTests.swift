@@ -424,7 +424,7 @@ struct GuidedGenerationBenchmarkTests {
                 input: input, parameters: params, context: context
             ) {
                 switch generation {
-                case .chunk(let text):
+                case .chunk(let text, _):
                     charCount += text.count
                     deltaCount += 1
                 case .info, .toolCall, .rejectedToolCall:
