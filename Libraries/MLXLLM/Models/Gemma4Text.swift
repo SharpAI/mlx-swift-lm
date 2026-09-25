@@ -1137,6 +1137,10 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
     public var preProjectionWeight: MLXArray? { _preProjectionWeight }
     public var postProjectionWeight: MLXArray? { _postProjectionWeight }
 
+    /// Quantization of the checkpoint, used to dequantize the projections in
+    /// `sanitize`. Set by the model factory from `config.json`.
+    public var projectionQuantization: BaseConfiguration.PerLayerQuantization?
+
     // Masked embedder state (centroid-based sparse logit projection)
     var _centroidWeight: MLXArray?       // [num_centroids, hidden] — centroids linear weight
     var _tokenOrdering: MLXArray?        // [vocab_size] int32 — canonical token ordering (ordered->canonical)
@@ -1165,15 +1169,40 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
         super.init()
     }
 
+    /// Removes `<name>.weight` from `weights` and returns it as a dense matrix.
+    ///
+    /// The projections are applied with a plain matmul, so a quantized checkpoint
+    /// (e.g. `gemma-4-26B-A4B-it-qat-assistant-4bit`, which ships
+    /// `<name>.scales`/`.biases`) is dequantized here using the checkpoint's
+    /// quantization config. Without that config the quantized keys are left in
+    /// place, so loading fails with an explicit unhandled-keys error instead of
+    /// running on packed integer weights.
+    private func denseProjectionWeight(
+        _ name: String, from weights: inout [String: MLXArray]
+    ) -> MLXArray? {
+        guard let w = weights["\(name).weight"] else { return nil }
+        guard let scales = weights["\(name).scales"] else {
+            weights.removeValue(forKey: "\(name).weight")
+            return w
+        }
+        guard let q = projectionQuantization?.quantization(layer: name) else { return nil }
+        let dense = dequantized(
+            w, scales: scales, biases: weights["\(name).biases"],
+            groupSize: q.groupSize, bits: q.bits, mode: q.mode,
+            globalScale: weights["\(name).global_scale"])
+        for suffix in ["weight", "scales", "biases", "global_scale"] {
+            weights.removeValue(forKey: "\(name).\(suffix)")
+        }
+        return dense
+    }
+
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         var sanitized = weights
-        if let w = weights["pre_projection.weight"] {
+        if let w = denseProjectionWeight("pre_projection", from: &sanitized) {
             self._preProjectionWeight = w
-            sanitized.removeValue(forKey: "pre_projection.weight")
         }
-        if let w = weights["post_projection.weight"] {
+        if let w = denseProjectionWeight("post_projection", from: &sanitized) {
             self._postProjectionWeight = w
-            sanitized.removeValue(forKey: "post_projection.weight")
         }
         
         // Load masked embedder weights for centroid-based sparse logit projection
