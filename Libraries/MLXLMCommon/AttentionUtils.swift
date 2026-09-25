@@ -206,10 +206,9 @@ public func attentionWithCacheUpdate(
         // This makes the full context (compressed history + hot window) visible to SDPA.
         var fullKeys = cachedKeys
         var fullValues = cachedValues
-        if let kvCache = cache as? KVCacheSimple,
-           let pk = kvCache.polarKeys,
-           let pv = kvCache.polarValues,
-           kvCache.compressedOffset > 0 {
+        if let kvCache = cache as? KVCacheSimple, let pk = kvCache.polarKeys,
+            let pv = kvCache.polarValues
+        {
             // Hot-window design: cachedKeys = fp16 hot window only (self.keys after eviction).
             // polarKeys = compressed older history. They are disjoint — no duplication possible.
             // SDPA sees: [decoded_prior_history | fp16_hot_window]
