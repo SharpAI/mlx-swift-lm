@@ -49,7 +49,7 @@ struct StaleWeightIndexIntegrationTests {
 
         var text = ""
         for await event in stream {
-            if case .chunk(let chunk) = event { text += chunk }
+            if case .chunk(let chunk, _) = event { text += chunk }
         }
 
         #expect(

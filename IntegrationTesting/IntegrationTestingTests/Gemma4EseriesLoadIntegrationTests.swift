@@ -57,7 +57,7 @@ struct Gemma4EseriesLoadIntegrationTests {
 
         var text = ""
         for await event in stream {
-            if case .chunk(let c) = event { text += c }
+            if case .chunk(let c, _) = event { text += c }
         }
         #expect(!text.isEmpty, "\(modelId) loaded but produced no output")
     }
