@@ -2258,7 +2258,7 @@ public func generate(
 ///
 /// for await generation in stream {
 ///     switch generation {
-///     case .chunk(let text):
+///     case .chunk(let text, _):
 ///         print("Generated text: \(text)")
 ///     case .info(let info):
 ///         print("Finished: \(info.tokensPerSecond) tokens/s.")

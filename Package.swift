@@ -167,12 +167,17 @@ let package = Package(
             path: "Libraries/IntegrationTestHelpers",
             exclude: ["README.md"]
         ),
+        .target(
+            name: "MLXLMTestSupport",
+            path: "Tests/MLXLMTestSupport"
+        ),
         .testTarget(
             name: "MLXLMTests",
             dependencies: [
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXOptimizers", package: "mlx-swift"),
+                "MLXLMTestSupport",
                 "MLXLMCommon",
                 "MLXLLM",
                 "MLXVLM",

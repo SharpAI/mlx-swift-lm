@@ -2295,6 +2295,40 @@ final class TurboQuantIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(cos, 0.995, "dense kernel reconstruction diverges (cos \(cos))")
     }
 
+    /// The WHT encode kernel's cross-SIMD butterfly stages (Dim > 32) raced
+    /// on threadgroup memory, so repeated encodes of the same rows differed
+    /// and a few percent of indices were wrong.
+    func testWHTEncodeKernelIsDeterministicAndMatchesCodec() throws {
+        for d in [128, 256, 512] {
+            let rows = 512
+            let codec = MSECodec(dim: d, bits: 4, seed: 42)
+            let vectors = MLXRandom.normal([rows, d], key: MLXRandom.key(137))
+            let state = codec.encode(vectors.reshaped([1, 1, rows, d]))
+            let ref = TurboQuantPacking.unpackLowBit(state.packedIndices, bits: 4, count: d)
+                .reshaped([rows, d])
+
+            var first: MLXArray?
+            for _ in 0 ..< 8 {
+                let (packed, _) = TurboQuantKernelOps.fusedEncodeWHT(
+                    input: vectors, whtSigns: codec.whtSigns!,
+                    boundaries: codec.boundaries, codebook: codec.codebook,
+                    bits: 4, dim: d)
+                if let first {
+                    XCTAssertTrue(
+                        MLX.arrayEqual(packed, first).item(Bool.self),
+                        "encode is not deterministic at dim \(d)")
+                } else {
+                    first = packed
+                }
+            }
+
+            let unpacked = TurboQuantPacking.unpackLowBit(first!, bits: 4, count: d)
+            let mismatch = MLX.notEqual(unpacked, ref).asType(.float32).mean()
+                .item(Float.self)
+            XCTAssertLessThan(mismatch, 0.002, "dim \(d) index mismatch fraction \(mismatch)")
+        }
+    }
+
     // MARK: - Scaled (key-calibrated) encode kernel parity with the reference codec
     //
     // F-85 follow-up: per-dimension key calibration forced calibrated keys

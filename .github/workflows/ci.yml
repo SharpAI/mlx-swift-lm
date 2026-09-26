@@ -107,6 +107,52 @@ jobs:
           path: .build/artifacts/
           retention-days: 7
 
+  xcodebuild-test:
+    # Debug build: runs the DEBUG-only asserts that the Release job above
+    # compiles out, with Metal shaders built from our mlx-swift source.
+    name: xcodebuild test (Debug)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode 26 (Swift 6.2)
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Install Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Checkout SharpAI/mlx-swift
+        uses: actions/checkout@v4
+        with:
+          repository: SharpAI/mlx-swift
+          path: mlx-swift
+
+      - name: Redirect mlx-swift dependency to local checkout
+        run: |
+          sed -i '' -E 's|\.package\(path: "\.\./mlx-swift"\),|\.package(path: "./mlx-swift"),|' Package.swift
+
+      - name: Test
+        env:
+          TEST_RUNNER_SWIFT_BACKTRACE: interactive=no,symbolicate=fast
+        run: |
+          xcodebuild test \
+            -scheme mlx-swift-lm-Package \
+            -destination 'platform=macOS' \
+            -skipPackagePluginValidation \
+            -parallel-testing-enabled NO \
+            -resultBundlePath TestResults.xcresult
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-test-results
+          path: TestResults.xcresult
+          retention-days: 7
+
   integration-test:
     name: Build & Test SwiftLM Integration
     runs-on: macos-15
