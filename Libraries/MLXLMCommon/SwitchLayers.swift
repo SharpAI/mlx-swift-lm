@@ -29,6 +29,13 @@ public func gatherSort(x: MLXArray, indices: MLXArray) -> (MLXArray, MLXArray, M
     )
 }
 
+/// Capacity of the per-layer SSD persistent expert buffers for a call routing
+/// `needed` expert slots. Regrows when the buffers are smaller than `needed`.
+package func persistentBufferPlan(allocated: Int?, needed: Int) -> (regrow: Bool, capacity: Int) {
+    guard let allocated else { return (false, needed) }
+    return allocated < needed ? (true, needed) : (false, allocated)
+}
+
 public func scatterUnsort(x: MLXArray, invOrder: MLXArray, shape: [Int]? = nil) -> MLXArray {
     var x = x[invOrder]
     if let shape {
@@ -739,7 +746,18 @@ open class SwitchGLU: Module, @unchecked Sendable {
                 // Memory cost: ~5GB for persistent buffers across 48 layers
                 //   (vs ~13GB for the failed in-memory cache approach).
 
-                let maxBuffers = idx.size  // typically 8 (top_k)
+                // Buffers are sized on first use (usually top_k). A call that routes
+                // more (e.g. an MTP verify step) must regrow them, or slot lookups
+                // index past the end.
+                let plan = persistentBufferPlan(
+                    allocated: _persistentGate?.count, needed: idx.size)
+                if plan.regrow {
+                    _persistentGate = nil
+                    _persistentUp = nil
+                    _persistentDown = nil
+                    _previousExpertIds = nil
+                }
+                let maxBuffers = plan.capacity
 
                 if _persistentGate == nil {
                     // ── COLD PATH: first token, allocate persistent buffers ──
@@ -1068,9 +1086,7 @@ open class SwitchGLU: Module, @unchecked Sendable {
                 x = downProj.computeExperts(intermediate, buffers: downBuffers, ranges: ranges)
             }
 
-            if doSort {
-                x = scatterUnsort(x: x, invOrder: inverseOrder, shape: indices.shape)
-            }
+            // Callers unsort with `inverseOrder`; unsorting here too scrambled the rows.
             return (x, doSort ? inverseOrder : nil)
         }
 

@@ -372,6 +372,14 @@ public func loadWeights(
     lazyLoad: Bool = false,
     weightFileSelection: WeightFileSelection = .automatic
 ) throws {
+    let streamsThisModel = ExpertStreamingConfig.shared.isStreaming(modelDirectory: modelDirectory)
+    if ExpertStreamingConfig.shared.isEnabled, !streamsThisModel {
+        // Expected for a draft/assistant model. For the main model it means streaming
+        // was activated for a different path, and this load keeps every expert resident.
+        print(
+            "[MLXLMCommon] Expert streaming is active for \(ExpertStreamingConfig.shared.modelDirectory?.path ?? "?"); loading \(modelDirectory.path) without streaming."
+        )
+    }
     // load the weights and collect metadata from the first safetensor file
     var weights = [String: MLXArray]()
     var metadata = [String: String]()
@@ -380,7 +388,17 @@ public func loadWeights(
         in: modelDirectory,
         selection: weightFileSelection,
         additionalFiles: additionalFiles ?? [])
-    (weights, metadata) = try loadWeightArrays(urls: weightURLs)
+    if streamsThisModel {
+        // Load lazily: the concurrent loader reads every tensor, including the experts
+        // that SSD streaming pages in on demand, which fills RAM and pushes into swap.
+        for url in weightURLs {
+            let (w, m) = try loadArraysAndMetadata(url: url)
+            weights.merge(w) { _, new in new }
+            if metadata.isEmpty { metadata = m }
+        }
+    } else {
+        (weights, metadata) = try loadWeightArrays(urls: weightURLs)
+    }
 
     // MTP add-ons (e.g. Qwen3.5/3.6-OptiQ's `optiq/mtp.safetensors`) live in a
     // subdirectory `safetensorWeightURLs` deliberately excludes by default (see its
@@ -415,7 +433,7 @@ public func loadWeights(
     // ExpertStreamingConfig: Initialize the ExpertStreamerManager when streaming is active.
     // On macOS: pread() from NVMe at ~5 GB/s.
     // On iOS:   mmap page-cache from APFS at ~2-3 GB/s — same struct, different bandwidth.
-    if ExpertStreamingConfig.shared.isEnabled {
+    if streamsThisModel {
         ExpertStreamerManager.shared = ExpertStreamerManager(modelDirectory: modelDirectory)
     }
 
@@ -479,7 +497,7 @@ public func loadWeights(
     // .noUnusedKeys still catches genuinely stray/misspelled keys without requiring
     // every @ModuleInfo slot to be populated up-front.
     let parameters = ModuleParameters.unflattened(weights)
-    if ExpertStreamingConfig.shared.isEnabled {
+    if streamsThisModel {
         // Expert weights are intentionally absent — paged from SSD on demand.
         // .noUnusedKeys still rejects stray/misspelled keys without requiring
         // every @ModuleInfo slot to be pre-populated.
@@ -488,7 +506,7 @@ public func loadWeights(
         try model.update(parameters: parameters, verify: .all)
     }
 
-    if ExpertStreamingConfig.shared.isEnabled {
+    if streamsThisModel {
         // Assign tensorName to each QuantizedSwitchLinear.
         //
         // CRITICAL: tensorName must be the ORIGINAL key in the safetensors shard

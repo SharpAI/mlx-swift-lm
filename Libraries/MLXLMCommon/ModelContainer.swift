@@ -179,7 +179,7 @@ public final class ModelContainer: Sendable {
     /// let stream = try modelContainer.generate(input: input, parameters: parameters)
     /// for await generation in stream {
     ///     switch generation {
-    ///     case .chunk(let text): print(text)
+    ///     case .chunk(let text, _): print(text)
     ///     case .info(let info): print(info.tokensPerSecond)
     ///     case .toolCall(let call): handleToolCall(call)
     ///     case .rejectedToolCall(let rejection): handleRejectedToolCall(rejection)

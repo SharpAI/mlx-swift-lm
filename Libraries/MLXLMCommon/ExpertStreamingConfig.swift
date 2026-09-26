@@ -82,6 +82,14 @@ public final class ExpertStreamingConfig: @unchecked Sendable {
         #endif
     }
 
+    /// Whether `modelDirectory` is the model streaming was activated for. A draft or
+    /// assistant model loaded alongside it must not take over the shard index.
+    public func isStreaming(modelDirectory: URL) -> Bool {
+        guard let active = self.modelDirectory else { return false }
+        return active.resolvingSymlinksInPath().standardizedFileURL.path
+            == modelDirectory.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
     /// Disable expert streaming and free resources.
     public func deactivate() {
         mode = .disabled
