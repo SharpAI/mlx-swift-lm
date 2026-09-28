@@ -135,6 +135,71 @@ private final class HybridDraftingModel: Module, MTPLanguageModel {
     }
 }
 
+/// A hybrid trunk whose logits always pick one token, so every draft is accepted.
+private final class ConstantDraftingModel: Module, MTPLanguageModel {
+    let inner: Qwen35TextModel
+
+    init(_ inner: Qwen35TextModel) {
+        self.inner = inner
+        super.init()
+    }
+
+    private func constant(like logits: MLXArray) -> MLXArray {
+        let vocab = logits.dim(-1)
+        let row = MLXArray((0 ..< vocab).map { $0 == 7 ? Float(10) : Float(0) })
+        return broadcast(row, to: logits.shape)
+    }
+
+    func prepare(
+        _ input: LMInput, cache: [KVCache], state: LMOutput.State?, prefill: PrefillParameters
+    ) throws -> PrepareResult {
+        .tokens(input.text)
+    }
+
+    func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?)
+        -> LMOutput
+    {
+        LMOutput(logits: callAsFunction(input.tokens, cache: cache))
+    }
+
+    func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        constant(like: inner(inputs, cache: cache))
+    }
+
+    func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try inner.newCache(parameters: parameters)
+    }
+
+    func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray] {
+        let main = callAsFunction(inputs, cache: cache)
+        return [main, main, main]
+    }
+}
+
+/// A cache fed `prompt` and then each of `tokens` one at a time.
+private func referenceCache(
+    _ model: Qwen35TextModel, prompt: MLXArray, tokens: some Sequence<Int>,
+    parameters: GenerateParameters
+) throws -> [KVCache] {
+    let cache = try model.newCache(parameters: parameters)
+    eval(model(prompt[.newAxis], cache: cache))
+    for t in tokens { eval(model(MLXArray([Int32(t)])[.newAxis], cache: cache)) }
+    return cache
+}
+
+/// `actual` must hold the same attention offsets and recurrent state as `reference`.
+private func expectSameCache(_ reference: [KVCache], _ actual: [KVCache], _ label: String = "") {
+    for (i, (ref, act)) in zip(reference, actual).enumerated() {
+        #expect(ref.offset == act.offset, "\(label) \(type(of: ref)): \(ref.offset) vs \(act.offset)")
+        guard ref is MambaCache else { continue }
+        #expect(ref.state.count == act.state.count, "\(label) layer \(i): recurrent state missing")
+        for (a, b) in zip(ref.state, act.state) {
+            let diff = abs(a - b).max().item(Float.self)
+            #expect(diff < 1e-5, "\(label) layer \(i): max diff \(diff), max |ref| \(abs(a).max().item(Float.self))")
+        }
+    }
+}
+
 // MARK: - Phase 1: MTPConfig & protocol
 
 extension MLXTestingSuite {
@@ -421,10 +486,72 @@ extension MLXTestingSuite {
             for (ref, mtp) in zip(refCache, mtpCache) {
                 #expect(ref.offset == mtp.offset, "\(type(of: ref)): \(ref.offset) vs \(mtp.offset)")
                 guard ref is MambaCache else { continue }
+                #expect(ref.state.count == mtp.state.count)
                 for (a, b) in zip(ref.state, mtp.state) {
-                    #expect(abs(a - b).max().item(Float.self) < 1e-3)
+                    #expect(abs(a - b).max().item(Float.self) < 1e-5)
                 }
             }
+        }
+
+        // 2.7c — After a fully accepted round the recurrent checkpoint must be dropped
+        // (trim(0)); a stale one would later restore an old state.
+        @Test("MTPTokenIterator drops the recurrent checkpoint after fully accepted rounds")
+        func testMTPIteratorClearsCheckpointWhenAllDraftsAccepted() throws {
+            let trunk = withRandomState(MLXRandom.RandomState(seed: 74)) {
+                let model = Qwen35TextModel(try! makeQwen35TextConfig())
+                eval(model)
+                return model
+            }
+            let model = ConstantDraftingModel(trunk)
+            let params = GenerateParameters(maxTokens: 12, temperature: 0.0)
+            let cache = try trunk.newCache(parameters: params)
+            var iter = try MTPTokenIterator(
+                input: LMInput(tokens: MLXArray([1, 2, 3, 4])), model: model, cache: cache,
+                parameters: params, numMTPTokens: 2)
+            while iter.next() != nil {}
+            #expect(iter.totalDraftTokens > 0)
+            #expect(iter.acceptedDraftTokens == iter.totalDraftTokens)
+            let mambas = cache.compactMap { $0 as? MambaCache }
+            #expect(!mambas.isEmpty)
+            #expect(mambas.allSatisfy { !$0.hasRollbackCheckpoint })
+        }
+
+        // 2.7d — Draft-model speculative decoding with hybrid main and draft models: after
+        // rejections both caches must equal caches fed exactly the tokens they consumed.
+        @Test("SpeculativeTokenIterator rollback keeps hybrid main and draft caches exact")
+        func testSpeculativeIteratorHybridRollback() throws {
+            let config = try makeQwen35TextConfig()
+            let (main, draft) = withRandomState(MLXRandom.RandomState(seed: 75)) {
+                let main = Qwen35TextModel(config)
+                let draft = Qwen35TextModel(config)
+                eval(main, draft)
+                return (main, draft)
+            }
+            let prompt = MLXArray([1, 2, 3, 4, 5, 6])
+            let params = GenerateParameters(maxTokens: 16, temperature: 0.0)
+            let mainCache = try main.newCache(parameters: params)
+            let draftCache = try draft.newCache(parameters: params)
+            var iter = try SpeculativeTokenIterator(
+                input: LMInput(tokens: prompt), mainModel: main, draftModel: draft,
+                mainCache: mainCache, draftCache: draftCache, parameters: params,
+                numDraftTokens: 3)
+            var tokens = [Int]()
+            while let t = iter.next() { tokens.append(t) }
+            #expect(iter.totalDraftTokens > iter.acceptedDraftTokens)
+
+            func consumed(_ cache: [KVCache]) -> Int {
+                cache.first { !($0 is MambaCache) }!.offset - prompt.size
+            }
+            expectSameCache(
+                try referenceCache(
+                    main, prompt: prompt, tokens: tokens.prefix(consumed(mainCache)),
+                    parameters: params),
+                mainCache, "main")
+            expectSameCache(
+                try referenceCache(
+                    draft, prompt: prompt, tokens: tokens.prefix(consumed(draftCache)),
+                    parameters: params),
+                draftCache, "draft")
         }
 
         // 2.8 — maxTokens is respected even with deep drafting (numMTPTokens=3)
