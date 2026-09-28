@@ -11,7 +11,7 @@
 import Foundation
 import MLX
 @testable import MLXLLM
-import MLXLMCommon
+@testable import MLXLMCommon
 import MLXNN
 import Testing
 
@@ -24,10 +24,13 @@ private func makeQwen35TextConfig(
     numMTPLayers: Int = 0,
     numHiddenLayers: Int = 4,
     hiddenSize: Int = 64,
-    vocabSize: Int = 100
+    vocabSize: Int = 100,
+    headDim: Int? = nil
 ) throws -> Qwen35TextConfiguration {
+    let headDimLine = headDim.map { "\"head_dim\": \($0)," } ?? ""
     let json = """
     {
+        \(headDimLine)
         "model_type": "qwen3_5",
         "hidden_size": \(hiddenSize),
         "num_hidden_layers": \(numHiddenLayers),
@@ -176,6 +179,25 @@ private final class ConstantDraftingModel: Module, MTPLanguageModel {
     }
 }
 
+/// A main model and a draft that is a slightly perturbed copy of it, so drafts are
+/// partly accepted.
+private func makePartlyAgreeingPair(
+    seed: UInt64, noise: Float = 0.02, headDim: Int? = nil
+) throws -> (Qwen35TextModel, Qwen35TextModel) {
+    let config = try makeQwen35TextConfig(headDim: headDim)
+    return withRandomState(MLXRandom.RandomState(seed: seed)) {
+        let main = Qwen35TextModel(config)
+        let draft = Qwen35TextModel(config)
+        draft.update(parameters: main.parameters())
+        let perturbed = draft.parameters().flattened().map { key, value in
+            (key, value + noise * MLXRandom.normal(value.shape).asType(value.dtype))
+        }
+        draft.update(parameters: ModuleParameters.unflattened(perturbed))
+        eval(main, draft)
+        return (main, draft)
+    }
+}
+
 /// A cache fed `prompt` and then each of `tokens` one at a time.
 private func referenceCache(
     _ model: Qwen35TextModel, prompt: MLXArray, tokens: some Sequence<Int>,
@@ -188,9 +210,18 @@ private func referenceCache(
 }
 
 /// `actual` must hold the same attention offsets and recurrent state as `reference`.
-private func expectSameCache(_ reference: [KVCache], _ actual: [KVCache], _ label: String = "") {
+private func expectSameCache(
+    _ reference: [KVCache], _ actual: [KVCache], _ label: String = "", compareAttention: Bool = true
+) {
     for (i, (ref, act)) in zip(reference, actual).enumerated() {
         #expect(ref.offset == act.offset, "\(label) \(type(of: ref)): \(ref.offset) vs \(act.offset)")
+        if compareAttention, !(ref is MambaCache) {
+            #expect(ref.state.count == act.state.count, "\(label) layer \(i): attention state missing")
+            for (a, b) in zip(ref.state, act.state) where a.shape == b.shape {
+                let diff = abs(a - b).max().item(Float.self)
+                #expect(diff < 1e-4, "\(label) layer \(i): attention max diff \(diff)")
+            }
+        }
         guard ref is MambaCache else { continue }
         #expect(ref.state.count == act.state.count, "\(label) layer \(i): recurrent state missing")
         for (a, b) in zip(ref.state, act.state) {
@@ -516,19 +547,14 @@ extension MLXTestingSuite {
             #expect(mambas.allSatisfy { !$0.hasRollbackCheckpoint })
         }
 
-        // 2.7d — Draft-model speculative decoding with hybrid main and draft models: after
-        // rejections both caches must equal caches fed exactly the tokens they consumed.
+        // 2.7d — Draft-model speculative decoding with hybrid main and draft models, drafts
+        // partly accepted: after each round both caches must equal caches fed exactly the
+        // tokens they consumed.
         @Test("SpeculativeTokenIterator rollback keeps hybrid main and draft caches exact")
         func testSpeculativeIteratorHybridRollback() throws {
-            let config = try makeQwen35TextConfig()
-            let (main, draft) = withRandomState(MLXRandom.RandomState(seed: 75)) {
-                let main = Qwen35TextModel(config)
-                let draft = Qwen35TextModel(config)
-                eval(main, draft)
-                return (main, draft)
-            }
+            let (main, draft) = try makePartlyAgreeingPair(seed: 75)
             let prompt = MLXArray([1, 2, 3, 4, 5, 6])
-            let params = GenerateParameters(maxTokens: 16, temperature: 0.0)
+            let params = GenerateParameters(maxTokens: 24, temperature: 0.0)
             let mainCache = try main.newCache(parameters: params)
             let draftCache = try draft.newCache(parameters: params)
             var iter = try SpeculativeTokenIterator(
@@ -537,21 +563,109 @@ extension MLXTestingSuite {
                 numDraftTokens: 3)
             var tokens = [Int]()
             while let t = iter.next() { tokens.append(t) }
+            #expect(iter.acceptedDraftTokens > 0)
             #expect(iter.totalDraftTokens > iter.acceptedDraftTokens)
+            expectConsumedTokens(main, draft, prompt, tokens, mainCache, draftCache, params)
+        }
 
+        /// Both caches equal caches fed exactly the tokens each one consumed.
+        private func expectConsumedTokens(
+            _ main: Qwen35TextModel, _ draft: Qwen35TextModel, _ prompt: MLXArray,
+            _ tokens: [Int], _ mainCache: [KVCache], _ draftCache: [KVCache],
+            _ params: GenerateParameters, compareAttention: Bool = true
+        ) {
             func consumed(_ cache: [KVCache]) -> Int {
                 cache.first { !($0 is MambaCache) }!.offset - prompt.size
             }
             expectSameCache(
-                try referenceCache(
+                try! referenceCache(
                     main, prompt: prompt, tokens: tokens.prefix(consumed(mainCache)),
                     parameters: params),
-                mainCache, "main")
+                mainCache, "main", compareAttention: compareAttention)
             expectSameCache(
-                try referenceCache(
+                try! referenceCache(
                     draft, prompt: prompt, tokens: tokens.prefix(consumed(draftCache)),
                     parameters: params),
-                draftCache, "draft")
+                draftCache, "draft", compareAttention: compareAttention)
+        }
+
+        // 2.7e — A long first-round y (prefill left the prompt unprocessed) with TurboKV,
+        // whose caches can only rewind their uncompressed tail. y's head is fed as a
+        // plain step, so the rewind never reaches the compressed history.
+        @Test("SpeculativeTokenIterator with TurboKV and a long first-round y")
+        func testSpeculativeIteratorTurboKVLongFirstRound() throws {
+            let (main, draft) = try makePartlyAgreeingPair(seed: 76, headDim: 128)
+            let prompt = MLXArray((0 ..< 600).map { Int32($0 % 97 + 1) })
+            let params = GenerateParameters(maxTokens: 12, temperature: 0.0, prefillStepSize: 1024)
+            let mainCache = try main.newCache(parameters: params)
+            for case let simple as KVCacheSimple in mainCache {
+                simple.turboQuantEnabled = true
+                simple.turboMinActivationTokens = 300
+            }
+            let draftCache = try draft.newCache(parameters: params)
+            var iter = try SpeculativeTokenIterator(
+                input: LMInput(tokens: prompt), mainModel: main, draftModel: draft,
+                mainCache: mainCache, draftCache: draftCache, parameters: params,
+                numDraftTokens: 3)
+            var tokens = [Int]()
+            while let t = iter.next() { tokens.append(t) }
+            #expect(tokens.count == 12)
+            #expect(iter.totalDraftTokens > iter.acceptedDraftTokens)
+            // Compressed attention can't be compared row by row; offsets and recurrent can.
+            expectConsumedTokens(
+                main, draft, prompt, tokens, mainCache, draftCache, params,
+                compareAttention: false)
+        }
+
+        // 2.7f — A restored cache whose sliding window has wrapped isn't trimmable at that
+        // moment but still rewinds per layer, so init must accept it (a ChatSession turn).
+        @Test("SpeculativeTokenIterator accepts a restored cache whose window has wrapped")
+        func testSpeculativeIteratorAcceptsWrappedRestoredCache() throws {
+            let (main, draft) = try makePartlyAgreeingPair(seed: 77)
+            let params = GenerateParameters(maxTokens: 6, maxKVSize: 8, temperature: 0.0)
+            let history = MLXArray((0 ..< 12).map { Int32($0 + 1) })
+            let mainCache = try main.newCache(parameters: params)
+            let draftCache = try draft.newCache(parameters: params)
+            eval(main(history[.newAxis], cache: mainCache), draft(history[.newAxis], cache: draftCache))
+            #expect(mainCache.contains { $0 is RotatingKVCache && !$0.isTrimmable })
+
+            var iter = try SpeculativeTokenIterator(
+                input: LMInput(tokens: MLXArray([Int32(3)])), mainModel: main, draftModel: draft,
+                mainCache: mainCache, draftCache: draftCache, parameters: params,
+                numDraftTokens: 2)
+            var count = 0
+            while iter.next() != nil { count += 1 }
+            #expect(count == 6)
+        }
+
+        // 2.7g — Stopping early leaves accepted drafts committed but unemitted. Finalize
+        // must take them out of a hybrid cache's recurrent state too, not just attention.
+        @Test("SpeculativeTokenIterator finalize rewinds unemitted tokens from a hybrid cache")
+        func testSpeculativeIteratorHybridFinalize() throws {
+            let (main, draft) = try makePartlyAgreeingPair(seed: 75)
+            let prompt = MLXArray([1, 2, 3, 4, 5, 6])
+            let params = GenerateParameters(maxTokens: 24, temperature: 0.0)
+            var sawLookahead = false
+            for stop in 2 ... 12 {
+                let mainCache = try main.newCache(parameters: params)
+                let draftCache = try draft.newCache(parameters: params)
+                var iter = try SpeculativeTokenIterator(
+                    input: LMInput(tokens: prompt), mainModel: main, draftModel: draft,
+                    mainCache: mainCache, draftCache: draftCache, parameters: params,
+                    numDraftTokens: 3)
+                var tokens = [Int]()
+                while tokens.count < stop, let t = iter.next() { tokens.append(t) }
+                let attention = { mainCache.first { !($0 is MambaCache) }!.offset }
+                if attention() - prompt.size > tokens.count { sawLookahead = true }
+                iter.finalizeGeneration()
+                #expect(attention() - prompt.size <= tokens.count)
+                expectSameCache(
+                    try referenceCache(
+                        main, prompt: prompt, tokens: tokens.prefix(attention() - prompt.size),
+                        parameters: params),
+                    mainCache, "main stop \(stop)")
+            }
+            #expect(sawLookahead)
         }
 
         // 2.8 — maxTokens is respected even with deep drafting (numMTPTokens=3)

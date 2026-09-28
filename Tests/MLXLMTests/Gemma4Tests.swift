@@ -33,7 +33,7 @@ extension MLXTestingSuite {
                 "use_double_wide_mlp": false,
                 "tie_word_embeddings": true,
                 "hidden_size_per_layer_input": 32,
-                "vocab_size_per_layer_input": 10,
+                "vocab_size_per_layer_input": 100,
                 "final_logit_softcapping": 30.0,
                 "enable_moe_block": false,
                 "attention_k_eq_v": false
@@ -69,7 +69,7 @@ extension MLXTestingSuite {
                 "use_double_wide_mlp": false,
                 "tie_word_embeddings": true,
                 "hidden_size_per_layer_input": 32,
-                "vocab_size_per_layer_input": 10,
+                "vocab_size_per_layer_input": 100,
                 "final_logit_softcapping": 30.0,
                 "enable_moe_block": false,
                 "attention_k_eq_v": false
@@ -230,7 +230,7 @@ extension MLXTestingSuite {
             "use_double_wide_mlp": false,
             "tie_word_embeddings": true,
             "hidden_size_per_layer_input": 32,
-            "vocab_size_per_layer_input": 10,
+            "vocab_size_per_layer_input": 100,
             "final_logit_softcapping": 30.0,
             "enable_moe_block": true,
             "num_experts": 4,

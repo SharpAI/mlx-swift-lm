@@ -1785,6 +1785,21 @@ open class MambaCache: ArraysCache {
     /// Mark as trimmable to enable speculative decoding on hybrid Attention+Mamba models.
     open override var isTrimmable: Bool { true }
 
+    /// A copy of the recurrent state and offset, for restoring later.
+    package struct Snapshot {
+        fileprivate let slots: [MLXArray?]
+        fileprivate let offset: Int
+    }
+
+    package func snapshot() -> Snapshot {
+        Snapshot(slots: cache.map { $0.map { $0[0...] } }, offset: offset)
+    }
+
+    package func restore(_ snapshot: Snapshot) {
+        cache = snapshot.slots
+        offset = snapshot.offset
+    }
+
     /// Whether a rollback checkpoint from `checkpoint()` is still held.
     package var hasRollbackCheckpoint: Bool { savedState != nil }
 
@@ -2684,6 +2699,15 @@ public func trimPromptCache(_ cache: [KVCache], numTokens: Int) -> Int {
     guard canTrimPromptCache(cache), !cache.isEmpty else { return 0 }
     cache.dropFirst().forEach { $0.trim(numTokens) }
     return cache.first?.trim(numTokens) ?? 0
+}
+
+/// Every `MambaCache` in `cache`, including ones nested in a `CacheList`.
+package func recurrentCaches(in cache: [KVCache]) -> [MambaCache] {
+    cache.flatMap { entry -> [MambaCache] in
+        if let mamba = entry as? MambaCache { return [mamba] }
+        if let list = entry as? CacheList { return recurrentCaches(in: list.children) }
+        return []
+    }
 }
 
 /// Whether a cache entry can be rewound at all. A wrapped sliding-window cache

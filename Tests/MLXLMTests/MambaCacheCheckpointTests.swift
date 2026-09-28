@@ -40,3 +40,22 @@ struct MambaCacheCheckpointTests {
         #expect(cache.state[0].asArray(Int32.self) == [9, 9])
     }
 }
+
+/// Hybrid detection and rewind checks must see caches nested in a `CacheList`.
+struct CacheListRewindTests {
+    @Test func recurrentCachesFindsNestedMambaCaches() {
+        let nested = MambaCache()
+        let caches: [KVCache] = [KVCacheSimple(), CacheList(nested, KVCacheSimple())]
+        let found = recurrentCaches(in: caches)
+        #expect(found.count == 1)
+        #expect(found.first === nested)
+    }
+
+    @Test func aCacheListWithAWrappedRingCanRewind() {
+        let ring = RotatingKVCache(maxSize: 4, keep: 0)
+        let kv = MLXArray.zeros([1, 1, 8, 4])
+        _ = ring.update(keys: kv, values: kv)
+        #expect(!ring.isTrimmable)
+        #expect(canRewindCacheLayer(CacheList(ring, KVCacheSimple())))
+    }
+}
