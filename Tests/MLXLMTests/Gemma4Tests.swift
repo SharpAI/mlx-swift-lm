@@ -1,7 +1,7 @@
 import Foundation
 import MLX
 import MLXLLM
-import MLXLMCommon
+@testable import MLXLMCommon
 import MLXNN
 import Testing
 
@@ -33,7 +33,7 @@ extension MLXTestingSuite {
                 "use_double_wide_mlp": false,
                 "tie_word_embeddings": true,
                 "hidden_size_per_layer_input": 32,
-                "vocab_size_per_layer_input": 10,
+                "vocab_size_per_layer_input": 100,
                 "final_logit_softcapping": 30.0,
                 "enable_moe_block": false,
                 "attention_k_eq_v": false
@@ -69,7 +69,7 @@ extension MLXTestingSuite {
                 "use_double_wide_mlp": false,
                 "tie_word_embeddings": true,
                 "hidden_size_per_layer_input": 32,
-                "vocab_size_per_layer_input": 10,
+                "vocab_size_per_layer_input": 100,
                 "final_logit_softcapping": 30.0,
                 "enable_moe_block": false,
                 "attention_k_eq_v": false
@@ -230,7 +230,7 @@ extension MLXTestingSuite {
             "use_double_wide_mlp": false,
             "tie_word_embeddings": true,
             "hidden_size_per_layer_input": 32,
-            "vocab_size_per_layer_input": 10,
+            "vocab_size_per_layer_input": 100,
             "final_logit_softcapping": 30.0,
             "enable_moe_block": true,
             "num_experts": 4,
@@ -672,6 +672,125 @@ extension MLXTestingSuite {
             count += 1
         }
         #expect(count == 8)
+    }
+
+    /// A tiny main model with a 4-token sliding window, so a 12-token prompt wraps it.
+    private func makeWrappingMTPPair(seed: UInt64, sharedKVAssistant: Bool = false) throws
+        -> (Gemma4Model, Gemma4AssistantModel)
+    {
+        var config = try JSONSerialization.jsonObject(with: makeTinyConfigData()) as! [String: Any]
+        var text = config["text_config"] as! [String: Any]
+        text["sliding_window"] = 4
+        text["sliding_window_pattern"] = 2
+        config["text_config"] = text
+        let mainCfg = try JSONDecoder().decode(
+            Gemma4Configuration.self, from: JSONSerialization.data(withJSONObject: config))
+        let asstCfg = try JSONDecoder().decode(
+            Gemma4Configuration.self,
+            from: sharedKVAssistant ? makeTinySharedKVAssistantConfigData() : makeTinyAssistantConfigData())
+        return withRandomState(MLXRandom.RandomState(seed: seed)) {
+            let mainModel = Gemma4Model(mainCfg)
+            let asstModel = Gemma4AssistantModel(asstCfg)
+            asstModel.mainModelRef = mainModel
+            eval(mainModel, asstModel)
+            return (mainModel, asstModel)
+        }
+    }
+
+    /// A short prompt that wraps the 4-token sliding window.
+    private let wrappingPrompt = MLXArray((0 ..< 12).map { Int32($0 % 9 + 1) })
+
+    /// Rejected drafts must leave the cache once a sliding-window layer has wrapped;
+    /// `trimPromptCache` skipped every layer then.
+    @Test("Gemma4 MTP — rejected drafts are rolled back after the sliding window wraps")
+    func testMTPTokenIteratorRollsBackAfterSlidingWindowWraps() throws {
+        let (mainModel, asstModel) = try makeWrappingMTPPair(seed: 72)
+        let maxTokens = 24
+        let params = GenerateParameters(maxTokens: maxTokens, temperature: 0.0)
+
+        let cache = try mainModel.newCache(parameters: params)
+        #expect(cache[0] is RotatingKVCache)
+        var iterator = try MTPTokenIterator(
+            input: LMInput(tokens: wrappingPrompt), model: asstModel, cache: cache,
+            parameters: params, numMTPTokens: 2)
+        var mtpTokens = [Int]()
+        while let t = iterator.next() { mtpTokens.append(t) }
+
+        #expect(mtpTokens.count == maxTokens)
+        #expect(iterator.totalDraftTokens > iterator.acceptedDraftTokens)
+        #expect(!cache[0].isTrimmable)
+        #expect(cache[0].offset == cache[1].offset)
+        #expect(cache[1].offset <= wrappingPrompt.size + maxTokens)
+    }
+
+    /// Draft-model decoding on a pure-attention model whose sliding window has wrapped:
+    /// finalize must rewind the unemitted lookahead from every layer (the storage's
+    /// all-or-nothing trim refuses the wrapped ring) and keep the timeline in step.
+    @Test("Gemma4 speculative — finalize rewinds a wrapped sliding window")
+    func testSpeculativeFinalizeRewindsWrappedWindow() throws {
+        let (main, _) = try makeWrappingMTPPair(seed: 79)
+        let (draft, _) = try makeWrappingMTPPair(seed: 79)
+        let perturbed = draft.parameters().flattened().map { key, value in
+            (key, value + 0.02 * MLXRandom.normal(value.shape).asType(value.dtype))
+        }
+        draft.update(parameters: ModuleParameters.unflattened(perturbed))
+        eval(draft)
+        let params = GenerateParameters(maxTokens: 24, temperature: 0.0)
+        var sawLookahead = false
+        for stop in 2 ... 10 {
+            let mainCache = try main.newCache(parameters: params)
+            let draftCache = try draft.newCache(parameters: params)
+            var iter = try SpeculativeTokenIterator(
+                input: LMInput(tokens: wrappingPrompt), mainModel: main, draftModel: draft,
+                mainCache: mainCache, draftCache: draftCache, parameters: params,
+                numDraftTokens: 3)
+            var tokens = [Int]()
+            while tokens.count < stop, let t = iter.next() { tokens.append(t) }
+            #expect(!mainCache[0].isTrimmable)
+            let before = mainCache[1].offset - wrappingPrompt.size
+            if before > tokens.count { sawLookahead = true }
+            iter.finalizeGeneration()
+            let after = mainCache[1].offset - wrappingPrompt.size
+            #expect(after == Swift.min(before, tokens.count), "stop \(stop)")
+            #expect(mainCache[0].offset == mainCache[1].offset)
+            #expect(iter.mainCacheStorage.processedTokenCount == mainCache[1].offset)
+        }
+        #expect(sawLookahead)
+    }
+
+    /// A prompt-cache hit can restore a wrapped sliding window. It isn't trimmable
+    /// at that moment, but it still rewinds per layer, so init must accept it.
+    @Test("Gemma4 MTP — init accepts a restored cache whose sliding window has wrapped")
+    func testMTPTokenIteratorAcceptsWrappedRestoredCache() throws {
+        let (mainModel, asstModel) = try makeWrappingMTPPair(seed: 73)
+        let params = GenerateParameters(maxTokens: 4, temperature: 0.0)
+        let cache = try mainModel.newCache(parameters: params)
+        eval(mainModel(wrappingPrompt[.newAxis], cache: cache))
+        #expect(!cache[0].isTrimmable)
+
+        var iterator = try MTPTokenIterator(
+            input: LMInput(tokens: MLXArray([Int32(3)])), model: asstModel, cache: cache,
+            parameters: params, numMTPTokens: 2)
+        var count = 0
+        while iterator.next() != nil { count += 1 }
+        #expect(count == 4)
+    }
+
+    /// With kvBits the main full-attention cache becomes a QuantizedKVCache. An all-KV-shared
+    /// assistant has no K/V of its own, so its shared-KV lookup must read that cache.
+    @Test("Gemma4 MTP — assistant reads a quantized main KV cache")
+    func testMTPTokenIteratorWithQuantizedKVCache() throws {
+        let (mainModel, asstModel) = try makeWrappingMTPPair(seed: 74, sharedKVAssistant: true)
+        let params = GenerateParameters(
+            maxTokens: 6, kvBits: 8, quantizedKVStart: 0, temperature: 0.0)
+        let cache = try mainModel.newCache(parameters: params)
+        var iterator = try MTPTokenIterator(
+            input: LMInput(tokens: wrappingPrompt), model: asstModel, cache: cache,
+            parameters: params, numMTPTokens: 2)
+        var tokens = [Int]()
+        while let t = iterator.next() { tokens.append(t) }
+        #expect(tokens.count == 6)
+        #expect(tokens.allSatisfy { $0 >= 0 && $0 < 100 })
     }
     }
 }

@@ -1761,7 +1761,8 @@ open class MambaCache: ArraysCache {
     /// polymorphically without knowing they include Mamba layers (Mamba state
     /// is recurrent and cannot be partially "trimmed" like attention KV
     /// caches, so we checkpoint before speculation and restore on rollback).
-    private var savedState: [MLXArray]?
+    private var savedState: [MLXArray?]?
+    private var savedOffset = 0
 
     private struct SpeculativeCheckpoint {
         var state: [MLXArray?]
@@ -1784,12 +1785,30 @@ open class MambaCache: ArraysCache {
     /// Mark as trimmable to enable speculative decoding on hybrid Attention+Mamba models.
     open override var isTrimmable: Bool { true }
 
+    /// A copy of the recurrent state and offset, for restoring later.
+    package struct Snapshot {
+        fileprivate let slots: [MLXArray?]
+        fileprivate let offset: Int
+    }
+
+    package func snapshot() -> Snapshot {
+        Snapshot(slots: cache.map { $0.map { $0[0...] } }, offset: offset)
+    }
+
+    package func restore(_ snapshot: Snapshot) {
+        cache = snapshot.slots
+        offset = snapshot.offset
+    }
+
+    /// Whether a rollback checkpoint from `checkpoint()` is still held.
+    package var hasRollbackCheckpoint: Bool { savedState != nil }
+
     /// Save a checkpoint of the current Mamba state (call before speculative draft round).
+    /// An empty cache is checkpointed too: a round that starts before any state
+    /// exists (an unprocessed prompt tail) must roll back to empty.
     open func checkpoint() {
-        let s = self.state
-        if !s.isEmpty {
-            savedState = s.map { $0[0...] }  // deep copy
-        }
+        savedState = cache.map { $0.map { $0[0...] } }  // deep copy
+        savedOffset = offset
     }
 
     /// Trim: for Mamba, restore from checkpoint if tokens are rejected.
@@ -1798,7 +1817,8 @@ open class MambaCache: ArraysCache {
     @discardableResult
     open override func trim(_ n: Int) -> Int {
         if n > 0, let saved = savedState {
-            self.state = saved
+            cache = saved
+            offset = savedOffset
             savedState = nil
             return n
         }
@@ -1868,6 +1888,7 @@ public class CacheList: BaseKVCache {
     public subscript(index: Int) -> KVCache {
         return caches[index]
     }
+
 
     public override func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
         fatalError("CacheList should not use update(keys:values:) - use subscript access instead")
@@ -2678,6 +2699,36 @@ public func trimPromptCache(_ cache: [KVCache], numTokens: Int) -> Int {
     guard canTrimPromptCache(cache), !cache.isEmpty else { return 0 }
     cache.dropFirst().forEach { $0.trim(numTokens) }
     return cache.first?.trim(numTokens) ?? 0
+}
+
+/// Every `MambaCache` in `cache`, including ones nested in a `CacheList`.
+package func recurrentCaches(in cache: [KVCache]) -> [MambaCache] {
+    cache.flatMap { entry -> [MambaCache] in
+        if let mamba = entry as? MambaCache { return [mamba] }
+        if let list = entry as? CacheList { return recurrentCaches(in: list.children) }
+        return []
+    }
+}
+
+/// Whether a cache entry can be rewound at all. A wrapped sliding-window cache
+/// isn't `isTrimmable`, but its multi-token speculative writes still trim exactly.
+package func canRewindCacheLayer(_ entry: KVCache) -> Bool {
+    if let list = entry as? CacheList { return list.children.allSatisfy(canRewindCacheLayer) }
+    return entry.isTrimmable || entry is RotatingKVCache
+}
+
+/// Trim each entry by `numTokens` on its own. Unlike `trimPromptCache`, one wrapped
+/// sliding-window layer doesn't stop the rest from rewinding.
+/// Returns the count trimmed from the first non-recurrent entry.
+@discardableResult
+package func trimEachCacheLayer(_ cache: [KVCache], numTokens: Int) -> Int {
+    guard !cache.isEmpty, cache.allSatisfy(canRewindCacheLayer) else { return 0 }
+    var trimmed: Int?
+    for entry in cache {
+        let n = entry.trim(numTokens)
+        if trimmed == nil, !(entry is MambaCache) { trimmed = n }
+    }
+    return trimmed ?? numTokens
 }
 
 /// Rewind a one-token speculative tail in a hybrid attention/recurrent cache.

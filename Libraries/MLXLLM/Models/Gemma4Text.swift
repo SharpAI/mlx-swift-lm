@@ -1377,6 +1377,45 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
         // Running only what we need avoids extra compute.
         let mtpDepth = (mtpCaches?.count ?? 0) + 2  // fallback: 2 depths for 2 draft tokens
 
+        // The main cache doesn't change inside callMTP, so read (and dequantize) each
+        // layer's shared K/V once rather than for every depth.
+        var dequantized = [Int: KVCacheSimple]()
+        let sharedKVByLayer: [Gemma4SharedKVState?] = (0 ..< config.numHiddenLayers).map { i in
+            // Pass main model KV cache as sharedKV for cross-attention
+            var sharedKV: Gemma4SharedKVState? = nil
+            if let fullCache = cache {
+                let layerType = model.layers[i].layerType
+                // Assistant layers attend to the main model's last SWA or FA cache
+                // Full-attention layers use the last full-attention cache; SWA uses last SWA cache
+                let mainIdx = layerType == "sliding_attention" ? fullCache.count - 2 : fullCache.count - 1
+                if mainIdx >= 0 {
+                    let cacheElement = fullCache[mainIdx]
+                    if let c = cacheElement as? KVCacheSimple, let k = c.keys, let v = c.values {
+                        // Slice to valid offset (avoid zero-padded buffer positions)
+                        // Clamp to the buffer as the rotating branch does: `offset` counts
+                        // positions seen, which can outrun the allocated key length.
+                        let validLen = min(c.offset - c.compressedOffset, k.dim(2))
+                        let validK = k[0..., 0..., 0 ..< validLen, 0...]  // [B, nKVH, S, headDim]
+                        let validV = v[0..., 0..., 0 ..< validLen, 0...]
+                        sharedKV = .regular(keys: validK, values: validV)
+                    } else if let c = cacheElement as? RotatingKVCache, let k = c.keys, let v = c.values {
+                        let validLen = min(c.offset, k.dim(2))
+                        let validK = k[0..., 0..., 0 ..< validLen, 0...]
+                        let validV = v[0..., 0..., 0 ..< validLen, 0...]
+                        sharedKV = .regular(keys: validK, values: validV)
+                    } else if let c = cacheElement as? QuantizedKVCache {
+                        // kvBits quantized the main cache: dequantize its valid rows, once.
+                        let s = dequantized[mainIdx] ?? c.toUnquantized()
+                        dequantized[mainIdx] = s
+                        if let k = s.keys, let v = s.values {
+                            sharedKV = .regular(keys: k, values: v)
+                        }
+                    }
+                }
+            }
+            return sharedKV
+        }
+
         for _ in 0 ..< mtpDepth {
             // Step A: Concatenate token embedding + backbone hidden state → [B, 1, 3072]
             // HF does torch.cat([last_token_embedding, last_hidden_state], dim=-1)
@@ -1397,31 +1436,7 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
             for i in 0 ..< config.numHiddenLayers {
                 let layer = model.layers[i]
                 
-                // Pass main model KV cache as sharedKV for cross-attention
-                var sharedKV: Gemma4SharedKVState? = nil
-                if let fullCache = cache {
-                    let layerType = model.layers[i].layerType
-                    // Assistant layers attend to the main model's last SWA or FA cache
-                    // Full-attention layers use the last full-attention cache; SWA uses last SWA cache
-                    let mainIdx = layerType == "sliding_attention" ? fullCache.count - 2 : fullCache.count - 1
-                    if mainIdx >= 0 {
-                        let cacheElement = fullCache[mainIdx]
-                        if let c = cacheElement as? KVCacheSimple, let k = c.keys, let v = c.values {
-                            // Slice to valid offset (avoid zero-padded buffer positions)
-                            // Clamp to the buffer as the rotating branch does: `offset` counts
-                            // positions seen, which can outrun the allocated key length.
-                            let validLen = min(c.offset - c.compressedOffset, k.dim(2))
-                            let validK = k[0..., 0..., 0 ..< validLen, 0...]  // [B, nKVH, S, headDim]
-                            let validV = v[0..., 0..., 0 ..< validLen, 0...]
-                            sharedKV = .regular(keys: validK, values: validV)
-                        } else if let c = cacheElement as? RotatingKVCache, let k = c.keys, let v = c.values {
-                            let validLen = min(c.offset, k.dim(2))
-                            let validK = k[0..., 0..., 0 ..< validLen, 0...]
-                            let validV = v[0..., 0..., 0 ..< validLen, 0...]
-                            sharedKV = .regular(keys: validK, values: validV)
-                        }
-                    }
-                }
+                let sharedKV = sharedKVByLayer[i]
                 let (out, _, _) = layer(hAssistant, mask: nil, cache: nil, perLayerInput: nil, sharedKV: sharedKV, positionOffset: assistantPosOffset)
                 hAssistant = out
             }

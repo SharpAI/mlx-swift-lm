@@ -1076,6 +1076,9 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
     /// back into either model yet, so it is deliberately excluded.
     private var mainCommittedPendingTokenCount = 0
     private var draftCommittedPendingTokenCount = 0
+    /// The main model's recurrent state, `y` and model state at the start of the last
+    /// round, so `finalizeGeneration` can rewind unemitted tokens out of a hybrid cache.
+    private var mainRoundStart: (recurrent: [MambaCache.Snapshot], y: LMInput.Text, state: LMOutput.State?)?
 
     // Internal metrics
     public var promptPrefillTime: TimeInterval = 0.0
@@ -1146,9 +1149,10 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             throw KVCacheError(
                 message: "Speculative caches must represent the same processed-token position.")
         }
+        // Per layer: a wrapped sliding window isn't trimmable now but still rewinds.
         guard
-            canTrimPromptCache(mainCacheStorage.cache),
-            canTrimPromptCache(draftCacheStorage.cache)
+            mainCacheStorage.cache.allSatisfy(canRewindCacheLayer),
+            draftCacheStorage.cache.allSatisfy(canRewindCacheLayer)
         else {
             throw KVCacheError(message: "Speculative decoding requires trimmable KV caches.")
         }
@@ -1249,10 +1253,32 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             return
         }
 
-        // Checkpoint Mamba caches before speculation (for rollback on rejection)
-        for layer in mainCache {
-            if let mamba = layer as? MambaCache { mamba.checkpoint() }
+        // A multi-token y or draftY (an unprocessed prompt tail) is fed as a plain step
+        // first, so a round only ever rewinds 1 + numDraft tokens. A TurboKV cache can
+        // rewind only its uncompressed tail.
+        if y.tokens.dim(0) > 1 {
+            let n = y.tokens.dim(0)
+            let head = LMInput.Text(tokens: y.tokens[..<(n - 1)])
+            state = mainModel(head[text: .newAxis], cache: mainCache, state: state).state
+            mainCacheStorage.commitProcessedTokens(head.cacheSequenceLength)
+            y = LMInput.Text(tokens: y.tokens[(n - 1)...])
         }
+        // A 2-token draftY (the last accepted draft plus the final token) stays a
+        // bounded rewind; only a prompt tail is split off.
+        if draftY.tokens.dim(0) > 2 {
+            let n = draftY.tokens.dim(0)
+            let head = LMInput.Text(tokens: draftY.tokens[..<(n - 1)])
+            _ = draftModel(head[text: .newAxis], cache: draftCache, state: nil)
+            draftCacheStorage.commitProcessedTokens(head.cacheSequenceLength)
+            draftY = LMInput.Text(tokens: draftY.tokens[(n - 1)...])
+        }
+
+        // Checkpoint recurrent caches before speculation (for rollback on rejection)
+        let mainRecurrent = recurrentCaches(in: mainCache)
+        for mamba in mainRecurrent + recurrentCaches(in: draftCache) { mamba.checkpoint() }
+        mainRoundStart = mainRecurrent.isEmpty
+            ? nil : (mainRecurrent.map { $0.snapshot() }, y, state)
+        let draftStart = draftY
 
         // Draft generation: autoregressive loop with draft model
         var draftProcessor = processor?.copy()  // Copy to discard later
@@ -1278,6 +1304,7 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
         let verifyTokens = [y.tokens] + draftTokens
         let verifyInput = LMInput.Text(tokens: concatenated(verifyTokens))
         let verifyStart = verifyInput.tokens.dim(0) - (numDraft + 1)
+        let preVerifyState = state
         let mainResult = mainModel(verifyInput[text: .newAxis], cache: mainCache, state: state)
         mainCacheStorage.commitProcessedTokens(verifyInput.cacheSequenceLength)
         let mainLogits = mainResult.logits
@@ -1397,9 +1424,38 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             targetVerified: numDraft + 1
         )
 
-        // Rewind caches for rejected tokens
-        mainCacheStorage.trim(numDraft - accepted)
-        draftCacheStorage.trim(Swift.max(numDraft - accepted - 1, 0))
+        // Rewind rejected tokens per layer, so a wrapped sliding window doesn't keep them.
+        // A recurrent layer can only go back to its checkpoint, so with one the whole
+        // round is rewound and the kept tokens are re-fed (one extra forward per
+        // rejected round, on hybrid models only).
+        let mainRejected = numDraft - accepted
+        if mainRejected > 0, !mainRecurrent.isEmpty {
+            // `y` can be several tokens on the first round (an unprocessed prompt tail).
+            let verified = verifyInput.tokens.dim(0)
+            let trimmed = mainCacheStorage.trimEachLayer(verified)
+            precondition(trimmed == verified || mainCache.isEmpty, "Speculative main rewind was partial")
+            let kept = LMInput.Text(tokens: concatenated([y.tokens] + draftTokens.prefix(accepted)))
+            let refed = mainModel(kept[text: .newAxis], cache: mainCache, state: preVerifyState)
+            mainCacheStorage.commitProcessedTokens(kept.cacheSequenceLength)
+            state = refed.state
+            eval(refed.logits)
+        } else {
+            let trimmed = mainCacheStorage.trimEachLayer(mainRejected)
+            precondition(trimmed == mainRejected || mainCache.isEmpty, "Speculative main rewind was partial")
+        }
+        let draftRejected = Swift.max(numDraft - accepted - 1, 0)
+        if draftRejected > 0, !recurrentCaches(in: draftCache).isEmpty {
+            // The draft processed draftStart and the first numDraft - 1 drafts this round.
+            let fed = draftStart.tokens.dim(0) + numDraft - 1
+            let trimmed = draftCacheStorage.trimEachLayer(fed)
+            precondition(trimmed == fed || draftCache.isEmpty, "Speculative draft rewind was partial")
+            let kept = LMInput.Text(
+                tokens: concatenated([draftStart.tokens] + draftTokens.prefix(accepted)))
+            eval(draftModel(kept[text: .newAxis], cache: draftCache, state: nil).logits)
+            draftCacheStorage.commitProcessedTokens(kept.cacheSequenceLength)
+        } else {
+            draftCacheStorage.trimEachLayer(draftRejected)
+        }
 
         // Apply dynamic cache quantization after rewind
         kvCachePlan.apply(to: mainCacheStorage)
@@ -1462,15 +1518,33 @@ extension SpeculativeTokenIterator: GenerationFinalizingTokenIterator {
         // that timeline, not against per-entry offsets.
         let mainConsumed = Swift.min(pendingIndex, mainCommittedPendingTokenCount)
         let mainLookahead = mainCommittedPendingTokenCount - mainConsumed
-        if mainLookahead > 0 {
-            mainCacheStorage.trim(mainLookahead)
+        if mainLookahead > 0, let start = mainRoundStart {
+            // A recurrent layer can't drop the unemitted tail on its own: rewind the last
+            // round (y + accepted drafts), restore the round-start state and re-feed y
+            // plus the drafts that were emitted.
+            mainCacheStorage.trimEachLayer(1 + mainCommittedPendingTokenCount)
+            for (mamba, snapshot) in zip(recurrentCaches(in: mainCache), start.recurrent) {
+                mamba.restore(snapshot)
+            }
+            let emitted = pendingTokens.prefix(mainConsumed).map { Int32($0) }
+            let kept = LMInput.Text(
+                tokens: concatenated([start.y.tokens, MLXArray(emitted).asType(start.y.tokens.dtype)]))
+            state = mainModel(kept[text: .newAxis], cache: mainCache, state: start.state).state
+            mainCacheStorage.commitProcessedTokens(kept.cacheSequenceLength)
+        } else if mainLookahead > 0 {
+            mainCacheStorage.trimEachLayer(mainLookahead)
         }
 
         let draftConsumed = Swift.min(pendingIndex, draftCommittedPendingTokenCount)
         let draftLookahead = draftCommittedPendingTokenCount - draftConsumed
         if draftLookahead > 0 {
-            draftCacheStorage.trim(draftLookahead)
+            draftCacheStorage.trimEachLayer(draftLookahead)
         }
+
+        // Nothing left to rewind: a second call must not trim again.
+        mainCommittedPendingTokenCount = mainConsumed
+        draftCommittedPendingTokenCount = draftConsumed
+        mainRoundStart = nil
     }
 }
 
@@ -1503,6 +1577,11 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
     // Buffer of accepted tokens from the current speculation round
     private var pendingTokens = [Int]()
     private var pendingIndex = 0
+    /// Accepted drafts of the last round, fed to the cache before they are emitted.
+    private var committedPendingTokenCount = 0
+    /// Recurrent state and `y` at the start of the last round, so `finalizeGeneration`
+    /// can rewind unemitted drafts out of a hybrid cache.
+    private var roundStart: (recurrent: [MambaCache.Snapshot], y: LMInput.Text)?
 
     // Internal metrics
     public var acceptedDraftTokens: Int = 0
@@ -1522,7 +1601,9 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         self.cache = try cache ?? model.newCache(parameters: parameters)
         self.mtpCaches = model.makeMTPCaches(parameters: parameters)
         
-        guard canTrimPromptCache(self.cache) else {
+        // A restored prompt cache can hold a wrapped sliding window, which isn't
+        // trimmable now but still rewinds per layer.
+        guard self.cache.allSatisfy(canRewindCacheLayer) else {
             throw KVCacheError(message: "MTP Speculative decoding requires trimmable KV caches.")
         }
 
@@ -1607,6 +1688,8 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
 
             // Save future MTP logits for next iteration (slice to single position)
             self.mtpLogits = mtpResult.count > 1 ? mtpResult.dropFirst().map { $0[0..., -1, 0...] } : nil
+            committedPendingTokenCount = 0
+            roundStart = nil
 
             // Force evaluation of MTP state to prevent graph collapse
             var evalArrays = [token]
@@ -1621,9 +1704,11 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         }
 
         // Verification: main model processes proposals in one pass
-        for layer in cache {
-            if let mamba = layer as? MambaCache { mamba.checkpoint() }
+        let recurrent = recurrentCaches(in: cache)
+        for mamba in recurrent {
+            mamba.checkpoint()
         }
+        roundStart = recurrent.isEmpty ? nil : (recurrent.map { $0.snapshot() }, y)
 
         let verifyTokens = [y.tokens] + draftTokens
         let verifyInput = LMInput.Text(tokens: concatenated(verifyTokens))
@@ -1741,14 +1826,28 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
             processor?.didSample(token: finalTokenOut)
             pendingTokens.append(finalTokenOut.item(Int.self))
         }
+        committedPendingTokenCount = accepted
         self.acceptedDraftTokens += accepted
         self.totalDraftTokens += draftTokens.count
 
-        // Rewind caches for rejected tokens
         let rejectedCount = draftTokens.count - accepted
-        trimPromptCache(cache, numTokens: rejectedCount)
+        if rejectedCount > 0, !recurrentCaches(in: cache).isEmpty {
+            // A recurrent layer can't drop only the rejected tail: restore every layer to
+            // before the verify (Mamba from its checkpoint), then re-feed what was kept.
+            // This costs one extra forward per rejected round, on hybrid models only.
+            let verified = verifyInput.tokens.dim(0)
+            let trimmed = trimEachCacheLayer(cache, numTokens: verified)
+            precondition(trimmed == verified || cache.isEmpty, "MTP rewind was partial")
+            let kept = concatenated([y.tokens] + draftTokens.prefix(accepted))
+            eval(model(kept[.newAxis], cache: cache))
+        } else {
+            // Per layer: `trimPromptCache` is all-or-nothing and skipped every layer once a
+            // sliding-window cache wrapped. trim(0) also clears a Mamba checkpoint.
+            let trimmed = trimEachCacheLayer(cache, numTokens: rejectedCount)
+            precondition(trimmed == rejectedCount || cache.isEmpty, "MTP rewind was partial")
+        }
         for mtpCache in mtpCaches {
-            trimPromptCache(mtpCache, numTokens: rejectedCount)
+            trimEachCacheLayer(mtpCache, numTokens: rejectedCount)
         }
 
         // Apply dynamic cache quantization after rewind
@@ -1805,6 +1904,33 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         pendingIndex += 1
         tokenCount += 1
         return token
+    }
+}
+
+extension MTPTokenIterator: GenerationFinalizingTokenIterator {
+    /// Rewinds drafts the last round fed to the caches but generation never emitted.
+    mutating func finalizeGeneration() {
+        let consumed = Swift.min(pendingIndex, committedPendingTokenCount)
+        let lookahead = committedPendingTokenCount - consumed
+        if lookahead > 0, let start = roundStart {
+            // Hybrid: rewind the round, restore the recurrent state, re-feed what was emitted.
+            trimEachCacheLayer(cache, numTokens: 1 + committedPendingTokenCount)
+            for (mamba, snapshot) in zip(recurrentCaches(in: cache), start.recurrent) {
+                mamba.restore(snapshot)
+            }
+            let emitted = MLXArray(pendingTokens.prefix(consumed).map { Int32($0) })
+            let kept = concatenated([start.y.tokens, emitted.asType(start.y.tokens.dtype)])
+            eval(model(kept[.newAxis], cache: cache))
+        } else if lookahead > 0 {
+            trimEachCacheLayer(cache, numTokens: lookahead)
+        }
+        if lookahead > 0 {
+            for mtpCache in mtpCaches {
+                trimEachCacheLayer(mtpCache, numTokens: lookahead)
+            }
+        }
+        committedPendingTokenCount = consumed
+        roundStart = nil
     }
 }
 
