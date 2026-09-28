@@ -730,8 +730,10 @@ extension MLXTestingSuite {
     func testSpeculativeFinalizeRewindsWrappedWindow() throws {
         let (main, _) = try makeWrappingMTPPair(seed: 79)
         let (draft, _) = try makeWrappingMTPPair(seed: 79)
-        let perturbed = draft.parameters().flattened().map { key, value in
-            (key, value + 0.02 * MLXRandom.normal(value.shape).asType(value.dtype))
+        let perturbed = withRandomState(MLXRandom.RandomState(seed: 80)) {
+            draft.parameters().flattened().map { key, value in
+                (key, value + 0.02 * MLXRandom.normal(value.shape).asType(value.dtype))
+            }
         }
         draft.update(parameters: ModuleParameters.unflattened(perturbed))
         eval(draft)
@@ -754,6 +756,12 @@ extension MLXTestingSuite {
             #expect(after == Swift.min(before, tokens.count), "stop \(stop)")
             #expect(mainCache[0].offset == mainCache[1].offset)
             #expect(iter.mainCacheStorage.processedTokenCount == mainCache[1].offset)
+            // The draft trails main by at most the one token it hasn't been fed yet.
+            #expect(draftCache[0].offset == draftCache[1].offset)
+            #expect(iter.draftCacheStorage.processedTokenCount == draftCache[1].offset)
+            #expect(
+                draftCache[1].offset == mainCache[1].offset
+                    || draftCache[1].offset == mainCache[1].offset - 1, "stop \(stop)")
         }
         #expect(sawLookahead)
     }

@@ -1028,6 +1028,13 @@ public struct TokenIterator: TokenIteratorProtocol {
 /// Tokens are integers that can be passed through a `Tokenizer` or ``StreamingDetokenizer`` to produce Strings.
 ///
 /// Port of `speculative_generate_step()` from https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/generate.py
+/// Speculative decoding can't run with the given models or settings.
+struct SpeculativeDecodingError: Error, LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
+}
+
 public struct SpeculativeTokenIterator: TokenIteratorProtocol {
 
     var y: LMInput.Text
@@ -1079,6 +1086,8 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
     /// The main model's recurrent state, `y` and model state at the start of the last
     /// round, so `finalizeGeneration` can rewind unemitted tokens out of a hybrid cache.
     private var mainRoundStart: (recurrent: [MambaCache.Snapshot], y: LMInput.Text, state: LMOutput.State?)?
+    /// The draft model's recurrent state and `draftY` at the start of the last round.
+    private var draftRoundStart: (recurrent: [MambaCache.Snapshot], y: LMInput.Text)?
 
     // Internal metrics
     public var promptPrefillTime: TimeInterval = 0.0
@@ -1155,6 +1164,25 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             draftCacheStorage.cache.allSatisfy(canRewindCacheLayer)
         else {
             throw KVCacheError(message: "Speculative decoding requires trimmable KV caches.")
+        }
+        // A hybrid draft rewinds up to numDraftTokens + 1 single-token writes, which a
+        // wrapped sliding window must still hold past its pinned prefix.
+        if !recurrentCaches(in: draftCacheStorage.cache).isEmpty,
+            let rows = minRewindableWindow(draftCacheStorage.cache), rows < numDraftTokens + 1
+        {
+            throw KVCacheError(
+                message:
+                    "A hybrid draft model's sliding-window cache must rewind \(numDraftTokens + 1) tokens, but only \(rows) fit. Raise maxKVSize or lower numDraftTokens."
+            )
+        }
+        // Verification reads one logit row per draft plus the bonus token.
+        if let windowed = mainModel as? any TrailingLogitsLanguageModel,
+            let kept = windowed.logitPositionsKept, kept < numDraftTokens + 1
+        {
+            throw SpeculativeDecodingError(
+                message:
+                    "The main model returns logits for \(kept) position(s); verifying \(numDraftTokens) draft tokens needs \(numDraftTokens + 1)."
+            )
         }
 
         self.y = input.text
@@ -1279,6 +1307,10 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
         mainRoundStart = mainRecurrent.isEmpty
             ? nil : (mainRecurrent.map { $0.snapshot() }, y, state)
         let draftStart = draftY
+        let draftRecurrent = recurrentCaches(in: draftCache)
+        draftRoundStart =
+            draftRecurrent.isEmpty
+            ? nil : (draftRecurrent.map { $0.snapshot() }, draftStart)
 
         // Draft generation: autoregressive loop with draft model
         var draftProcessor = processor?.copy()  // Copy to discard later
@@ -1537,7 +1569,20 @@ extension SpeculativeTokenIterator: GenerationFinalizingTokenIterator {
 
         let draftConsumed = Swift.min(pendingIndex, draftCommittedPendingTokenCount)
         let draftLookahead = draftCommittedPendingTokenCount - draftConsumed
-        if draftLookahead > 0 {
+        if draftLookahead > 0, let start = draftRoundStart {
+            // The draft holds draftStart plus the committed drafts: rewind them the same way.
+            draftCacheStorage.trimEachLayer(start.y.tokens.dim(0) + draftCommittedPendingTokenCount)
+            for (mamba, snapshot) in zip(recurrentCaches(in: draftCache), start.recurrent) {
+                mamba.restore(snapshot)
+            }
+            let emitted = pendingTokens.prefix(draftConsumed).map { Int32($0) }
+            let kept = LMInput.Text(
+                tokens: concatenated([
+                    start.y.tokens, MLXArray(emitted).asType(start.y.tokens.dtype),
+                ]))
+            eval(draftModel(kept[text: .newAxis], cache: draftCache, state: nil).logits)
+            draftCacheStorage.commitProcessedTokens(kept.cacheSequenceLength)
+        } else if draftLookahead > 0 {
             draftCacheStorage.trimEachLayer(draftLookahead)
         }
 
@@ -1545,6 +1590,7 @@ extension SpeculativeTokenIterator: GenerationFinalizingTokenIterator {
         mainCommittedPendingTokenCount = mainConsumed
         draftCommittedPendingTokenCount = draftConsumed
         mainRoundStart = nil
+        draftRoundStart = nil
     }
 }
 
@@ -1688,8 +1734,6 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
 
             // Save future MTP logits for next iteration (slice to single position)
             self.mtpLogits = mtpResult.count > 1 ? mtpResult.dropFirst().map { $0[0..., -1, 0...] } : nil
-            committedPendingTokenCount = 0
-            roundStart = nil
 
             // Force evaluation of MTP state to prevent graph collapse
             var evalArrays = [token]
@@ -1891,9 +1935,12 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
             return token
         }
 
-        // Run a new speculation round
+        // Run a new speculation round. Nothing is committed until it verifies, even if
+        // it returns early.
         pendingTokens.removeAll(keepingCapacity: true)
         pendingIndex = 0
+        committedPendingTokenCount = 0
+        roundStart = nil
         speculateRound()
 
         if pendingTokens.isEmpty {

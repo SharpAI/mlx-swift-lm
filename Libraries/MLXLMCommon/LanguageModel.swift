@@ -461,6 +461,12 @@ public protocol MTPLanguageModel: LanguageModel {
     func makeMTPCaches(parameters: GenerateParameters?) -> [[KVCache]]
 }
 
+/// A model whose `callAsFunction(_:cache:state:)` returns logits for only its last positions.
+public protocol TrailingLogitsLanguageModel: LanguageModel {
+    /// How many trailing positions get logits, or nil for all of them.
+    var logitPositionsKept: Int? { get }
+}
+
 /// A protocol for MTP language models that act as independent draft models but require a reference to the main model (e.g. Gemma 4 Assistant).
 public protocol DualModelMTP: MTPLanguageModel {
     var mainModelRef: (any BaseLanguageModel)? { get set }

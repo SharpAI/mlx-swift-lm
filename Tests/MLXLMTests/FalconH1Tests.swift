@@ -33,6 +33,29 @@ final class FalconH1Tests: XCTestCase {
         return try JSONDecoder.json5().decode(FalconH1Configuration.self, from: json)
     }
 
+    // MARK: - Speculative decoding
+
+    /// Verification reads a logit row per draft token plus the bonus token, so a main
+    /// model that keeps fewer trailing positions is rejected up front.
+    func testSpeculativeDecodingNeedsLogitsForEveryVerifiedPosition() throws {
+        func run(numLogitsToKeep: Int) throws -> Int {
+            let model = FalconH1Model(try tinyConfiguration(numLogitsToKeep: numLogitsToKeep))
+            let draft = FalconH1Model(try tinyConfiguration(numLogitsToKeep: numLogitsToKeep))
+            eval(model, draft)
+            var iter = try SpeculativeTokenIterator(
+                input: LMInput(tokens: MLXArray([1, 2, 3, 4])), mainModel: model,
+                draftModel: draft, parameters: GenerateParameters(maxTokens: 6, temperature: 0),
+                numDraftTokens: 2)
+            var count = 0
+            while iter.next() != nil { count += 1 }
+            return count
+        }
+        XCTAssertThrowsError(try run(numLogitsToKeep: 1))
+        XCTAssertThrowsError(try run(numLogitsToKeep: 2))
+        XCTAssertEqual(try run(numLogitsToKeep: 3), 6)
+        XCTAssertEqual(try run(numLogitsToKeep: 0), 6)
+    }
+
     // MARK: - Key scaling
 
     func testSanitizeScalesQKVEquivalently() throws {

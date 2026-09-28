@@ -2717,6 +2717,16 @@ package func canRewindCacheLayer(_ entry: KVCache) -> Bool {
     return entry.isTrimmable || entry is RotatingKVCache
 }
 
+/// The fewest rows any sliding-window entry keeps past its pinned prefix, which bounds
+/// how far a wrapped ring of single-token writes can rewind; nil without one.
+package func minRewindableWindow(_ cache: [KVCache]) -> Int? {
+    cache.compactMap { entry -> Int? in
+        if let list = entry as? CacheList { return minRewindableWindow(list.children) }
+        guard let ring = entry as? RotatingKVCache, let maxSize = ring.maxSize else { return nil }
+        return maxSize - ring.preservedPrefixTokens
+    }.min()
+}
+
 /// Trim each entry by `numTokens` on its own. Unlike `trimPromptCache`, one wrapped
 /// sliding-window layer doesn't stop the rest from rewinding.
 /// Returns the count trimmed from the first non-recurrent entry.
