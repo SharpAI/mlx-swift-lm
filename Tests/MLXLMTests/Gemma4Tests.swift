@@ -1,7 +1,7 @@
 import Foundation
 import MLX
 import MLXLLM
-import MLXLMCommon
+@testable import MLXLMCommon
 import MLXNN
 import Testing
 
@@ -697,7 +697,7 @@ extension MLXTestingSuite {
         }
     }
 
-    /// Ids stay below vocab_size_per_layer_input (10), the per-layer embedding size.
+    /// A short prompt that wraps the 4-token sliding window.
     private let wrappingPrompt = MLXArray((0 ..< 12).map { Int32($0 % 9 + 1) })
 
     /// Rejected drafts must leave the cache once a sliding-window layer has wrapped;
@@ -721,6 +721,41 @@ extension MLXTestingSuite {
         #expect(!cache[0].isTrimmable)
         #expect(cache[0].offset == cache[1].offset)
         #expect(cache[1].offset <= wrappingPrompt.size + maxTokens)
+    }
+
+    /// Draft-model decoding on a pure-attention model whose sliding window has wrapped:
+    /// finalize must rewind the unemitted lookahead from every layer (the storage's
+    /// all-or-nothing trim refuses the wrapped ring) and keep the timeline in step.
+    @Test("Gemma4 speculative — finalize rewinds a wrapped sliding window")
+    func testSpeculativeFinalizeRewindsWrappedWindow() throws {
+        let (main, _) = try makeWrappingMTPPair(seed: 79)
+        let (draft, _) = try makeWrappingMTPPair(seed: 79)
+        let perturbed = draft.parameters().flattened().map { key, value in
+            (key, value + 0.02 * MLXRandom.normal(value.shape).asType(value.dtype))
+        }
+        draft.update(parameters: ModuleParameters.unflattened(perturbed))
+        eval(draft)
+        let params = GenerateParameters(maxTokens: 24, temperature: 0.0)
+        var sawLookahead = false
+        for stop in 2 ... 10 {
+            let mainCache = try main.newCache(parameters: params)
+            let draftCache = try draft.newCache(parameters: params)
+            var iter = try SpeculativeTokenIterator(
+                input: LMInput(tokens: wrappingPrompt), mainModel: main, draftModel: draft,
+                mainCache: mainCache, draftCache: draftCache, parameters: params,
+                numDraftTokens: 3)
+            var tokens = [Int]()
+            while tokens.count < stop, let t = iter.next() { tokens.append(t) }
+            #expect(!mainCache[0].isTrimmable)
+            let before = mainCache[1].offset - wrappingPrompt.size
+            if before > tokens.count { sawLookahead = true }
+            iter.finalizeGeneration()
+            let after = mainCache[1].offset - wrappingPrompt.size
+            #expect(after == Swift.min(before, tokens.count), "stop \(stop)")
+            #expect(mainCache[0].offset == mainCache[1].offset)
+            #expect(iter.mainCacheStorage.processedTokenCount == mainCache[1].offset)
+        }
+        #expect(sawLookahead)
     }
 
     /// A prompt-cache hit can restore a wrapped sliding window. It isn't trimmable

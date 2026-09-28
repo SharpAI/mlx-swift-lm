@@ -603,6 +603,10 @@ extension MLXTestingSuite {
                 simple.turboMinActivationTokens = 300
             }
             let draftCache = try draft.newCache(parameters: params)
+            for case let simple as KVCacheSimple in draftCache {
+                simple.turboQuantEnabled = true
+                simple.turboMinActivationTokens = 300
+            }
             var iter = try SpeculativeTokenIterator(
                 input: LMInput(tokens: prompt), mainModel: main, draftModel: draft,
                 mainCache: mainCache, draftCache: draftCache, parameters: params,
@@ -639,7 +643,8 @@ extension MLXTestingSuite {
         }
 
         // 2.7g — Stopping early leaves accepted drafts committed but unemitted. Finalize
-        // must take them out of a hybrid cache's recurrent state too, not just attention.
+        // must take them out of a hybrid cache's recurrent state too, not just attention,
+        // keep the storage timeline in step, and do nothing when called again.
         @Test("SpeculativeTokenIterator finalize rewinds unemitted tokens from a hybrid cache")
         func testSpeculativeIteratorHybridFinalize() throws {
             let (main, draft) = try makePartlyAgreeingPair(seed: 75)
@@ -655,15 +660,55 @@ extension MLXTestingSuite {
                     numDraftTokens: 3)
                 var tokens = [Int]()
                 while tokens.count < stop, let t = iter.next() { tokens.append(t) }
-                let attention = { mainCache.first { !($0 is MambaCache) }!.offset }
-                if attention() - prompt.size > tokens.count { sawLookahead = true }
+                let consumed = { mainCache.first { !($0 is MambaCache) }!.offset - prompt.size }
+                let before = consumed()
+                if before > tokens.count { sawLookahead = true }
                 iter.finalizeGeneration()
-                #expect(attention() - prompt.size <= tokens.count)
+                #expect(consumed() == Swift.min(before, tokens.count), "stop \(stop)")
+                #expect(iter.mainCacheStorage.processedTokenCount == consumed() + prompt.size)
+                #expect(
+                    iter.draftCacheStorage.processedTokenCount
+                        == draftCache.first { !($0 is MambaCache) }!.offset)
                 expectSameCache(
                     try referenceCache(
-                        main, prompt: prompt, tokens: tokens.prefix(attention() - prompt.size),
-                        parameters: params),
+                        main, prompt: prompt, tokens: tokens.prefix(consumed()), parameters: params),
                     mainCache, "main stop \(stop)")
+                let after = consumed()
+                iter.finalizeGeneration()
+                #expect(consumed() == after, "a second finalize must not trim again")
+            }
+            #expect(sawLookahead)
+        }
+
+        // 2.7h — MTP: stopping early leaves verified drafts in the cache; finalize must
+        // rewind them, from the recurrent state too.
+        @Test("MTPTokenIterator finalize rewinds unemitted drafts from a hybrid cache")
+        func testMTPIteratorHybridFinalize() throws {
+            let trunk = withRandomState(MLXRandom.RandomState(seed: 78)) {
+                let model = Qwen35TextModel(try! makeQwen35TextConfig())
+                eval(model)
+                return model
+            }
+            let model = ConstantDraftingModel(trunk)
+            let prompt = MLXArray([1, 2, 3, 4])
+            let params = GenerateParameters(maxTokens: 16, temperature: 0.0)
+            var sawLookahead = false
+            for stop in 2 ... 8 {
+                let cache = try trunk.newCache(parameters: params)
+                var iter = try MTPTokenIterator(
+                    input: LMInput(tokens: prompt), model: model, cache: cache,
+                    parameters: params, numMTPTokens: 2)
+                var tokens = [Int]()
+                while tokens.count < stop, let t = iter.next() { tokens.append(t) }
+                let consumed = { cache.first { !($0 is MambaCache) }!.offset - prompt.size }
+                let before = consumed()
+                if before > tokens.count { sawLookahead = true }
+                iter.finalizeGeneration()
+                #expect(consumed() == Swift.min(before, tokens.count), "stop \(stop)")
+                expectSameCache(
+                    try referenceCache(
+                        trunk, prompt: prompt, tokens: tokens.prefix(consumed()), parameters: params),
+                    cache, "mtp stop \(stop)")
             }
             #expect(sawLookahead)
         }

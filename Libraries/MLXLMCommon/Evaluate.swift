@@ -1263,10 +1263,12 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             mainCacheStorage.commitProcessedTokens(head.cacheSequenceLength)
             y = LMInput.Text(tokens: y.tokens[(n - 1)...])
         }
-        if draftY.tokens.dim(0) > 1 {
+        // A 2-token draftY (the last accepted draft plus the final token) stays a
+        // bounded rewind; only a prompt tail is split off.
+        if draftY.tokens.dim(0) > 2 {
             let n = draftY.tokens.dim(0)
             let head = LMInput.Text(tokens: draftY.tokens[..<(n - 1)])
-            eval(draftModel(head[text: .newAxis], cache: draftCache, state: nil).logits)
+            _ = draftModel(head[text: .newAxis], cache: draftCache, state: nil)
             draftCacheStorage.commitProcessedTokens(head.cacheSequenceLength)
             draftY = LMInput.Text(tokens: draftY.tokens[(n - 1)...])
         }
@@ -1444,7 +1446,9 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
         let draftRejected = Swift.max(numDraft - accepted - 1, 0)
         if draftRejected > 0, !recurrentCaches(in: draftCache).isEmpty {
             // The draft processed draftStart and the first numDraft - 1 drafts this round.
-            draftCacheStorage.trimEachLayer(draftStart.tokens.dim(0) + numDraft - 1)
+            let fed = draftStart.tokens.dim(0) + numDraft - 1
+            let trimmed = draftCacheStorage.trimEachLayer(fed)
+            precondition(trimmed == fed || draftCache.isEmpty, "Speculative draft rewind was partial")
             let kept = LMInput.Text(
                 tokens: concatenated([draftStart.tokens] + draftTokens.prefix(accepted)))
             eval(draftModel(kept[text: .newAxis], cache: draftCache, state: nil).logits)
@@ -1536,6 +1540,11 @@ extension SpeculativeTokenIterator: GenerationFinalizingTokenIterator {
         if draftLookahead > 0 {
             draftCacheStorage.trimEachLayer(draftLookahead)
         }
+
+        // Nothing left to rewind: a second call must not trim again.
+        mainCommittedPendingTokenCount = mainConsumed
+        draftCommittedPendingTokenCount = draftConsumed
+        mainRoundStart = nil
     }
 }
 
@@ -1568,6 +1577,11 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
     // Buffer of accepted tokens from the current speculation round
     private var pendingTokens = [Int]()
     private var pendingIndex = 0
+    /// Accepted drafts of the last round, fed to the cache before they are emitted.
+    private var committedPendingTokenCount = 0
+    /// Recurrent state and `y` at the start of the last round, so `finalizeGeneration`
+    /// can rewind unemitted drafts out of a hybrid cache.
+    private var roundStart: (recurrent: [MambaCache.Snapshot], y: LMInput.Text)?
 
     // Internal metrics
     public var acceptedDraftTokens: Int = 0
@@ -1674,6 +1688,8 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
 
             // Save future MTP logits for next iteration (slice to single position)
             self.mtpLogits = mtpResult.count > 1 ? mtpResult.dropFirst().map { $0[0..., -1, 0...] } : nil
+            committedPendingTokenCount = 0
+            roundStart = nil
 
             // Force evaluation of MTP state to prevent graph collapse
             var evalArrays = [token]
@@ -1688,9 +1704,11 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         }
 
         // Verification: main model processes proposals in one pass
-        for mamba in recurrentCaches(in: cache) {
+        let recurrent = recurrentCaches(in: cache)
+        for mamba in recurrent {
             mamba.checkpoint()
         }
+        roundStart = recurrent.isEmpty ? nil : (recurrent.map { $0.snapshot() }, y)
 
         let verifyTokens = [y.tokens] + draftTokens
         let verifyInput = LMInput.Text(tokens: concatenated(verifyTokens))
@@ -1808,6 +1826,7 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
             processor?.didSample(token: finalTokenOut)
             pendingTokens.append(finalTokenOut.item(Int.self))
         }
+        committedPendingTokenCount = accepted
         self.acceptedDraftTokens += accepted
         self.totalDraftTokens += draftTokens.count
 
@@ -1885,6 +1904,33 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         pendingIndex += 1
         tokenCount += 1
         return token
+    }
+}
+
+extension MTPTokenIterator: GenerationFinalizingTokenIterator {
+    /// Rewinds drafts the last round fed to the caches but generation never emitted.
+    mutating func finalizeGeneration() {
+        let consumed = Swift.min(pendingIndex, committedPendingTokenCount)
+        let lookahead = committedPendingTokenCount - consumed
+        if lookahead > 0, let start = roundStart {
+            // Hybrid: rewind the round, restore the recurrent state, re-feed what was emitted.
+            trimEachCacheLayer(cache, numTokens: 1 + committedPendingTokenCount)
+            for (mamba, snapshot) in zip(recurrentCaches(in: cache), start.recurrent) {
+                mamba.restore(snapshot)
+            }
+            let emitted = MLXArray(pendingTokens.prefix(consumed).map { Int32($0) })
+            let kept = concatenated([start.y.tokens, emitted.asType(start.y.tokens.dtype)])
+            eval(model(kept[.newAxis], cache: cache))
+        } else if lookahead > 0 {
+            trimEachCacheLayer(cache, numTokens: lookahead)
+        }
+        if lookahead > 0 {
+            for mtpCache in mtpCaches {
+                trimEachCacheLayer(mtpCache, numTokens: lookahead)
+            }
+        }
+        committedPendingTokenCount = consumed
+        roundStart = nil
     }
 }
 
