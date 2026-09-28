@@ -674,11 +674,10 @@ extension MLXTestingSuite {
         #expect(count == 8)
     }
 
-    /// Rejected drafts must leave the cache once a sliding-window layer has wrapped.
-    /// `trimPromptCache` skipped every layer then, so the full-attention cache kept
-    /// growing past the tokens actually generated.
-    @Test("Gemma4 MTP — rejected drafts are rolled back after the sliding window wraps")
-    func testMTPTokenIteratorRollsBackAfterSlidingWindowWraps() throws {
+    /// A tiny main model with a 4-token sliding window, so a 12-token prompt wraps it.
+    private func makeWrappingMTPPair(seed: UInt64, sharedKVAssistant: Bool = false) throws
+        -> (Gemma4Model, Gemma4AssistantModel)
+    {
         var config = try JSONSerialization.jsonObject(with: makeTinyConfigData()) as! [String: Any]
         var text = config["text_config"] as! [String: Any]
         text["sliding_window"] = 4
@@ -687,27 +686,76 @@ extension MLXTestingSuite {
         let mainCfg = try JSONDecoder().decode(
             Gemma4Configuration.self, from: JSONSerialization.data(withJSONObject: config))
         let asstCfg = try JSONDecoder().decode(
-            Gemma4Configuration.self, from: makeTinyAssistantConfigData())
-        let mainModel = Gemma4Model(mainCfg)
-        let asstModel = Gemma4AssistantModel(asstCfg)
-        asstModel.mainModelRef = mainModel
+            Gemma4Configuration.self,
+            from: sharedKVAssistant ? makeTinySharedKVAssistantConfigData() : makeTinyAssistantConfigData())
+        return withRandomState(MLXRandom.RandomState(seed: seed)) {
+            let mainModel = Gemma4Model(mainCfg)
+            let asstModel = Gemma4AssistantModel(asstCfg)
+            asstModel.mainModelRef = mainModel
+            eval(mainModel, asstModel)
+            return (mainModel, asstModel)
+        }
+    }
 
+    /// Ids stay below vocab_size_per_layer_input (10), the per-layer embedding size.
+    private let wrappingPrompt = MLXArray((0 ..< 12).map { Int32($0 % 9 + 1) })
+
+    /// Rejected drafts must leave the cache once a sliding-window layer has wrapped;
+    /// `trimPromptCache` skipped every layer then.
+    @Test("Gemma4 MTP — rejected drafts are rolled back after the sliding window wraps")
+    func testMTPTokenIteratorRollsBackAfterSlidingWindowWraps() throws {
+        let (mainModel, asstModel) = try makeWrappingMTPPair(seed: 72)
         let maxTokens = 24
         let params = GenerateParameters(maxTokens: maxTokens, temperature: 0.0)
-        let prompt = MLXArray(Int32(1) ... Int32(12))
+
         let cache = try mainModel.newCache(parameters: params)
         #expect(cache[0] is RotatingKVCache)
+        var iterator = try MTPTokenIterator(
+            input: LMInput(tokens: wrappingPrompt), model: asstModel, cache: cache,
+            parameters: params, numMTPTokens: 2)
+        var mtpTokens = [Int]()
+        while let t = iterator.next() { mtpTokens.append(t) }
+
+        #expect(mtpTokens.count == maxTokens)
+        #expect(iterator.totalDraftTokens > iterator.acceptedDraftTokens)
+        #expect(!cache[0].isTrimmable)
+        #expect(cache[0].offset == cache[1].offset)
+        #expect(cache[1].offset <= wrappingPrompt.size + maxTokens)
+    }
+
+    /// A prompt-cache hit can restore a wrapped sliding window. It isn't trimmable
+    /// at that moment, but it still rewinds per layer, so init must accept it.
+    @Test("Gemma4 MTP — init accepts a restored cache whose sliding window has wrapped")
+    func testMTPTokenIteratorAcceptsWrappedRestoredCache() throws {
+        let (mainModel, asstModel) = try makeWrappingMTPPair(seed: 73)
+        let params = GenerateParameters(maxTokens: 4, temperature: 0.0)
+        let cache = try mainModel.newCache(parameters: params)
+        eval(mainModel(wrappingPrompt[.newAxis], cache: cache))
+        #expect(!cache[0].isTrimmable)
 
         var iterator = try MTPTokenIterator(
-            input: LMInput(tokens: prompt), model: asstModel, cache: cache,
-            parameters: params, numMTPTokens: 3)
+            input: LMInput(tokens: MLXArray([Int32(3)])), model: asstModel, cache: cache,
+            parameters: params, numMTPTokens: 2)
         var count = 0
         while iterator.next() != nil { count += 1 }
+        #expect(count == 4)
+    }
 
-        #expect(count == maxTokens)
-        #expect(iterator.totalDraftTokens > iterator.acceptedDraftTokens)
-        // The cache holds the prompt and every emitted token except the last.
-        #expect(cache[1].offset <= prompt.size + maxTokens)
+    /// With kvBits the main full-attention cache becomes a QuantizedKVCache. An all-KV-shared
+    /// assistant has no K/V of its own, so its shared-KV lookup must read that cache.
+    @Test("Gemma4 MTP — assistant reads a quantized main KV cache")
+    func testMTPTokenIteratorWithQuantizedKVCache() throws {
+        let (mainModel, asstModel) = try makeWrappingMTPPair(seed: 74, sharedKVAssistant: true)
+        let params = GenerateParameters(
+            maxTokens: 6, kvBits: 8, quantizedKVStart: 0, temperature: 0.0)
+        let cache = try mainModel.newCache(parameters: params)
+        var iterator = try MTPTokenIterator(
+            input: LMInput(tokens: wrappingPrompt), model: asstModel, cache: cache,
+            parameters: params, numMTPTokens: 2)
+        var tokens = [Int]()
+        while let t = iterator.next() { tokens.append(t) }
+        #expect(tokens.count == 6)
+        #expect(tokens.allSatisfy { $0 >= 0 && $0 < 100 })
     }
     }
 }

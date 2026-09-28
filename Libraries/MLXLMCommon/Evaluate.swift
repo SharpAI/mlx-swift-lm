@@ -1397,9 +1397,9 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             targetVerified: numDraft + 1
         )
 
-        // Rewind caches for rejected tokens
-        mainCacheStorage.trim(numDraft - accepted)
-        draftCacheStorage.trim(Swift.max(numDraft - accepted - 1, 0))
+        // Rewind rejected tokens per layer, so a wrapped sliding window doesn't keep them.
+        mainCacheStorage.trimEachLayer(numDraft - accepted)
+        draftCacheStorage.trimEachLayer(Swift.max(numDraft - accepted - 1, 0))
 
         // Apply dynamic cache quantization after rewind
         kvCachePlan.apply(to: mainCacheStorage)
@@ -1522,7 +1522,9 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         self.cache = try cache ?? model.newCache(parameters: parameters)
         self.mtpCaches = model.makeMTPCaches(parameters: parameters)
         
-        guard canTrimPromptCache(self.cache) else {
+        // A restored prompt cache can hold a wrapped sliding window, which isn't
+        // trimmable now but still rewinds per layer.
+        guard self.cache.allSatisfy(canRewindCacheLayer) else {
             throw KVCacheError(message: "MTP Speculative decoding requires trimmable KV caches.")
         }
 
@@ -1744,14 +1746,20 @@ public struct MTPTokenIterator: TokenIteratorProtocol {
         self.acceptedDraftTokens += accepted
         self.totalDraftTokens += draftTokens.count
 
-        // Trim each layer. `trimPromptCache` is all-or-nothing, so it skipped every
-        // layer once a sliding-window cache wrapped and left the rejected drafts in.
         let rejectedCount = draftTokens.count - accepted
-        if rejectedCount > 0 {
-            for layer in cache { layer.trim(rejectedCount) }
-            for mtpCache in mtpCaches {
-                for layer in mtpCache { layer.trim(rejectedCount) }
-            }
+        if rejectedCount > 0, cache.contains(where: { $0 is MambaCache }) {
+            // A recurrent layer can't drop only the rejected tail: restore every layer to
+            // before the verify (Mamba from its checkpoint), then re-feed what was kept.
+            trimEachCacheLayer(cache, numTokens: draftTokens.count + 1)
+            let kept = concatenated([y.tokens] + draftTokens.prefix(accepted))
+            eval(model(kept[.newAxis], cache: cache))
+        } else {
+            // Per layer: `trimPromptCache` is all-or-nothing and skipped every layer once a
+            // sliding-window cache wrapped. trim(0) also clears a Mamba checkpoint.
+            trimEachCacheLayer(cache, numTokens: rejectedCount)
+        }
+        for mtpCache in mtpCaches {
+            trimEachCacheLayer(mtpCache, numTokens: rejectedCount)
         }
 
         // Apply dynamic cache quantization after rewind

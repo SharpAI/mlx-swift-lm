@@ -1419,6 +1419,12 @@ public class Gemma4AssistantModel: Module, LLMModel, DualModelMTP, KVCacheDimens
                             let validK = k[0..., 0..., 0 ..< validLen, 0...]
                             let validV = v[0..., 0..., 0 ..< validLen, 0...]
                             sharedKV = .regular(keys: validK, values: validV)
+                        } else if let c = cacheElement as? QuantizedKVCache {
+                            // kvBits quantized the main cache: dequantize its valid rows.
+                            let s = c.toUnquantized()
+                            if let k = s.keys, let v = s.values {
+                                sharedKV = .regular(keys: k, values: v)
+                            }
                         }
                     }
                 }

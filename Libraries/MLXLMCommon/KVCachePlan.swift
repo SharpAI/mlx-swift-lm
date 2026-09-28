@@ -195,6 +195,21 @@ package final class KVCacheStorage {
         return trimmed
     }
 
+    /// Like `trim`, but each entry on its own, so a wrapped sliding-window entry doesn't
+    /// stop the others. For speculative rewinds, where a stale tail costs correctness.
+    @discardableResult
+    package func trimEachLayer(_ count: Int) -> Int {
+        precondition(count >= 0, "Trim count cannot be negative")
+        precondition(!roundIsOpen, "cannot trim while a staged round is open")
+        let trimmed = trimEachCacheLayer(cache, numTokens: count)
+        precondition(
+            trimmed <= processedTokenCount,
+            "Cache trimmed beyond its processed-token timeline")
+        processedTokenCount -= trimmed
+        lastRound = nil
+        return trimmed
+    }
+
     /// Rewind a speculative tail across mixed attention and recurrent caches.
     @discardableResult
     package func rewindSpeculative(_ count: Int) -> Int {

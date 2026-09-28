@@ -98,6 +98,43 @@ private func makeDeepseekV4Config(
     return try JSONDecoder().decode(DeepseekV4Configuration.self, from: Data(json.utf8))
 }
 
+/// A hybrid Qwen3.5 trunk with stand-in MTP heads, so drafts are made without the
+/// SWIFTLM_MTP_ENABLE weights. Head 0 repeats the main prediction and head 1 shifts
+/// it, which gives a mix of accepted and rejected drafts.
+private final class HybridDraftingModel: Module, MTPLanguageModel {
+    let inner: Qwen35TextModel
+
+    init(_ inner: Qwen35TextModel) {
+        self.inner = inner
+        super.init()
+    }
+
+    func prepare(
+        _ input: LMInput, cache: [KVCache], state: LMOutput.State?, prefill: PrefillParameters
+    ) throws -> PrepareResult {
+        try inner.prepare(input, cache: cache, state: state, prefill: prefill)
+    }
+
+    func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?)
+        -> LMOutput
+    {
+        inner(input, cache: cache, state: state)
+    }
+
+    func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        inner(inputs, cache: cache)
+    }
+
+    func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try inner.newCache(parameters: parameters)
+    }
+
+    func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray] {
+        let main = inner(inputs, cache: cache)
+        return [main, main, MLX.roll(main, shift: 1, axis: -1)]
+    }
+}
+
 // MARK: - Phase 1: MTPConfig & protocol
 
 extension MLXTestingSuite {
@@ -347,6 +384,47 @@ extension MLXTestingSuite {
             // At temperature 0, every draft should be accepted — output must be identical
             #expect(standardTokens == mtpTokens,
                     "MTPTokenIterator at temperature=0 must produce identical output to standard TokenIterator")
+        }
+
+        // 2.7b — Rejected drafts on a hybrid (attention + recurrent) cache. A Mamba layer
+        // can't drop only the rejected tail, so the iterator restores its checkpoint and
+        // re-feeds the kept tokens. Its cache must equal one fed exactly the tokens it
+        // consumed (compared directly: a tiny random model's near-tie argmax can differ
+        // between batched verify and single-step decoding).
+        @Test("MTPTokenIterator rollback keeps a hybrid cache equal to the tokens it consumed")
+        func testMTPIteratorHybridRejectionsMatchGreedy() throws {
+            let config = try makeQwen35TextConfig()
+            let trunk = withRandomState(MLXRandom.RandomState(seed: 72)) {
+                let model = Qwen35TextModel(config)
+                eval(model)
+                return model
+            }
+            let model = HybridDraftingModel(trunk)
+            let prompt = MLXArray([1, 2, 3, 4, 5, 6])
+            let params = GenerateParameters(maxTokens: 16, temperature: 0.0)
+
+            let mtpCache = try trunk.newCache(parameters: params)
+            var mtpIter = try MTPTokenIterator(
+                input: LMInput(tokens: prompt), model: model, cache: mtpCache,
+                parameters: params, numMTPTokens: 2)
+            var mtpTokens = [Int]()
+            while let t = mtpIter.next() { mtpTokens.append(t) }
+            #expect(mtpIter.totalDraftTokens > mtpIter.acceptedDraftTokens)
+            #expect(mtpCache.contains { $0 is MambaCache })
+
+            let consumed = mtpCache.first { !($0 is MambaCache) }!.offset - prompt.size
+            let refCache = try trunk.newCache(parameters: params)
+            eval(trunk(prompt[.newAxis], cache: refCache))
+            for t in mtpTokens.prefix(consumed) {
+                eval(trunk(MLXArray([Int32(t)])[.newAxis], cache: refCache))
+            }
+            for (ref, mtp) in zip(refCache, mtpCache) {
+                #expect(ref.offset == mtp.offset, "\(type(of: ref)): \(ref.offset) vs \(mtp.offset)")
+                guard ref is MambaCache else { continue }
+                for (a, b) in zip(ref.state, mtp.state) {
+                    #expect(abs(a - b).max().item(Float.self) < 1e-3)
+                }
+            }
         }
 
         // 2.8 — maxTokens is respected even with deep drafting (numMTPTokens=3)

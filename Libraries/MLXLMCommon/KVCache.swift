@@ -1762,6 +1762,7 @@ open class MambaCache: ArraysCache {
     /// is recurrent and cannot be partially "trimmed" like attention KV
     /// caches, so we checkpoint before speculation and restore on rollback).
     private var savedState: [MLXArray]?
+    private var savedOffset = 0
 
     private struct SpeculativeCheckpoint {
         var state: [MLXArray?]
@@ -1789,6 +1790,7 @@ open class MambaCache: ArraysCache {
         let s = self.state
         if !s.isEmpty {
             savedState = s.map { $0[0...] }  // deep copy
+            savedOffset = offset
         }
     }
 
@@ -1799,6 +1801,7 @@ open class MambaCache: ArraysCache {
     open override func trim(_ n: Int) -> Int {
         if n > 0, let saved = savedState {
             self.state = saved
+            offset = savedOffset
             savedState = nil
             return n
         }
@@ -2678,6 +2681,26 @@ public func trimPromptCache(_ cache: [KVCache], numTokens: Int) -> Int {
     guard canTrimPromptCache(cache), !cache.isEmpty else { return 0 }
     cache.dropFirst().forEach { $0.trim(numTokens) }
     return cache.first?.trim(numTokens) ?? 0
+}
+
+/// Whether a cache entry can be rewound at all. A wrapped sliding-window cache
+/// isn't `isTrimmable`, but its multi-token speculative writes still trim exactly.
+package func canRewindCacheLayer(_ entry: KVCache) -> Bool {
+    entry.isTrimmable || entry is RotatingKVCache
+}
+
+/// Trim each entry by `numTokens` on its own. Unlike `trimPromptCache`, one wrapped
+/// sliding-window layer doesn't stop the rest from rewinding.
+/// Returns the count trimmed from the first non-recurrent entry.
+@discardableResult
+package func trimEachCacheLayer(_ cache: [KVCache], numTokens: Int) -> Int {
+    guard !cache.isEmpty, cache.allSatisfy(canRewindCacheLayer) else { return 0 }
+    var trimmed: Int?
+    for entry in cache {
+        let n = entry.trim(numTokens)
+        if trimmed == nil, !(entry is MambaCache) { trimmed = n }
+    }
+    return trimmed ?? numTokens
 }
 
 /// Rewind a one-token speculative tail in a hybrid attention/recurrent cache.
