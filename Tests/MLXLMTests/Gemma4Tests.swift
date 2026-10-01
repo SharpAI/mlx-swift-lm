@@ -751,17 +751,17 @@ extension MLXTestingSuite {
             #expect(!mainCache[0].isTrimmable)
             let before = mainCache[1].offset - wrappingPrompt.size
             if before > tokens.count { sawLookahead = true }
+            let draftBefore = draftCache[1].offset - wrappingPrompt.size
             iter.finalizeGeneration()
             let after = mainCache[1].offset - wrappingPrompt.size
             #expect(after == Swift.min(before, tokens.count), "stop \(stop)")
+            #expect(
+                draftCache[1].offset - wrappingPrompt.size
+                    == Swift.min(draftBefore, tokens.count), "stop \(stop): draft")
             #expect(mainCache[0].offset == mainCache[1].offset)
             #expect(iter.mainCacheStorage.processedTokenCount == mainCache[1].offset)
-            // The draft trails main by at most the one token it hasn't been fed yet.
             #expect(draftCache[0].offset == draftCache[1].offset)
             #expect(iter.draftCacheStorage.processedTokenCount == draftCache[1].offset)
-            #expect(
-                draftCache[1].offset == mainCache[1].offset
-                    || draftCache[1].offset == mainCache[1].offset - 1, "stop \(stop)")
         }
         #expect(sawLookahead)
     }

@@ -1003,6 +1003,13 @@ public struct TokenIterator: TokenIteratorProtocol {
     }
 }
 
+/// Speculative decoding can't run with the given models or settings.
+struct SpeculativeDecodingError: Error, LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
+}
+
 /// Generator of tokens using speculative decoding.
 ///
 /// This is typically used via a call to ``generate(input:cache:state:parameters:context:draftModel:draftCache:numDraftTokens:components:wiredMemoryTicket:tools:)``
@@ -1028,13 +1035,6 @@ public struct TokenIterator: TokenIteratorProtocol {
 /// Tokens are integers that can be passed through a `Tokenizer` or ``StreamingDetokenizer`` to produce Strings.
 ///
 /// Port of `speculative_generate_step()` from https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/generate.py
-/// Speculative decoding can't run with the given models or settings.
-struct SpeculativeDecodingError: Error, LocalizedError {
-    let message: String
-
-    var errorDescription: String? { message }
-}
-
 public struct SpeculativeTokenIterator: TokenIteratorProtocol {
 
     var y: LMInput.Text
@@ -1165,14 +1165,16 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
         else {
             throw KVCacheError(message: "Speculative decoding requires trimmable KV caches.")
         }
-        // A hybrid draft rewinds up to numDraftTokens + 1 single-token writes, which a
-        // wrapped sliding window must still hold past its pinned prefix.
+        // With two or more drafts a hybrid draft rewinds up to numDraftTokens + 1
+        // single-token writes, which a wrapped sliding window must still hold past its
+        // pinned prefix. One draft never rewinds.
+        let requiredRows = numDraftTokens >= 2 ? numDraftTokens + 1 : 0
         if !recurrentCaches(in: draftCacheStorage.cache).isEmpty,
-            let rows = minRewindableWindow(draftCacheStorage.cache), rows < numDraftTokens + 1
+            let rows = minRewindableWindow(draftCacheStorage.cache), rows < requiredRows
         {
             throw KVCacheError(
                 message:
-                    "A hybrid draft model's sliding-window cache must rewind \(numDraftTokens + 1) tokens, but only \(rows) fit. Raise maxKVSize or lower numDraftTokens."
+                    "A hybrid draft model's sliding-window cache must rewind \(requiredRows) tokens, but only \(rows) fit. Raise maxKVSize or lower numDraftTokens."
             )
         }
         // Verification reads one logit row per draft plus the bonus token.

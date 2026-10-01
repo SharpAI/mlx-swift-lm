@@ -188,19 +188,31 @@ private final class CountingDraftingModel: Module, MTPLanguageModel {
     let numHeads: Int
     let wrongHeads: Set<Int>
     let mtpCacheCount: Int
+    /// As a draft model: after an input token t with t % modulus == residue it predicts
+    /// the wrong token.
+    let wrongAfter: (modulus: Int, residue: Int)?
 
-    init(_ inner: Qwen35TextModel, numHeads: Int, wrongHeads: Set<Int> = [], mtpCacheCount: Int = 0)
-    {
+    init(
+        _ inner: Qwen35TextModel, numHeads: Int, wrongHeads: Set<Int> = [], mtpCacheCount: Int = 0,
+        wrongAfter: (modulus: Int, residue: Int)? = nil
+    ) {
         self.inner = inner
         self.numHeads = numHeads
         self.wrongHeads = wrongHeads
         self.mtpCacheCount = mtpCacheCount
+        self.wrongAfter = wrongAfter
         super.init()
     }
 
     private func counting(_ inputs: MLXArray, _ trunk: MLXArray, shift: Int) -> MLXArray {
         let vocab = trunk.dim(-1)
-        let target = (inputs.asType(.int32) + Int32(shift)) % Int32(vocab)
+        var shifts = MLXArray(Int32(shift))
+        if let wrongAfter {
+            let hit =
+                (inputs.asType(.int32) % Int32(wrongAfter.modulus)) .== Int32(wrongAfter.residue)
+            shifts = MLX.where(hit, MLXArray(Int32(50)), shifts)
+        }
+        let target = (inputs.asType(.int32) + shifts) % Int32(vocab)
         let ids = MLXArray(Int32(0) ..< Int32(vocab))
         return (ids .== target[.ellipsis, .newAxis]).asType(trunk.dtype) * 10 + 0 * trunk
     }
@@ -734,10 +746,12 @@ extension MLXTestingSuite {
                 let draftConsumed = { consumedTokens(draftCache, promptLength: prompt.size) }
                 let before = consumed()
                 maxLookahead = Swift.max(maxLookahead, before - tokens.count)
-                maxDraftLookahead = Swift.max(maxDraftLookahead, draftConsumed() - tokens.count)
+                let draftBefore = draftConsumed()
+                maxDraftLookahead = Swift.max(maxDraftLookahead, draftBefore - tokens.count)
                 iter.finalizeGeneration()
                 #expect(consumed() == Swift.min(before, tokens.count), "stop \(stop)")
-                #expect(draftConsumed() <= tokens.count, "stop \(stop): draft")
+                #expect(
+                    draftConsumed() == Swift.min(draftBefore, tokens.count), "stop \(stop): draft")
                 #expect(iter.mainCacheStorage.processedTokenCount == consumed() + prompt.size)
                 #expect(iter.draftCacheStorage.processedTokenCount == draftConsumed() + prompt.size)
                 expectSameCache(
@@ -786,6 +800,74 @@ extension MLXTestingSuite {
             }
             #expect(throws: (any Error).self) { try run(maxKVSize: numDraft + 4) }
             #expect(try run(maxKVSize: numDraft + 5).count == 24)
+
+            // One draft never rewinds the draft cache, so a one-row window is fine. (Only
+            // init runs: the main cache with the same window would need two rows.)
+            func make(numDraft: Int) throws {
+                let params = GenerateParameters(maxTokens: 4, maxKVSize: 5, temperature: 0.0)
+                _ = try SpeculativeTokenIterator(
+                    input: LMInput(tokens: prompt), mainModel: main, draftModel: draft,
+                    parameters: params, numDraftTokens: numDraft)
+            }
+            try make(numDraft: 1)
+            #expect(throws: (any Error).self) { try make(numDraft: 2) }
+        }
+
+        // 2.7o — Stops that leave a partly accepted round in a hybrid main and draft. The
+        // draft is wrong after every token that is 2 mod 4, so the third draft of a round
+        // is rejected: two drafts are accepted (0 < accepted < numDraftTokens) and a stop
+        // after the first emitted token leaves one committed token unemitted.
+        @Test("SpeculativeTokenIterator finalize after a partly accepted round")
+        func testSpeculativeIteratorFinalizePartlyAcceptedRound() throws {
+            let trunk = makeTrunk(seed: 84)
+            let main = CountingDraftingModel(trunk, numHeads: 0)
+            let draft = CountingDraftingModel(trunk, numHeads: 0, wrongAfter: (4, 2))
+            let prompt = MLXArray([1, 2, 3, 4])
+            let params = GenerateParameters(maxTokens: 24, temperature: 0.0)
+            var sawPartlyAcceptedLookahead = false
+            for stop in 1 ... 8 {
+                let mainCache = try trunk.newCache(parameters: params)
+                let draftCache = try trunk.newCache(parameters: params)
+                var iter = try SpeculativeTokenIterator(
+                    input: LMInput(tokens: prompt), mainModel: main, draftModel: draft,
+                    mainCache: mainCache, draftCache: draftCache, parameters: params,
+                    numDraftTokens: 3)
+                var tokens = [Int]()
+                var lastRound: (drafted: Int, accepted: Int)?
+                while tokens.count < stop {
+                    let drafted = iter.totalDraftTokens
+                    let accepted = iter.acceptedDraftTokens
+                    guard let t = iter.next() else { break }
+                    tokens.append(t)
+                    if iter.totalDraftTokens > drafted {
+                        lastRound = (
+                            iter.totalDraftTokens - drafted, iter.acceptedDraftTokens - accepted
+                        )
+                    }
+                }
+                let before = consumedTokens(mainCache, promptLength: prompt.size)
+                let draftBefore = consumedTokens(draftCache, promptLength: prompt.size)
+                if let lastRound, lastRound.accepted > 0, lastRound.accepted < lastRound.drafted,
+                    before > tokens.count
+                {
+                    sawPartlyAcceptedLookahead = true
+                }
+                iter.finalizeGeneration()
+                let after = consumedTokens(mainCache, promptLength: prompt.size)
+                let draftAfter = consumedTokens(draftCache, promptLength: prompt.size)
+                #expect(after == Swift.min(before, tokens.count), "stop \(stop)")
+                #expect(draftAfter == Swift.min(draftBefore, tokens.count), "stop \(stop): draft")
+                expectSameCache(
+                    try referenceCache(
+                        trunk, prompt: prompt, tokens: tokens.prefix(after), parameters: params),
+                    mainCache, "main stop \(stop)")
+                expectSameCache(
+                    try referenceCache(
+                        trunk, prompt: prompt, tokens: tokens.prefix(draftAfter),
+                        parameters: params),
+                    draftCache, "draft stop \(stop)")
+            }
+            #expect(sawPartlyAcceptedLookahead)
         }
 
         // 2.7h — MTP: stopping early leaves verified drafts in the cache; finalize must
