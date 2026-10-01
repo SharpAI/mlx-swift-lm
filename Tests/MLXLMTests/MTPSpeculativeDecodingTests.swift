@@ -25,7 +25,8 @@ private func makeQwen35TextConfig(
     numHiddenLayers: Int = 4,
     hiddenSize: Int = 64,
     vocabSize: Int = 100,
-    headDim: Int? = nil
+    headDim: Int? = nil,
+    fullAttentionInterval: Int = 4
 ) throws -> Qwen35TextConfiguration {
     let headDimLine = headDim.map { "\"head_dim\": \($0)," } ?? ""
     let json = """
@@ -46,7 +47,7 @@ private func makeQwen35TextConfig(
         "vocab_size": \(vocabSize),
         "rope_theta": 10000.0,
         "max_position_embeddings": 512,
-        "full_attention_interval": 4,
+        "full_attention_interval": \(fullAttentionInterval),
         "num_nextn_predict_layers": \(numMTPLayers)
     }
     """
@@ -177,6 +178,86 @@ private final class ConstantDraftingModel: Module, MTPLanguageModel {
         let main = callAsFunction(inputs, cache: cache)
         return [main, main, main]
     }
+}
+
+/// A trunk whose logits count up: after token t the main head picks t + 1 and MTP head i
+/// picks t + 2 + i, so every draft is right unless its head is in `wrongHeads`. Each
+/// callMTP writes one row per input token to every MTP cache.
+private final class CountingDraftingModel: Module, MTPLanguageModel {
+    let inner: Qwen35TextModel
+    let numHeads: Int
+    let wrongHeads: Set<Int>
+    let mtpCacheCount: Int
+    /// As a draft model: after an input token t with t % modulus == residue it predicts
+    /// the wrong token.
+    let wrongAfter: (modulus: Int, residue: Int)?
+
+    init(
+        _ inner: Qwen35TextModel, numHeads: Int, wrongHeads: Set<Int> = [], mtpCacheCount: Int = 0,
+        wrongAfter: (modulus: Int, residue: Int)? = nil
+    ) {
+        self.inner = inner
+        self.numHeads = numHeads
+        self.wrongHeads = wrongHeads
+        self.mtpCacheCount = mtpCacheCount
+        self.wrongAfter = wrongAfter
+        super.init()
+    }
+
+    private func counting(_ inputs: MLXArray, _ trunk: MLXArray, shift: Int) -> MLXArray {
+        let vocab = trunk.dim(-1)
+        var shifts = MLXArray(Int32(shift))
+        if let wrongAfter {
+            let hit =
+                (inputs.asType(.int32) % Int32(wrongAfter.modulus)) .== Int32(wrongAfter.residue)
+            shifts = MLX.where(hit, MLXArray(Int32(50)), shifts)
+        }
+        let target = (inputs.asType(.int32) + shifts) % Int32(vocab)
+        let ids = MLXArray(Int32(0) ..< Int32(vocab))
+        return (ids .== target[.ellipsis, .newAxis]).asType(trunk.dtype) * 10 + 0 * trunk
+    }
+
+    func prepare(
+        _ input: LMInput, cache: [KVCache], state: LMOutput.State?, prefill: PrefillParameters
+    ) throws -> PrepareResult {
+        .tokens(input.text)
+    }
+
+    func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?)
+        -> LMOutput
+    {
+        LMOutput(logits: callAsFunction(input.tokens, cache: cache))
+    }
+
+    func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        counting(inputs, inner(inputs, cache: cache), shift: 1)
+    }
+
+    func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try inner.newCache(parameters: parameters)
+    }
+
+    func makeMTPCaches(parameters: GenerateParameters?) -> [[KVCache]] {
+        (0 ..< mtpCacheCount).map { _ in [KVCacheSimple()] }
+    }
+
+    func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray] {
+        let trunk = inner(inputs, cache: cache)
+        for mtpCache in mtpCaches ?? [] {
+            let rows = MLXArray.zeros([1, 1, inputs.dim(1), 4])
+            _ = mtpCache[0].update(keys: rows, values: rows)
+        }
+        let main = counting(inputs, trunk, shift: 1)
+        let heads = (0 ..< numHeads).map { i in
+            counting(inputs, trunk, shift: wrongHeads.contains(i) ? 50 : 2 + i)
+        }
+        return [main] + heads
+    }
+}
+
+/// The attention offset past the prompt.
+private func consumedTokens(_ cache: [KVCache], promptLength: Int) -> Int {
+    cache.first { !($0 is MambaCache) }!.offset - promptLength
 }
 
 /// A main model and a draft that is a slightly perturbed copy of it, so drafts are
@@ -650,7 +731,8 @@ extension MLXTestingSuite {
             let (main, draft) = try makePartlyAgreeingPair(seed: 75)
             let prompt = MLXArray([1, 2, 3, 4, 5, 6])
             let params = GenerateParameters(maxTokens: 24, temperature: 0.0)
-            var sawLookahead = false
+            var maxLookahead = 0
+            var maxDraftLookahead = 0
             for stop in 2 ... 12 {
                 let mainCache = try main.newCache(parameters: params)
                 let draftCache = try draft.newCache(parameters: params)
@@ -660,24 +742,132 @@ extension MLXTestingSuite {
                     numDraftTokens: 3)
                 var tokens = [Int]()
                 while tokens.count < stop, let t = iter.next() { tokens.append(t) }
-                let consumed = { mainCache.first { !($0 is MambaCache) }!.offset - prompt.size }
+                let consumed = { consumedTokens(mainCache, promptLength: prompt.size) }
+                let draftConsumed = { consumedTokens(draftCache, promptLength: prompt.size) }
                 let before = consumed()
-                if before > tokens.count { sawLookahead = true }
+                maxLookahead = Swift.max(maxLookahead, before - tokens.count)
+                let draftBefore = draftConsumed()
+                maxDraftLookahead = Swift.max(maxDraftLookahead, draftBefore - tokens.count)
                 iter.finalizeGeneration()
                 #expect(consumed() == Swift.min(before, tokens.count), "stop \(stop)")
-                #expect(iter.mainCacheStorage.processedTokenCount == consumed() + prompt.size)
                 #expect(
-                    iter.draftCacheStorage.processedTokenCount
-                        == draftCache.first { !($0 is MambaCache) }!.offset)
+                    draftConsumed() == Swift.min(draftBefore, tokens.count), "stop \(stop): draft")
+                #expect(iter.mainCacheStorage.processedTokenCount == consumed() + prompt.size)
+                #expect(iter.draftCacheStorage.processedTokenCount == draftConsumed() + prompt.size)
                 expectSameCache(
                     try referenceCache(
                         main, prompt: prompt, tokens: tokens.prefix(consumed()), parameters: params),
                     mainCache, "main stop \(stop)")
-                let after = consumed()
+                expectSameCache(
+                    try referenceCache(
+                        draft, prompt: prompt, tokens: tokens.prefix(draftConsumed()),
+                        parameters: params),
+                    draftCache, "draft stop \(stop)")
+
+                let after = (consumed(), draftConsumed())
+                let processed = (
+                    iter.mainCacheStorage.processedTokenCount,
+                    iter.draftCacheStorage.processedTokenCount
+                )
                 iter.finalizeGeneration()
-                #expect(consumed() == after, "a second finalize must not trim again")
+                #expect(consumed() == after.0, "a second finalize must not trim main again")
+                #expect(
+                    draftConsumed() == after.1, "a second finalize must not trim the draft again")
+                #expect(iter.mainCacheStorage.processedTokenCount == processed.0)
+                #expect(iter.draftCacheStorage.processedTokenCount == processed.1)
             }
-            #expect(sawLookahead)
+            // Main can hold two unemitted tokens; the draft, one behind, holds one.
+            #expect(maxLookahead >= 2)
+            #expect(maxDraftLookahead >= 1)
+        }
+
+        // 2.7n — A hybrid draft rewinds a whole round of single-token writes, so its
+        // sliding window must hold numDraftTokens + 1 rows past the 4 pinned ones.
+        @Test("SpeculativeTokenIterator rejects a hybrid draft window too small to rewind")
+        func testSpeculativeIteratorRejectsSmallHybridDraftWindow() throws {
+            let (main, draft) = try makePartlyAgreeingPair(seed: 75)
+            let prompt = MLXArray([1, 2, 3, 4, 5, 6])
+            let numDraft = 3
+            func run(maxKVSize: Int) throws -> [Int] {
+                let params = GenerateParameters(
+                    maxTokens: 24, maxKVSize: maxKVSize, temperature: 0.0)
+                var iter = try SpeculativeTokenIterator(
+                    input: LMInput(tokens: prompt), mainModel: main, draftModel: draft,
+                    parameters: params, numDraftTokens: numDraft)
+                var tokens = [Int]()
+                while let t = iter.next() { tokens.append(t) }
+                return tokens
+            }
+            #expect(throws: (any Error).self) { try run(maxKVSize: numDraft + 4) }
+            #expect(try run(maxKVSize: numDraft + 5).count == 24)
+
+            // One draft never rewinds the draft cache, so a one-row window is fine. (Only
+            // init runs: the main cache with the same window would need two rows.)
+            func make(numDraft: Int) throws {
+                let params = GenerateParameters(maxTokens: 4, maxKVSize: 5, temperature: 0.0)
+                _ = try SpeculativeTokenIterator(
+                    input: LMInput(tokens: prompt), mainModel: main, draftModel: draft,
+                    parameters: params, numDraftTokens: numDraft)
+            }
+            try make(numDraft: 1)
+            #expect(throws: (any Error).self) { try make(numDraft: 2) }
+        }
+
+        // 2.7o — Stops that leave a partly accepted round in a hybrid main and draft. The
+        // draft is wrong after every token that is 2 mod 4, so the third draft of a round
+        // is rejected: two drafts are accepted (0 < accepted < numDraftTokens) and a stop
+        // after the first emitted token leaves one committed token unemitted.
+        @Test("SpeculativeTokenIterator finalize after a partly accepted round")
+        func testSpeculativeIteratorFinalizePartlyAcceptedRound() throws {
+            let trunk = makeTrunk(seed: 84)
+            let main = CountingDraftingModel(trunk, numHeads: 0)
+            let draft = CountingDraftingModel(trunk, numHeads: 0, wrongAfter: (4, 2))
+            let prompt = MLXArray([1, 2, 3, 4])
+            let params = GenerateParameters(maxTokens: 24, temperature: 0.0)
+            var sawPartlyAcceptedLookahead = false
+            for stop in 1 ... 8 {
+                let mainCache = try trunk.newCache(parameters: params)
+                let draftCache = try trunk.newCache(parameters: params)
+                var iter = try SpeculativeTokenIterator(
+                    input: LMInput(tokens: prompt), mainModel: main, draftModel: draft,
+                    mainCache: mainCache, draftCache: draftCache, parameters: params,
+                    numDraftTokens: 3)
+                var tokens = [Int]()
+                var lastRound: (drafted: Int, accepted: Int)?
+                while tokens.count < stop {
+                    let drafted = iter.totalDraftTokens
+                    let accepted = iter.acceptedDraftTokens
+                    guard let t = iter.next() else { break }
+                    tokens.append(t)
+                    if iter.totalDraftTokens > drafted {
+                        lastRound = (
+                            iter.totalDraftTokens - drafted, iter.acceptedDraftTokens - accepted
+                        )
+                    }
+                }
+                let before = consumedTokens(mainCache, promptLength: prompt.size)
+                let draftBefore = consumedTokens(draftCache, promptLength: prompt.size)
+                if let lastRound, lastRound.accepted > 0, lastRound.accepted < lastRound.drafted,
+                    before > tokens.count
+                {
+                    sawPartlyAcceptedLookahead = true
+                }
+                iter.finalizeGeneration()
+                let after = consumedTokens(mainCache, promptLength: prompt.size)
+                let draftAfter = consumedTokens(draftCache, promptLength: prompt.size)
+                #expect(after == Swift.min(before, tokens.count), "stop \(stop)")
+                #expect(draftAfter == Swift.min(draftBefore, tokens.count), "stop \(stop): draft")
+                expectSameCache(
+                    try referenceCache(
+                        trunk, prompt: prompt, tokens: tokens.prefix(after), parameters: params),
+                    mainCache, "main stop \(stop)")
+                expectSameCache(
+                    try referenceCache(
+                        trunk, prompt: prompt, tokens: tokens.prefix(draftAfter),
+                        parameters: params),
+                    draftCache, "draft stop \(stop)")
+            }
+            #expect(sawPartlyAcceptedLookahead)
         }
 
         // 2.7h — MTP: stopping early leaves verified drafts in the cache; finalize must
@@ -711,6 +901,160 @@ extension MLXTestingSuite {
                     cache, "mtp stop \(stop)")
             }
             #expect(sawLookahead)
+        }
+
+        /// Stops MTP generation after each of `stops` tokens, finalizes, and checks the cache
+        /// holds exactly the tokens emitted.
+        private func expectMTPFinalizeExact(
+            _ trunk: Qwen35TextModel, _ model: CountingDraftingModel, stops: ClosedRange<Int>,
+            minLookahead: Int = 1
+        ) throws {
+            let prompt = MLXArray([1, 2, 3, 4])
+            let params = GenerateParameters(maxTokens: 24, temperature: 0.0)
+            var maxLookahead = 0
+            for stop in stops {
+                let cache = try trunk.newCache(parameters: params)
+                var iter = try MTPTokenIterator(
+                    input: LMInput(tokens: prompt), model: model, cache: cache,
+                    parameters: params, numMTPTokens: model.numHeads)
+                var tokens = [Int]()
+                while tokens.count < stop, let t = iter.next() { tokens.append(t) }
+                let before = consumedTokens(cache, promptLength: prompt.size)
+                maxLookahead = Swift.max(maxLookahead, before - tokens.count)
+                iter.finalizeGeneration()
+                let after = consumedTokens(cache, promptLength: prompt.size)
+                #expect(after == Swift.min(before, tokens.count), "stop \(stop)")
+                for mtpCache in iter.mtpCaches {
+                    #expect(mtpCache[0].offset == after + prompt.size, "stop \(stop): MTP cache")
+                }
+                expectSameCache(
+                    try referenceCache(
+                        trunk, prompt: prompt, tokens: tokens.prefix(after), parameters: params),
+                    cache, "stop \(stop)")
+            }
+            #expect(maxLookahead >= minLookahead)
+        }
+
+        private func makeTrunk(seed: UInt64, fullAttentionInterval: Int = 4) -> Qwen35TextModel {
+            withRandomState(MLXRandom.RandomState(seed: seed)) {
+                let model = Qwen35TextModel(
+                    try! makeQwen35TextConfig(fullAttentionInterval: fullAttentionInterval))
+                eval(model)
+                return model
+            }
+        }
+
+        // 2.7i — The last head is always wrong, so each verify round accepts two drafts,
+        // rolls back and re-feeds, and the next round falls back to a plain step. Stopping
+        // mid-round then leaves lookahead from a partly accepted round.
+        @Test("MTPTokenIterator finalize after partly accepted and fallback rounds")
+        func testMTPIteratorFinalizeAfterPartialAndFallbackRounds() throws {
+            let trunk = makeTrunk(seed: 79)
+            let model = CountingDraftingModel(trunk, numHeads: 3, wrongHeads: [2], mtpCacheCount: 2)
+            try expectMTPFinalizeExact(trunk, model, stops: 2 ... 10)
+        }
+
+        // 2.7j — Every draft accepted: finalize can drop two drafts at once, and must trim
+        // the MTP caches with the main cache.
+        @Test("MTPTokenIterator finalize drops several drafts and trims the MTP caches")
+        func testMTPIteratorFinalizeDeepLookahead() throws {
+            let trunk = makeTrunk(seed: 80)
+            let model = CountingDraftingModel(trunk, numHeads: 3, mtpCacheCount: 2)
+            try expectMTPFinalizeExact(trunk, model, stops: 2 ... 10, minLookahead: 2)
+        }
+
+        // 2.7k — A pure-attention trunk has no recurrent round start; finalize trims only.
+        @Test("MTPTokenIterator finalize on a non-hybrid cache")
+        func testMTPIteratorFinalizeNonHybrid() throws {
+            let trunk = makeTrunk(seed: 81, fullAttentionInterval: 1)
+            #expect(try trunk.newCache(parameters: nil).allSatisfy { !($0 is MambaCache) })
+            let model = CountingDraftingModel(trunk, numHeads: 3, mtpCacheCount: 1)
+            try expectMTPFinalizeExact(trunk, model, stops: 2 ... 8, minLookahead: 2)
+        }
+
+        // 2.7l — A round that returns before verifying commits nothing, so a later finalize
+        // must not rewind the previous round's drafts again.
+        @Test("MTPTokenIterator round without output leaves nothing to finalize")
+        func testMTPIteratorEmptyRoundCommitsNothing() throws {
+            final class FailingAfter: Module, MTPLanguageModel {
+                let wrapped: CountingDraftingModel
+                var calls = 0
+                let limit: Int
+                init(_ wrapped: CountingDraftingModel, limit: Int) {
+                    self.wrapped = wrapped
+                    self.limit = limit
+                    super.init()
+                }
+                func prepare(
+                    _ input: LMInput, cache: [KVCache], state: LMOutput.State?,
+                    prefill: PrefillParameters
+                ) throws -> PrepareResult {
+                    try wrapped.prepare(input, cache: cache, state: state, prefill: prefill)
+                }
+                func callAsFunction(
+                    _ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?
+                ) -> LMOutput {
+                    wrapped(input, cache: cache, state: state)
+                }
+                func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+                    wrapped(inputs, cache: cache)
+                }
+                func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+                    try wrapped.newCache(parameters: parameters)
+                }
+                func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?)
+                    -> [MLXArray]
+                {
+                    calls += 1
+                    return calls > limit
+                        ? [] : wrapped.callMTP(inputs, cache: cache, mtpCaches: mtpCaches)
+                }
+            }
+            let trunk = makeTrunk(seed: 82)
+            let model = FailingAfter(CountingDraftingModel(trunk, numHeads: 2), limit: 2)
+            let prompt = MLXArray([1, 2, 3, 4])
+            let params = GenerateParameters(maxTokens: 24, temperature: 0.0)
+            let cache = try trunk.newCache(parameters: params)
+            var iter = try MTPTokenIterator(
+                input: LMInput(tokens: prompt), model: model, cache: cache,
+                parameters: params, numMTPTokens: 2)
+            var tokens = [Int]()
+            while let t = iter.next() { tokens.append(t) }
+            // Fallback round (1 token), then a verify round with both drafts (3 tokens).
+            #expect(tokens.count == 4)
+            let before = consumedTokens(cache, promptLength: prompt.size)
+            iter.finalizeGeneration()
+            #expect(consumedTokens(cache, promptLength: prompt.size) == before)
+        }
+
+        // 2.7m — generateMTP stops on an EOS token in the middle of a verified round; the
+        // loop's finalize must leave the caller's cache holding only the emitted tokens.
+        @Test("generateMTP finalizes the cache when a stop token ends generation early")
+        func testGenerateMTPFinalizesOnStopToken() async throws {
+            let trunk = makeTrunk(seed: 83)
+            let model = CountingDraftingModel(trunk, numHeads: 3)
+            let prompt = MLXArray([1, 2, 3, 4])
+            // Fallback emits 5; the next round verifies 6, 7, 8 and ends with 9. Stopping
+            // at 6 leaves 7 and 8 committed but unemitted.
+            let stop = 6
+            let processor = TestInputProcessor()
+            let context = ModelContext(
+                configuration: ModelConfiguration(id: "test", eosTokenIds: [stop]),
+                model: model, processor: processor, tokenizer: processor.tokenizer)
+            let params = GenerateParameters(maxTokens: 24, temperature: 0.0)
+            let cache = try trunk.newCache(parameters: params)
+            var sawInfo = false
+            for await generation in try generateMTP(
+                input: LMInput(tokens: prompt), cache: cache, parameters: params,
+                context: context, numMTPTokens: 3)
+            {
+                if case .info = generation { sawInfo = true }
+            }
+            #expect(sawInfo)
+            #expect(consumedTokens(cache, promptLength: prompt.size) == 2)
+            expectSameCache(
+                try referenceCache(trunk, prompt: prompt, tokens: [5, stop], parameters: params),
+                cache, "generateMTP")
         }
 
         // 2.8 — maxTokens is respected even with deep drafting (numMTPTokens=3)

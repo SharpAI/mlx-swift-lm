@@ -79,14 +79,9 @@ jobs:
           # assertion when two such tests overlapped on CI's runner).
           swift test -c release --skip-build --no-parallel
 
-      - name: Gemma 4 PLE Stabilization Gate
-        run: |
-          # --no-parallel on every GPU gate, for the reason given above.
-          # Verify PLE signal stability with full kernel support
-          swift test -c release --filter Gemma4StabilizationTests --skip-build --no-parallel
-
       - name: Speculative Decoding Protection Gate
         run: |
+          # --no-parallel on every GPU gate, for the reason given above.
           # Ensure speculative decoding parity and cache integrity are never regressed
           swift test -c release --filter SpeculativeDecodingTests --skip-build --no-parallel
 

@@ -707,7 +707,8 @@ public class FalconH1ModelInner: Module {
     }
 }
 
-public class FalconH1Model: Module, LLMModel, KVCacheDimensionProvider {
+public class FalconH1Model: Module, LLMModel, KVCacheDimensionProvider, TrailingLogitsLanguageModel
+{
     private static let scalingMetadataKey = "mlx_swift_lm.falcon_h1.scaling"
     private static let scalingMetadataValue = "attention_qkv_runtime_key_v1"
 
@@ -773,6 +774,10 @@ public class FalconH1Model: Module, LLMModel, KVCacheDimensionProvider {
         }
         return model.embedTokens.asLinear(hidden)
             * (configuration.lmHeadMultiplier / configuration.embeddingMultiplier)
+    }
+
+    public var logitPositionsKept: Int? {
+        configuration.numLogitsToKeep > 0 ? configuration.numLogitsToKeep : nil
     }
 
     public func makeCache() -> [CacheList] {
