@@ -203,10 +203,12 @@ struct TurboQuantMSECodecTests {
         let codec = MSECodec(dim: 128, bits: 3, seed: 42)
         #expect(codec.useWHT, "dim=128 should use WHT")
 
-        let product = matmul(codec.rotation, codec.rotationT)
+        let product = matmul(codec.rotation, codec.rotationT, stream: .cpu)
         let identity = MLXArray.identity(128)
         let diff = MLX.abs(product - identity).max().item(Float.self)
-        #expect(diff < 1e-4, "WHT rotation should be orthogonal, max diff: \(diff)")
+        // TF32 matmuls (neural accelerators) leave ~2e-4 here; see MatmulPrecision.
+        let tolerance: Float = MatmulPrecision.tolerance(float32: 1e-4, reduced: 1e-3)
+        #expect(diff < tolerance, "WHT rotation should be orthogonal, max diff: \(diff)")
     }
 
     @Test func whtEncodeDecodeRoundTrip() {

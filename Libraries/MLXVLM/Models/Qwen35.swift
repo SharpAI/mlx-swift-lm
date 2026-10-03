@@ -1443,12 +1443,16 @@ public class Qwen35: Module, VLMModel {
         MLXArray]
     {
         if metadata["format"]?.lowercased() == "mlx" {
+<<<<<<< HEAD
             // Already in MLX layout, so no key remapping is needed — but stray `mtp.*`
             // weights must still be dropped. They have no module here, and loadWeights'
             // recursive sweep picks them up from files outside the weight index (e.g.
             // `optiq/mtp.safetensors`), which made model.update fail with
             // `Unhandled keys ["mtp"]` (SwiftLM issue #118).
             guard !MTPConfig.retainMTPWeights else { return weights }
+=======
+            // Converted checkpoints can keep the MTP head; the drafter loads it, not this model.
+>>>>>>> upstream/main
             return weights.filter { !$0.key.contains("mtp.") }
         }
         return sanitize(weights: weights)

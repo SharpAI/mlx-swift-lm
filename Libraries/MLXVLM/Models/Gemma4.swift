@@ -2823,8 +2823,16 @@ public struct Gemma4MessageGenerator: MessageGenerator {
                 "role": message.role.rawValue,
                 "content": message.content,
             ]
+<<<<<<< HEAD
             addToolMetadata(to: &dictionary, for: message)
             return dictionary
+=======
+        } else {
+            dictionary = [
+                "role": message.role.rawValue,
+                "content": contentParts(for: message, layout: .imagesThenVideosThenText),
+            ]
+>>>>>>> upstream/main
         }
         // User messages with media: images/videos FIRST, then text, then audio
         // This matches the Python: apply_chat_template(..., image_first=True)
@@ -2912,7 +2920,8 @@ public struct Gemma4Processor: UserInputProcessor {
     }
 
     public func prepare(input: UserInput) async throws -> LMInput {
-        let messages = Gemma4MessageGenerator().generate(from: input)
+        let messages = Gemma4MessageGenerator().generate(
+            from: input.removingSpecialTokenLabels(using: tokenizer))
 
         var promptTokens = try tokenizer.applyChatTemplate(
             messages: messages, tools: input.tools,
@@ -3538,7 +3547,8 @@ public struct Gemma4UnifiedProcessor: UserInputProcessor {
     }
 
     public func prepare(input: UserInput) async throws -> LMInput {
-        let messages = Gemma4MessageGenerator().generate(from: input)
+        let messages = Gemma4MessageGenerator().generate(
+            from: input.removingSpecialTokenLabels(using: tokenizer))
 
         var promptTokens = try tokenizer.applyChatTemplate(
             messages: messages, tools: input.tools,

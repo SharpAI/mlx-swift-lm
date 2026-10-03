@@ -833,7 +833,8 @@ public struct Qwen2VLProcessor: UserInputProcessor {
     }
 
     public func prepare(input: UserInput) async throws -> LMInput {
-        let messages = Qwen2VLMessageGenerator().generate(from: input)
+        let messages = Qwen2VLMessageGenerator().generate(
+            from: input.removingSpecialTokenLabels(using: tokenizer))
 
         var promptTokens = try tokenizer.applyChatTemplate(
             messages: messages, tools: input.tools,
@@ -1288,11 +1289,15 @@ public struct Qwen2VLMessageGenerator: MessageGenerator {
         // a deterministic ~9 px bbox offset vs the Python mlx-vlm reference.
         var dictionary: MLXLMCommon.Message = [
             "role": message.role.rawValue,
+<<<<<<< HEAD
             "content":
                 message.images.map { _ in ["type": "image"] }
                 + message.videos.map { _ in ["type": "video"] }
                 + message.audios.map { _ in ["type": "audio"] }
                 + [["type": "text", "text": message.content]],
+=======
+            "content": contentParts(for: message, layout: .imagesThenVideosThenText),
+>>>>>>> upstream/main
         ]
         addToolMetadata(to: &dictionary, for: message)
         return dictionary

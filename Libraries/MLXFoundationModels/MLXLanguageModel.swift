@@ -15,7 +15,6 @@ import Foundation
 import FoundationModels
 import MLXLMCommon
 import MLX
-import os.log
 import MLXGuidedGeneration
 
 // MARK: - MLXLanguageModel
@@ -609,10 +608,8 @@ public struct MLXLanguageModel: FoundationModels.LanguageModel, Sendable {
         /// prewarm (bad id, network gone, OOM). Note it cannot intercept a
         /// Metal command-buffer assertion abort — that is a process crash, not
         /// a catchable Swift error.
-        private static let logger = Logger(
-            subsystem: "com.apple.FoundationModels-MLX", category: "Prewarm")
-        private static let protocolLogger = Logger(
-            subsystem: "com.apple.FoundationModels-MLX", category: "TokenStreamProtocol")
+        private static let logger = MLXLogger(label: "Prewarm")
+        private static let protocolLogger = MLXLogger(label: "TokenStreamProtocol")
 
         /// Prewarms the model: loads weights and pre-compiles Metal shaders so
         /// the first `respond()` pays no cold-start shader-JIT cost.
@@ -641,7 +638,7 @@ public struct MLXLanguageModel: FoundationModels.LanguageModel, Sendable {
                     try await model.warmUp()
                 } catch {
                     Self.logger.error(
-                        "MLX prewarm failed for \(model.modelID, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                        "MLX prewarm failed for \(model.modelID): \(error.localizedDescription)"
                     )
                 }
             }
@@ -658,20 +655,15 @@ public struct MLXLanguageModel: FoundationModels.LanguageModel, Sendable {
             model: MLXLanguageModel,
             streamingInto channel: LanguageModelExecutorGenerationChannel
         ) async throws {
-            var collected = TranscriptConverter.mlxMessages(for: request.transcript)
+            var collected = try TranscriptConverter.mlxMessages(for: request.transcript)
             // MLX tokenizer crashes on empty chat input; provide a fallback.
             if collected.isEmpty {
                 collected = [Chat.Message.user("")]
             }
             let messages = collected
 
-            // Vision capability gate (adapter-side). Labeled image
-            // attachments arrive as public `.attachment` segments that
-            // the SDK's own vision guard never inspects, so the adapter
-            // is the only place that can enforce `.vision` for this path.
-            // Throw the same typed error the SDK would, before loading
-            // any weights, so a model declared without `.vision` fails
-            // fast and identically across the tool / schema / plain paths.
+            // The SDK's vision check does not cover `.attachment` segments, so the adapter
+            // must enforce `.vision` for image attachments itself.
             if !model.capabilities.contains(.vision),
                 messages.contains(where: { !$0.images.isEmpty })
             {
@@ -719,6 +711,7 @@ public struct MLXLanguageModel: FoundationModels.LanguageModel, Sendable {
             // reasoning config we route on.
             let declaresReasoning = model.capabilities.contains(.reasoning)
             let configurationResolver = model.configurationResolver
+            let labeledAttachments = TranscriptConverter.labeledAttachments(in: request.transcript)
 
             do {
                 // Send metadata first
@@ -731,6 +724,9 @@ public struct MLXLanguageModel: FoundationModels.LanguageModel, Sendable {
                 // .Video are not Sendable), so route the array through
                 // perform(nonSendable:_:) which boxes it across the actor hop.
                 try await container.perform(nonSendable: messages) { context, messages in
+                    try AttachmentLabelValidator.default.validate(
+                        labeledAttachments, with: context.tokenizer)
+
                     // Render the prompt through the model's UserInputProcessor.
                     let userInput = UserInput(chat: messages)
                     let input = try await context.processor.prepare(input: userInput)
