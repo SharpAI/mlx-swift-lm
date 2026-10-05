@@ -114,7 +114,7 @@ struct ContinuationAssertions {
             let (logitsW, _) = try prefill(model, t2, cache: cacheW, state: s1)
 
             XCTAssertLessThanOrEqual(
-                maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, 1e-3),
+                maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, MatmulPrecision.splitTolerance),
                 "warm continuation diverged from full prefill (noise floor \(noiseFloor))",
                 file: file, line: line)
         }
@@ -155,7 +155,7 @@ struct ContinuationAssertions {
             let (logitsW, _) = try prefill(model, t2, cache: cacheW, state: s1)
 
             XCTAssertLessThanOrEqual(
-                maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, 1e-3),
+                maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, MatmulPrecision.splitTolerance),
                 "state-threaded warm continuation diverged from full prefill (noise floor \(noiseFloor))",
                 file: file, line: line)
         }
@@ -265,11 +265,11 @@ struct ContinuationAssertions {
 
             if expectsIsolation {
                 XCTAssertLessThanOrEqual(
-                    cacheDivergence, 1e-3,
+                    cacheDivergence, MatmulPrecision.splitTolerance,
                     "masked-per-frame vision attention should not have mixed the two images' features (cache divergence \(cacheDivergence))",
                     file: file, line: line)
                 XCTAssertLessThanOrEqual(
-                    diff, 1e-2,
+                    diff, max(1e-2, MatmulPrecision.splitTolerance),
                     "split-suffix prefill diverged from full prefill",
                     file: file, line: line)
             } else {
@@ -321,7 +321,7 @@ struct ContinuationAssertions {
             let (logitsW, _) = try prefill(model, t3, cache: cacheW, state: s2)
 
             XCTAssertLessThanOrEqual(
-                maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, 1e-3),
+                maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, MatmulPrecision.splitTolerance),
                 "post-image resume state positioned the following turn wrong (noise floor \(noiseFloor))",
                 file: file, line: line)
         }
@@ -358,7 +358,7 @@ struct ContinuationAssertions {
             let (logitsC, _) = try prefill(model, prompt, cache: cacheC, stepSize: 8)
 
             XCTAssertLessThanOrEqual(
-                maxAbsDiff(logitsC, logitsS), max(noiseFloor * 10, 1e-3),
+                maxAbsDiff(logitsC, logitsS), max(noiseFloor * 10, MatmulPrecision.splitTolerance),
                 "windowed prefill diverged from single-shot (noise floor \(noiseFloor))",
                 file: file, line: line)
         }
@@ -408,7 +408,7 @@ struct ContinuationAssertions {
                     model, prompt, image: image, cache: cacheC, stepSize: stepSize)
 
                 XCTAssertLessThanOrEqual(
-                    maxAbsDiff(logitsC, logitsS), max(noiseFloor * 10, 1e-3),
+                    maxAbsDiff(logitsC, logitsS), max(noiseFloor * 10, MatmulPrecision.splitTolerance),
                     "windowed image prefill diverged from single-shot at stepSize \(stepSize) (noise floor \(noiseFloor))",
                     file: file, line: line)
             }

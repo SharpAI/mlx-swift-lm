@@ -404,7 +404,7 @@ public enum MediaProcessing {
         maxFrames: Int = Int.max,
         frameProcessing: (VideoFrame) throws -> VideoFrame = { $0 }
     ) async throws -> ProcessedFrames {
-        switch video {
+        switch video.source {
         case .avAsset(let asset):
             try await Self.validateAsset(asset)
             return try await _asProcessedSequence(
@@ -637,7 +637,7 @@ public enum MediaProcessing {
         let url: URL
         var tempURL: URL? = nil
         
-        switch audio {
+        switch audio.source {
         case .url(let u):
             url = u
         case .data(let data, let format):

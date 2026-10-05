@@ -833,7 +833,8 @@ public struct Qwen2VLProcessor: UserInputProcessor {
     }
 
     public func prepare(input: UserInput) async throws -> LMInput {
-        let messages = Qwen2VLMessageGenerator().generate(from: input)
+        let messages = Qwen2VLMessageGenerator().generate(
+            from: input.removingSpecialTokenLabels(using: tokenizer))
 
         var promptTokens = try tokenizer.applyChatTemplate(
             messages: messages, tools: input.tools,
@@ -1286,13 +1287,13 @@ public struct Qwen2VLMessageGenerator: MessageGenerator {
         // <|vision_start|><|image_pad|><|vision_end|>{text}. Putting text first
         // shifts image-token positions and skews MROPE position IDs, producing
         // a deterministic ~9 px bbox offset vs the Python mlx-vlm reference.
+        var content = contentParts(for: message, layout: .imagesThenVideosThenText)
+        // Audio is fork-only: its placeholders go between the videos and the trailing text.
+        content.insert(
+            contentsOf: message.audios.map { _ in ["type": "audio"] }, at: content.count - 1)
         var dictionary: MLXLMCommon.Message = [
             "role": message.role.rawValue,
-            "content":
-                message.images.map { _ in ["type": "image"] }
-                + message.videos.map { _ in ["type": "video"] }
-                + message.audios.map { _ in ["type": "audio"] }
-                + [["type": "text", "text": message.content]],
+            "content": content,
         ]
         addToolMetadata(to: &dictionary, for: message)
         return dictionary

@@ -2828,10 +2828,10 @@ public struct Gemma4MessageGenerator: MessageGenerator {
         }
         // User messages with media: images/videos FIRST, then text, then audio
         // This matches the Python: apply_chat_template(..., image_first=True)
-        var content: [[String: any Sendable]] = []
-        content += message.images.map { _ in ["type": "image"] as [String: any Sendable] }
-        content += message.videos.map { _ in ["type": "video"] as [String: any Sendable] }
-        content.append(["type": "text", "text": message.content])
+        // contentParts adds upstream's named-image text parts; audio is fork-only.
+        var content: [[String: any Sendable]] = contentParts(
+            for: message, layout: .imagesThenVideosThenText
+        ).map { $0 as [String: any Sendable] }
         content += message.audios.map { _ in ["type": "audio"] as [String: any Sendable] }
         var dictionary: MLXLMCommon.Message = [
             "role": message.role.rawValue,
@@ -2912,7 +2912,8 @@ public struct Gemma4Processor: UserInputProcessor {
     }
 
     public func prepare(input: UserInput) async throws -> LMInput {
-        let messages = Gemma4MessageGenerator().generate(from: input)
+        let messages = Gemma4MessageGenerator().generate(
+            from: input.removingSpecialTokenLabels(using: tokenizer))
 
         var promptTokens = try tokenizer.applyChatTemplate(
             messages: messages, tools: input.tools,
@@ -3538,7 +3539,8 @@ public struct Gemma4UnifiedProcessor: UserInputProcessor {
     }
 
     public func prepare(input: UserInput) async throws -> LMInput {
-        let messages = Gemma4MessageGenerator().generate(from: input)
+        let messages = Gemma4MessageGenerator().generate(
+            from: input.removingSpecialTokenLabels(using: tokenizer))
 
         var promptTokens = try tokenizer.applyChatTemplate(
             messages: messages, tools: input.tools,
