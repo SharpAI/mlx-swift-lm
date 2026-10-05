@@ -19,11 +19,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: SharpAI/SwiftLM
-          # TEMPORARY: main doesn't yet have the fix for the `newCache`
-          # throws API change from this PR (LanguageModel.newCache became
-          # throwing). Point at that fix branch until it's merged to main,
-          # then drop this `ref:` override.
-          ref: fix/mlx-swift-lm-throwing-newcache
+          # The newCache-throws fix (SwiftLM#167) has long been merged to main,
+          # so test against main instead of the stale temporary fix branch.
+          ref: main
           path: SwiftLM
           token: ${{ secrets.GITHUB_TOKEN }}
           submodules: recursive
