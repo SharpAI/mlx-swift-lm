@@ -61,6 +61,7 @@ let package = Package(
         .default(enabledTraits: ["FoundationModelsIntegration"]),
     ],
     dependencies: [
+<<<<<<< HEAD
         // ── Dependency Update Flow ────────────────────────────────────────────────
         // ml-explore/mlx-swift  →  SharpAI/mlx-swift (sync bot PR + CI)
         //
@@ -76,6 +77,9 @@ let package = Package(
         // ─────────────────────────────────────────────────────────────────────────
         .package(path: "../mlx-swift"),
 
+=======
+        .package(url: "https://github.com/SharpAI/mlx-swift.git", exact: "0.30.6"),
+>>>>>>> upstream/main
         // 602.0.0 floor: swift.org publishes signed prebuilt swift-syntax artifacts only for
         // >= 602 tags on current toolchains; a 600.x/601.x resolution falls back to the full
         // source compile of swift-syntax.

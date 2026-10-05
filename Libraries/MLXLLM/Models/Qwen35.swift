@@ -286,6 +286,14 @@ final class Qwen35GatedDeltaNet: Module {
 
     var hasFusedInputProjection: Bool { fusedInputProjection.isPrepared }
 
+    /// The fused projection as compile state for a trace that runs this
+    /// layer. It is not a registered child (the checkpoint topology stays the
+    /// four projections), so a trace would otherwise read its arrays as tape
+    /// constants, and MLX keeps such constants alive after the trace is erased.
+    var fusedProjectionTraceState: [Module] {
+        fusedInputProjection.fused.map { [$0] } ?? []
+    }
+
     /// Build one physical quantized projection while retaining the four named
     /// module paths as storage-sharing views. This runs at most once between
     /// parameter/module updates; failed eligibility checks are not repeated on
@@ -854,11 +862,13 @@ final class Qwen35DecoderLayer: Module {
 
     // Every body stays inside this layer, so each trace's default state (the
     // layer's own weights) is complete.
-    private let compiledLinearLayer = CompiledTrace<Qwen35DecoderLayer> { layer, arguments in
-        let (out, newConvState, newRecState) = layer.linearLayerBody(
-            x: arguments[0], convState: arguments[1], recState: arguments[2])
-        return [out, newConvState, newRecState]
-    }
+    private let compiledLinearLayer = CompiledTrace<Qwen35DecoderLayer>(
+        state: { [$0] + ($0.linearAttn?.fusedProjectionTraceState ?? []) },
+        body: { layer, arguments in
+            let (out, newConvState, newRecState) = layer.linearLayerBody(
+                x: arguments[0], convState: arguments[1], recState: arguments[2])
+            return [out, newConvState, newRecState]
+        })
 
     private let compiledAttentionPre = CompiledTrace<Qwen35DecoderLayer> { layer, arguments in
         let (queries, gate, keys, values) = layer.attentionPreBody(x: arguments[0])
@@ -989,9 +999,10 @@ public class Qwen35TextModelInner: Module, LayerPartitionable, StreamableMoE {
         self.compiledSegments = CompiledDecodeSegmentCache(
             count: segments.count,
             state: { model, index in
-                // Everything `segmentBody` reads: the layers it runs, the
-                // embedding it starts from, the final norm it ends with.
-                var modules: [Module] = segments[index].layerIndices.map { model.layers[$0] }
+                // Everything `segmentBody` reads: the layers it runs (with a
+                // GDN layer's fused projection), the embedding it starts
+                // from, the final norm it ends with.
+                var modules = model.traceState(forLayers: segments[index].layerIndices)
                 if index == 0 {
                     modules.append(model.embedTokens)
                 }
@@ -1097,6 +1108,15 @@ public class Qwen35TextModelInner: Module, LayerPartitionable, StreamableMoE {
             hiddenStates = norm(hiddenStates)
         }
         return [hiddenStates] + states
+    }
+
+    /// The compile state of a trace that runs `indices`: each layer and, for
+    /// a GDN layer, its fused projection.
+    func traceState(forLayers indices: [Int]) -> [Module] {
+        indices.flatMap { index -> [Module] in
+            let layer = layers[index]
+            return [layer] + (layer.linearAttn?.fusedProjectionTraceState ?? [])
+        }
     }
 
     /// One decode step through the compiled segments, or nil when this is not

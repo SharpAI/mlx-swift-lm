@@ -114,7 +114,7 @@ struct ContinuationAssertions {
             let (logitsW, _) = try prefill(model, t2, cache: cacheW, state: s1)
 
             XCTAssertLessThanOrEqual(
-                maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, 1e-3),
+                maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, MatmulPrecision.splitTolerance),
                 "warm continuation diverged from full prefill (noise floor \(noiseFloor))",
                 file: file, line: line)
         }
@@ -155,8 +155,13 @@ struct ContinuationAssertions {
             let (logitsW, _) = try prefill(model, t2, cache: cacheW, state: s1)
 
             XCTAssertLessThanOrEqual(
+<<<<<<< HEAD
                 maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, 1e-3),
                 "state-threaded warm continuation diverged from full prefill (noise floor \(noiseFloor))",
+=======
+                maxAbsDiff(logitsW, logitsF), MatmulPrecision.splitTolerance,
+                "state-threaded warm continuation diverged from full prefill",
+>>>>>>> upstream/main
                 file: file, line: line)
         }
     }
@@ -265,6 +270,7 @@ struct ContinuationAssertions {
 
             if expectsIsolation {
                 XCTAssertLessThanOrEqual(
+<<<<<<< HEAD
                     cacheDivergence, 1e-3,
                     "masked-per-frame vision attention should not have mixed the two images' features (cache divergence \(cacheDivergence))",
                     file: file, line: line)
@@ -276,6 +282,14 @@ struct ContinuationAssertions {
                 XCTAssertGreaterThan(
                     cacheDivergence, 1e-2,
                     "unmasked cross-image vision attention should have changed t1's cached features when computed alongside imageB (cache divergence \(cacheDivergence))",
+=======
+                    diff, MatmulPrecision.splitTolerance,
+                    "split-suffix prefill diverged from full prefill", file: file, line: line)
+            } else {
+                XCTAssertGreaterThan(
+                    diff, MatmulPrecision.splitTolerance,
+                    "cross-image vision attention should have changed the logits",
+>>>>>>> upstream/main
                     file: file, line: line)
             }
         }
@@ -321,8 +335,13 @@ struct ContinuationAssertions {
             let (logitsW, _) = try prefill(model, t3, cache: cacheW, state: s2)
 
             XCTAssertLessThanOrEqual(
+<<<<<<< HEAD
                 maxAbsDiff(logitsW, logitsF), max(noiseFloor * 10, 1e-3),
                 "post-image resume state positioned the following turn wrong (noise floor \(noiseFloor))",
+=======
+                maxAbsDiff(logitsW, logitsF), MatmulPrecision.splitTolerance,
+                "post-image resume state positioned the following turn wrong",
+>>>>>>> upstream/main
                 file: file, line: line)
         }
     }
@@ -358,9 +377,14 @@ struct ContinuationAssertions {
             let (logitsC, _) = try prefill(model, prompt, cache: cacheC, stepSize: 8)
 
             XCTAssertLessThanOrEqual(
+<<<<<<< HEAD
                 maxAbsDiff(logitsC, logitsS), max(noiseFloor * 10, 1e-3),
                 "windowed prefill diverged from single-shot (noise floor \(noiseFloor))",
                 file: file, line: line)
+=======
+                maxAbsDiff(logitsC, logitsS), MatmulPrecision.splitTolerance,
+                "windowed prefill diverged from single-shot", file: file, line: line)
+>>>>>>> upstream/main
         }
     }
 
@@ -408,8 +432,13 @@ struct ContinuationAssertions {
                     model, prompt, image: image, cache: cacheC, stepSize: stepSize)
 
                 XCTAssertLessThanOrEqual(
+<<<<<<< HEAD
                     maxAbsDiff(logitsC, logitsS), max(noiseFloor * 10, 1e-3),
                     "windowed image prefill diverged from single-shot at stepSize \(stepSize) (noise floor \(noiseFloor))",
+=======
+                    maxAbsDiff(logitsC, logitsS), MatmulPrecision.splitTolerance,
+                    "windowed image prefill diverged from single-shot at stepSize \(stepSize)",
+>>>>>>> upstream/main
                     file: file, line: line)
             }
         }

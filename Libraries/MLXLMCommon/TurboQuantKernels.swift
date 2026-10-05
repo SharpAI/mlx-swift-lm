@@ -282,12 +282,27 @@ enum TurboQuantMetalKernels {
                 uint block_id = d / block_size;
                 uint pos_in_block = d % block_size;
 
+<<<<<<< HEAD
                 uint lo = block_id * block_size + (pos_in_block % half_block);
                 float a = shared_buf[lo];
                 float b = shared_buf[lo + half_block];
                 // The pair spans SIMD groups: all reads must finish before any write.
                 threadgroup_barrier(mem_flags::mem_threadgroup);
                 shared_buf[d] = (pos_in_block < half_block) ? (a + b) : (a - b);
+=======
+                float a, b;
+                if (pos_in_block < half_block) {
+                    a = shared_buf[block_id * block_size + pos_in_block];
+                    b = shared_buf[block_id * block_size + pos_in_block + half_block];
+                } else {
+                    a = shared_buf[block_id * block_size + pos_in_block - half_block];
+                    b = shared_buf[block_id * block_size + pos_in_block];
+                }
+                float next = (pos_in_block < half_block) ? (a + b) : (a - b);
+                // All groups must finish reading this stage before any overwrite.
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+                shared_buf[d] = next;
+>>>>>>> upstream/main
                 threadgroup_barrier(mem_flags::mem_threadgroup);
             }
             wht_val = shared_buf[d];
