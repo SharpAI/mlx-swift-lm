@@ -22,7 +22,7 @@ extension UserInput.Audio {
 
     public func asMLXArray(processing: UserInput.AudioProcessing = .init()) async throws -> MLXArray
     {
-        switch self {
+        switch source {
         case .array(let array):
             return array
         case .data(let data, let format):
