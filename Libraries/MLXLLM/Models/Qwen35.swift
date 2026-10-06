@@ -822,24 +822,24 @@ final class Qwen35DecoderLayer: Module {
         // ─────────────────────────────────────────────────────────────────────
         // FLUSH-LOAD-EXECUTE ARCHITECTURE: Phase 1 (Flush & Split)
         // ─────────────────────────────────────────────────────────────────────
-        // If we are processing a Mixture of Experts layer AND SSD expert streaming
-        // is active, we explicitly evaluate the attention subgraph (`h`) and
-        // synchronize the Metal GPU queue here.
+        // With SSD expert streaming, prefill (more than one token per forward) evaluates the
+        // attention subgraph (`h`) and synchronizes the Metal queue around the MoE block. That
+        // keeps each prefill chunk's command buffer bounded and lets the blocking `load_sync`
+        // expert reads run on an otherwise idle queue.
         //
-        // THIS IS VITAL FOR SSD STREAMING: When SSD Expert Streaming evaluates
-        // the `mlp` custom op, it performs a highly latency-sensitive `load_sync`
-        // (blocking the CPU). Ensuring the previous GPU work is committed and
-        // completed means the expert GEMM executes on an isolated, empty Metal
-        // Command Buffer.
-        //
-        // GATING: The flush is ONLY needed when streaming experts from SSD. With
-        // experts resident in RAM (default 35B-A3B path), these two per-layer
-        // syncs drain the Metal command queue 2x per layer x 32 layers = 64 hard
-        // CPU<->GPU syncs per token, capping GPU utilization well below 100% and
-        // serializing kernel launches that MLX would otherwise pipeline.
-        // ─────────────────────────────────────────────────────────────────────
-        let needsMoeFlush = (self.mlp is Qwen35SparseMoeBlock)
-            && ExpertStreamingConfig.shared.isEnabled
+        // Single-token decode skips both syncs. Ordering there does not depend on them:
+        // SwitchGLU reads the router indices back to the CPU in every MoE layer, which forces
+        // the previous layer's work, and the next token's first layer depends on the sampled
+        // token. So a CPU expert read never overlaps GPU work that uses the same buffers, and
+        // the per-layer readback keeps each command buffer to about one layer of work. On a
+        // 16 GB M2 with the 35B-A3B oQ4e checkpoint and `--stream-experts`, the two syncs cost
+        // about 20% of decode speed (4.4 vs 5.4 tok/s, also at an 8k-token context).
+        // `MLX_MOE_DECODE_FLUSH=1` restores the old per-layer flush for decode.
+        let needsMoeFlush = Self.needsMoeFlush(
+            isSparseMoE: self.mlp is Qwen35SparseMoeBlock,
+            streamingExperts: ExpertStreamingConfig.shared.isEnabled,
+            tokenCount: x.dim(1),
+            flushDecode: Self.flushDecodeOverride)
         if needsMoeFlush {
             if let cacheState = cache {
                 eval([h] + cacheState.innerState())
@@ -857,6 +857,19 @@ final class Qwen35DecoderLayer: Module {
         }
         return finalH
     }
+
+    /// Whether to evaluate and synchronize the GPU around the MoE block of this layer.
+    /// Only SSD expert streaming needs it, and only for prefill-sized forwards unless
+    /// `flushDecode` asks for the old behaviour on single-token decode too.
+    static func needsMoeFlush(
+        isSparseMoE: Bool, streamingExperts: Bool, tokenCount: Int, flushDecode: Bool
+    ) -> Bool {
+        isSparseMoE && streamingExperts && (tokenCount > 1 || flushDecode)
+    }
+
+    /// `MLX_MOE_DECODE_FLUSH=1` keeps the per-layer MoE flush on single-token decode.
+    static let flushDecodeOverride: Bool =
+        ProcessInfo.processInfo.environment["MLX_MOE_DECODE_FLUSH"] == "1"
 
     // MARK: - Compiled decode blocks
 
