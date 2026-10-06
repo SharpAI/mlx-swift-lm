@@ -1,127 +1,60 @@
 name: 🔄 Auto-Sync Upstream
 
+# Merges ml-explore/mlx-swift-lm main into this fork as a real merge commit, pushes it to
+# a NEW branch (bot/upstream-<up>-<base>) and opens a PR. THE BOT NEVER APPROVES,
+# REVIEWS OR MERGES: the only PR call is `gh pr create`, and it never
+# force-pushes. A person reviews and merges the PR. Logic lives in
+# .github/scripts/upstream-sync.sh (runnable locally; a dry run outside GitHub
+# Actions). Conflicts are never resolved or pushed. A red run means a person has
+# to act; see the script header.
+
 on:
   schedule:
     - cron: '30 4 * * *' # Every day at 4:30 AM UTC
   workflow_dispatch: # Enable manual triggers
+    inputs:
+      dry_run:
+        description: 'Dry run: merge and report, but push nothing and open no PR'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: write        # push the new bot/upstream-* branch (never an existing one)
+  pull-requests: write   # `gh pr create` (+ list PRs); nothing here approves or merges
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Add Upstream Remote
-        run: git remote add upstream https://github.com/ml-explore/mlx-swift-lm.git
-
-      - name: Fetch Upstream
-        run: git fetch upstream
-
-      - name: Create or Update Sync Branch
-        run: |
-          git checkout -B sync/upstream-latest
-          # A real three-way merge, not -X ours: that option silently kept our
-          # side of every hunk both sides touched (no conflict markers, no
-          # review), which is how upstream fixes to shared code kept getting
-          # dropped without anyone noticing. If upstream and SharpAI both
-          # changed the same code, that must show up as a merge conflict.
-          if git merge upstream/main --no-edit --allow-unrelated-histories; then
-            CONFLICTS=false
-          else
-            # Keep the conflict markers instead of aborting: `git add -A`
-            # marks paths as resolved from git's point of view without
-            # touching their contents, so the markers ride into the commit
-            # and the PR diff, where a human resolves them through review
-            # instead of the bot silently picking a side.
-            CONFLICTS=true
-            git add -A
-          fi
-          # Always restore the SharpAI fork dependency — upstream will overwrite
-          # this with ml-explore/mlx-swift, which lacks TurboKV/SSD Metal ops.
-          # The tag is bumped separately by update_dependencies.yml.
-          CURRENT_TAG=$(grep -oP '(?<=exact: ")([^"]+)' Package.swift || echo "0.30.6")
-          sed -i "s|package(url: \"https://github.com/ml-explore/mlx-swift.*|package(url: \"https://github.com/SharpAI/mlx-swift.git\", exact: \"${CURRENT_TAG}\"),|" Package.swift
-          git add Package.swift
-          # GITHUB_TOKEN can never push a commit that touches .github/workflows/*,
-          # regardless of the permissions: block above — that restriction is
-          # hard-coded for the default token and isn't a grantable scope (there is
-          # no such thing as a "workflows" permissions key; that error message's
-          # wording is misleading). `rm -rf` before restoring is required, not
-          # optional: `git checkout <ref> -- .github/workflows` only overwrites
-          # paths that already exist in <ref> — it leaves a file the merge just
-          # added (e.g. upstream's integration_tests.yml, which origin/main
-          # never had) sitting in the working tree untouched, so the push still
-          # gets rejected for that new file. Verified locally: without the rm,
-          # this step is a silent no-op for exactly the case that matters.
-          rm -rf .github/workflows
-          git checkout origin/main -- .github/workflows
-          git add -A .github/workflows
-          if [ "$CONFLICTS" = true ]; then
-            git commit -m "chore(sync): merge upstream/main (UNRESOLVED CONFLICTS — needs manual review)"
-          else
-            git diff --cached --quiet || git commit -m "chore(sync): restore SharpAI mlx-swift fork dependency after upstream merge"
-          fi
-          git push -f origin sync/upstream-latest
-          echo "CONFLICTS=$CONFLICTS" >> "$GITHUB_ENV"
-
-      - name: Verify Swift Syntax
-        run: |
-          # A merge git reports as clean (no <<<<<<< markers) can still be
-          # broken: line-based 3-way merge can auto-combine two nearby edits
-          # into invalid Swift (a dropped function signature, an orphaned
-          # body) without ever flagging a conflict. This happened once
-          # already and went unnoticed because nothing checked the merge
-          # result before it was pushed. This step only parses every Swift
-          # file for syntax errors — it is not a full build (no
-          # macOS/Metal toolchain here) and can't catch semantic breakage,
-          # but it catches exactly the "structurally invalid code" failure
-          # mode seen last time. No attempt is made to fix anything: on
-          # failure we just flag it below, the same way CONFLICTS is
-          # flagged, so a human pulls the branch and fixes it by hand.
-          SYNTAX_OK=true
-          while IFS= read -r -d '' f; do
-            if ! docker run --rm -v "$PWD:/src" -w /src swift:6.2 \
-                swiftc -parse -suppress-warnings "$f" 2>&1; then
-              echo "::error::Syntax error in $f"
-              SYNTAX_OK=false
-            fi
-          done < <(find . -name '*.swift' -not -path './.build/*' -print0)
-          echo "SYNTAX_OK=$SYNTAX_OK" >> "$GITHUB_ENV"
-
-      - name: Create Pull Request to Main
+      - name: Sync upstream
         env:
-          # Bare GITHUB_TOKEN fails here with "Resource not accessible by
-          # integration (createPullRequest)" — confirmed by a real
-          # workflow_dispatch run after the push-rejection bug above was fixed
-          # and verified working. The sibling mlx-swift/upstream-sync.yml
-          # already falls back to SWIFTLM_PR_TOKEN for this exact step (it's
-          # configured on both repos) and has created PRs successfully on
-          # every run; this applies the same fallback here.
-          GH_TOKEN: ${{ secrets.SWIFTLM_PR_TOKEN || secrets.GITHUB_TOKEN }}
-        run: |
-          if [ "$CONFLICTS" = true ] && [ "$SYNTAX_OK" = false ]; then
-            TITLE="🔄⚠️ Auto-Sync: Apple Upstream Repository (CONFLICTS + SYNTAX ERRORS — do not merge as-is)"
-            BODY="Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. The merge left unresolved conflicts (search for \`<<<<<<<\`) AND the post-merge syntax check failed. Resolve conflicts by hand, then fix the reported syntax errors, before merging. Do not assume either side is automatically correct."
-          elif [ "$CONFLICTS" = true ]; then
-            TITLE="🔄⚠️ Auto-Sync: Apple Upstream Repository (CONFLICTS — do not merge as-is)"
-            BODY="Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. The merge left unresolved conflicts (search for \`<<<<<<<\`) — resolve them by hand before merging. Do not assume either side is automatically correct."
-          elif [ "$SYNTAX_OK" = false ]; then
-            TITLE="🔄⚠️ Auto-Sync: Apple Upstream Repository (SYNTAX ERRORS — do not merge as-is)"
-            BODY="Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. Git reported a clean merge, but the post-merge syntax check found invalid Swift (see the workflow run log for file/line). Pull the branch and fix it by hand before merging — do not assume a 'clean' merge is safe."
-          else
-            TITLE="🔄 Auto-Sync: Apple Upstream Repository"
-            BODY="Automated PR to synchronize SharpAI fork with Apple mlx-swift-lm upstream repository. Please review merge conflicts (if any) and verify CI pipelines."
-          fi
-          gh pr create --base main --head sync/upstream-latest --title "$TITLE" --body "$BODY" || echo "PR already exists or no changes"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Tried first for `gh pr create`: a PR opened with a personal token
+          # starts CI normally, one opened with GITHUB_TOKEN does not (close and
+          # reopen it once). Needs "Pull requests: write". Optional.
+          PR_TOKEN: ${{ secrets.SWIFTLM_PR_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          UPSTREAM_REPO: ml-explore/mlx-swift-lm
+          # A merge that touches these is listed in the PR body for a human look.
+          # Package.swift: the fork depends on ../mlx-swift (path), upstream on a tagged release.
+          WATCH_PATHS: Package.swift
+          # Fork-only lines a merge must not lose (path::fixed string, one per line).
+          KEEP_LINES: |
+            Package.swift::.package(path: "../mlx-swift")
+          CONFLICT_HINTS: |
+            - `Package.swift`: keep the local `../mlx-swift` path dependency; do not take upstream's mlx-swift requirement.
+            - `UserInput*.swift`, `MediaProcessing`: keep the fork-only `.data(Data, format:)` audio source (SwiftLM's Server.swift builds audio from base64 data).
+            - `Qwen2VL` / `Gemma4` message generators: keep the fork-only audio placeholders; Qwen3.5 VLM `sanitize`: keep the `MTPConfig.retainMTPWeights` guard.
+            - `TurboQuantKernels.swift`, `ContinuationAssertions`, `KVCacheTests`: the fork carries TurboQuant and measured test tolerances.
+            - Worked example of a full resolution: SharpAI/mlx-swift-lm#74.
+        run: bash .github/scripts/upstream-sync.sh
