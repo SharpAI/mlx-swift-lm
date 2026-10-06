@@ -74,12 +74,12 @@ final class Qwen35SanitizeTests: XCTestCase {
             "model.norm.weight": dummy,
             // Already-namespaced path — verify the existing rename branch
             // still fires.
-            "model.language_model.layers.0.mlp.up_proj.weight": dummy,
+            "model.language_model.layers.0.mlp.gate_proj.weight": dummy,
             // Top-level path the existing logic remaps.
             "lm_head.weight": dummy,
         ]
 
-        let sanitized = model.sanitize(weights: weights)
+        let sanitized = try model.sanitize(weights: weights)
 
         // Bare `model.*` keys are now under `language_model.model.*`.
         XCTAssertNotNil(
@@ -89,6 +89,7 @@ final class Qwen35SanitizeTests: XCTestCase {
             sanitized["language_model.model.layers.0.self_attn.q_proj.weight"])
         XCTAssertNotNil(sanitized["language_model.model.embed_tokens.weight"])
         XCTAssertNotNil(sanitized["language_model.model.norm.weight"])
+        XCTAssertNotNil(sanitized["language_model.model.layers.0.mlp.gate_proj.weight"])
 
         // The `lm_head` rename branch is preserved.
         XCTAssertNotNil(sanitized["language_model.lm_head.weight"])
@@ -100,6 +101,20 @@ final class Qwen35SanitizeTests: XCTestCase {
                     || key == "model.embed_tokens.weight"
                     || key == "model.norm.weight",
                 "bare model.* key leaked through sanitize: \(key)")
+        }
+    }
+
+    func testCompetingAliasesAreRejectedDuringCheckpointPreparation() throws {
+        let model = Qwen35(try makeMinimalConfig())
+        let weights = [
+            "model.layers.0.mlp.up_proj.weight": MLXArray.zeros([1, 1]),
+            "model.language_model.layers.0.mlp.up_proj.weight": MLXArray.ones([1, 1]),
+        ]
+        XCTAssertThrowsError(try model.prepareCheckpoint(.init(weights: weights))) { error in
+            XCTAssertTrue(error is ModelCheckpoint.MappingError)
+        }
+        XCTAssertThrowsError(try model.sanitize(weights: weights)) { error in
+            XCTAssertTrue(error is ModelCheckpoint.MappingError)
         }
     }
 
@@ -120,7 +135,7 @@ final class Qwen35SanitizeTests: XCTestCase {
             "language_model.model.norm.weight": MLXArray.zeros([8]),
         ]
 
-        let sanitized = model.sanitize(weights: weights)
+        let sanitized = try model.sanitize(weights: weights)
 
         let norm = try XCTUnwrap(sanitized["language_model.model.norm.weight"])
         XCTAssertEqual(
@@ -141,7 +156,7 @@ final class Qwen35SanitizeTests: XCTestCase {
             "language_model.mtp.layers.0.self_attn.q_proj.weight": dummy,
         ]
 
-        let sanitized = model.sanitize(weights: weights, metadata: ["format": "mlx"])
+        let sanitized = try model.sanitize(weights: weights, metadata: ["format": "mlx"])
 
         XCTAssertEqual(Set(sanitized.keys), ["language_model.model.norm.weight"])
     }
@@ -158,7 +173,7 @@ final class Qwen35SanitizeTests: XCTestCase {
             "language_model.model.norm.weight": MLXArray.zeros([8]),
         ]
 
-        let sanitized = model.sanitize(weights: weights)
+        let sanitized = try model.sanitize(weights: weights)
 
         let norm = try XCTUnwrap(sanitized["language_model.model.norm.weight"])
         XCTAssertEqual(

@@ -30,6 +30,8 @@ final class GenerationExecutionTests: XCTestCase {
         var streamingError: SSDStreamingError? { nil }
         var acceptedDraftTokens: Int { 0 }
         var totalDraftTokens: Int { 0 }
+        var evictedTokenCount = 0
+        var reasoningTokenCount: Int?
         var onNext: @Sendable () -> Void = {}
         var onFinalize: @Sendable () -> Void = {}
 
@@ -281,6 +283,31 @@ final class GenerationExecutionTests: XCTestCase {
         XCTAssertEqual(completion?.stopReason, .length)
         XCTAssertEqual(completion?.generationTokenCount, 0)
         await fulfillment(of: [finalized], timeout: 0)
+    }
+
+    func testGenerationReportsCompletionObservability() async {
+        let (stream, task) = generateTaskRecordingTokens(
+            promptTokenCount: 3,
+            modelConfiguration: .init(id: "test"),
+            tokenizer: TestTokenizer(),
+            iterator: Iterator(
+                maxTokens: 2,
+                evictedTokenCount: 4,
+                reasoningTokenCount: 1))
+
+        var completion: GenerateCompletionInfo?
+        for await event in stream {
+            switch event {
+            case .info(let info): completion = info
+            case .chunk, .toolCall, .rejectedToolCall: break
+            }
+        }
+
+        _ = await task.value
+        XCTAssertEqual(completion?.evictedTokenCount, 4)
+        XCTAssertEqual(completion?.reasoningTokenCount, 1)
+        XCTAssertEqual(completion?.answerTokenCount, 1)
+        XCTAssertTrue(completion?.summary().contains("4 context tokens dropped") == true)
     }
 
     func testTaskContextAndRecordedTokensSurviveExecutionHop() async {
