@@ -838,8 +838,15 @@ final class Qwen35DecoderLayer: Module {
         // CPU<->GPU syncs per token, capping GPU utilization well below 100% and
         // serializing kernel launches that MLX would otherwise pipeline.
         // ─────────────────────────────────────────────────────────────────────
+        //
+        // PREFILL ONLY: single-token decode skips the flush. Measured on a 16 GB M2 with the
+        // 35B-A3B oQ4e checkpoint and `--stream-experts`, the two syncs cost about 20% of decode
+        // speed (4.4 vs 5.4 tok/s, and the same at an 8k-token context) and removing them for
+        // decode changed neither the generated text nor the TTFT. The VLM implementation of
+        // this model has never flushed and streams safely.
         let needsMoeFlush = (self.mlp is Qwen35SparseMoeBlock)
             && ExpertStreamingConfig.shared.isEnabled
+            && x.dim(1) > 1
         if needsMoeFlush {
             if let cacheState = cache {
                 eval([h] + cacheState.innerState())
