@@ -129,18 +129,21 @@ private final class ConcurrentLoadState: @unchecked Sendable {
         if firstError == nil { firstError = error }
     }
 
-    /// Weights merged in file order (a later file overwrites a duplicate name, matching the
-    /// serial loader) and the first file's metadata.
-    func result() throws -> (weights: [String: MLXArray], metadata: [String: String]) {
+    /// Preserve file order and tensor metadata, including later-file-wins duplicates.
+    func result() throws -> ModelCheckpoint {
         lock.lock()
         defer { lock.unlock() }
         if let firstError { throw firstError }
         var weights = [String: MLXArray]()
-        for fileWeights in perFile {
+        var weightMetadata = [String: [String: String]]()
+        for (index, fileWeights) in perFile.enumerated() {
             weights.merge(fileWeights) { _, new in new }
+            for name in fileWeights.keys {
+                weightMetadata[name] = perFileMetadata[index]
+            }
         }
         let metadata = perFileMetadata.first { !$0.isEmpty } ?? [:]
-        return (weights, metadata)
+        return ModelCheckpoint(weights: weights, metadata: metadata, weightMetadata: weightMetadata)
     }
 }
 
@@ -154,6 +157,11 @@ private final class ConcurrentLoadState: @unchecked Sendable {
 func loadWeightArrays(urls: [URL]) throws -> (
     weights: [String: MLXArray], metadata: [String: String]
 ) {
+    let checkpoint = try loadModelCheckpoint(urls: urls)
+    return (checkpoint.weights, checkpoint.metadata)
+}
+
+func loadModelCheckpoint(urls: [URL]) throws -> ModelCheckpoint {
     struct WorkItem {
         let file: Int
         let url: URL
@@ -352,11 +360,47 @@ private func topLevelSafetensorURLs(in modelDirectory: URL) -> [URL] {
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
 }
 
+/// Extra `*mtp*.safetensors` files in `modelDirectory` (any depth) that `selected` does not
+/// already contain, in a stable order.
+private func mtpAddOnWeightURLs(in modelDirectory: URL, excluding selected: [URL]) -> [URL] {
+    let selectedPaths = Set(selected.map { $0.standardizedFileURL.path })
+    guard
+        let enumerator = FileManager.default.enumerator(
+            at: modelDirectory, includingPropertiesForKeys: nil)
+    else { return [] }
+    var urls = [URL]()
+    for case let url as URL in enumerator {
+        if url.pathExtension == "safetensors",
+            url.lastPathComponent.lowercased().contains("mtp"),
+            !selectedPaths.contains(url.standardizedFileURL.path)
+        {
+            urls.append(url)
+        }
+    }
+    return urls.sorted { $0.path < $1.path }
+}
+
+/// Like ``loadModelCheckpoint(urls:)``, but reads each file serially and leaves the tensors
+/// lazy, so nothing is paged in until it is used.
+private func loadModelCheckpointLazily(urls: [URL]) throws -> ModelCheckpoint {
+    var weights = [String: MLXArray]()
+    var weightMetadata = [String: [String: String]]()
+    var firstMetadata = [String: String]()
+    for url in urls {
+        let (fileWeights, metadata) = try loadArraysAndMetadata(url: url)
+        weights.merge(fileWeights) { _, new in new }
+        for name in fileWeights.keys { weightMetadata[name] = metadata }
+        if firstMetadata.isEmpty { firstMetadata = metadata }
+    }
+    return ModelCheckpoint(
+        weights: weights, metadata: firstMetadata, weightMetadata: weightMetadata)
+}
+
 /// Load model weights.
 ///
 /// This is typically called via ``GenericModelFactory/load(from:using:configuration:useLatest:progressHandler:)``.
 /// This function loads model weight `safetensor` files in the given `modelDirectory`,
-/// calls ``BaseLanguageModel/sanitize(weights:metadata:)`` to allow per-model preprocessing,
+/// calls ``BaseLanguageModel/prepareCheckpoint(_:)`` to allow per-model preprocessing,
 /// applies optional quantization, and
 /// updates the model with the weights. Derived inference-only state is prepared after the
 /// checkpoint update and before the model is evaluated and returned to callers.
@@ -380,55 +424,35 @@ public func loadWeights(
             "[MLXLMCommon] Expert streaming is active for \(ExpertStreamingConfig.shared.modelDirectory?.path ?? "?"); loading \(modelDirectory.path) without streaming."
         )
     }
-    // load the weights and collect metadata from the first safetensor file
-    var weights = [String: MLXArray]()
-    var metadata = [String: String]()
     let additionalFiles = (model as? any AdditionalWeightFilesProviding)?.additionalWeightFiles
     let weightURLs = try safetensorWeightURLs(
         in: modelDirectory,
         selection: weightFileSelection,
         additionalFiles: additionalFiles ?? [])
-    if streamsThisModel {
-        // Load lazily: the concurrent loader reads every tensor, including the experts
-        // that SSD streaming pages in on demand, which fills RAM and pushes into swap.
-        for url in weightURLs {
-            let (w, m) = try loadArraysAndMetadata(url: url)
-            weights.merge(w) { _, new in new }
-            if metadata.isEmpty { metadata = m }
-        }
-    } else {
-        (weights, metadata) = try loadWeightArrays(urls: weightURLs)
-    }
-
     // MTP add-ons (e.g. Qwen3.5/3.6-OptiQ's `optiq/mtp.safetensors`) live in a
     // subdirectory `safetensorWeightURLs` deliberately excludes by default (see its
     // doc comment above, which cites this exact checkpoint) — unconditionally loading
     // such a stray file previously produced silent norm-shift corruption (SwiftLM
     // issue #118: every RMSNorm weight shifted by 1, producing noise with no error) and
     // broke the VLM path outright with `Unhandled keys ["mtp"]`. Retained only when the
-    // user explicitly asks for the MTP heads via SWIFTLM_MTP_ENABLE.
-    if MTPConfig.retainMTPWeights {
-        let selectedPaths = Set(weightURLs.map { $0.standardizedFileURL.path })
-        let enumerator = FileManager.default.enumerator(
-            at: modelDirectory, includingPropertiesForKeys: nil)!
-        for case let url as URL in enumerator {
-            if url.pathExtension == "safetensors",
-                url.lastPathComponent.lowercased().contains("mtp"),
-                !selectedPaths.contains(url.standardizedFileURL.path)
-            {
-                let (w, m) = try loadArraysAndMetadata(url: url)
-                for (key, value) in w {
-                    weights[key] = value
-                }
-                if metadata.isEmpty {
-                    metadata = m
-                }
-            }
-        }
-    }
-
+    // user explicitly asks for the MTP heads via SWIFTLM_MTP_ENABLE. They go last so
+    // their tensors override same-named ones in the selected files, as before.
+    let loadURLs =
+        weightURLs
+        + (MTPConfig.retainMTPWeights
+            ? mtpAddOnWeightURLs(in: modelDirectory, excluding: weightURLs) : [])
+    var checkpoint =
+        streamsThisModel
+        // Load lazily: the concurrent loader reads every tensor, including the experts
+        // that SSD streaming pages in on demand, which fills RAM and pushes into swap.
+        ? try loadModelCheckpointLazily(urls: loadURLs)
+        : try loadModelCheckpoint(urls: loadURLs)
+    checkpoint.perLayerQuantization =
+        perLayerQuantization
+        ?? quantization.map { .init(quantization: $0, perLayerQuantization: [:]) }
     // per-model cleanup (models can inspect metadata to customize behavior)
-    weights = model.sanitize(weights: weights, metadata: metadata)
+    checkpoint = try model.prepareCheckpoint(checkpoint)
+    var weights = checkpoint.weights
 
     // ExpertStreamingConfig: Initialize the ExpertStreamerManager when streaming is active.
     // On macOS: pread() from NVMe at ~5 GB/s.
@@ -438,42 +462,38 @@ public func loadWeights(
     }
 
     // quantize if needed
-    if quantization != nil || perLayerQuantization != nil {
+    if let perLayerQuantization = checkpoint.perLayerQuantization {
         quantize(model: model) { path, module in
             if weights["\(path).scales"] != nil {
-                if let perLayerQuantization {
-                    let dict = perLayerQuantization.perLayerQuantization
-                    // Normalize MTP module paths: the Swift module tree indexes MTP
-                    // prediction layers as "mtp.<depth>.layers...." (e.g. "mtp.0.layers...."
-                    // for the first/only next-token-prediction depth), but checkpoints
-                    // declare their per-layer quantization overrides keyed as
-                    // "mtp.layers...." (no depth index) — mirroring the equivalent
-                    // ".mtp.0." -> ".mtp." normalization already applied to weight-key
-                    // remapping earlier in this file. Without this, MTP-head modules
-                    // (which are commonly quantized at a different bit-width than the
-                    // main model, e.g. a uniform 8-bit MTP head layered on a mixed
-                    // 4/5/6-bit main model) silently fall through to the top-level
-                    // default and crash quantized_matmul on a genuine shape mismatch.
-                    let mtpNormalizedPath = path.replacingOccurrences(
-                        of: #"\.mtp\.\d+\."#, with: ".mtp.", options: .regularExpression)
-                    let routerNormalizedPath = path.replacingOccurrences(
-                        of: ".experts.router.", with: ".router.")
-                    if let opt = dict[path]
-                        ?? dict["language_model.\(path)"]
-                        ?? dict[mtpNormalizedPath]
-                        ?? dict["language_model.\(mtpNormalizedPath)"]
-                        ?? dict[routerNormalizedPath]
-                        ?? dict["language_model.\(routerNormalizedPath)"]
-                    {
-                        switch opt {
-                        case .skip: return nil
-                        case .quantize(let q): return q.asTuple
-                        }
+                // Normalize MTP module paths: the Swift module tree indexes MTP
+                // prediction layers as "mtp.<depth>.layers...." (e.g. "mtp.0.layers...."
+                // for the first/only next-token-prediction depth), but checkpoints
+                // declare their per-layer quantization overrides keyed as
+                // "mtp.layers...." (no depth index) — mirroring the equivalent
+                // ".mtp.0." -> ".mtp." normalization already applied to weight-key
+                // remapping earlier in this file. Without this, MTP-head modules
+                // (which are commonly quantized at a different bit-width than the
+                // main model, e.g. a uniform 8-bit MTP head layered on a mixed
+                // 4/5/6-bit main model) silently fall through to the top-level
+                // default and crash quantized_matmul on a genuine shape mismatch.
+                let dict = perLayerQuantization.perLayerQuantization
+                let mtpNormalizedPath = path.replacingOccurrences(
+                    of: #"\.mtp\.\d+\."#, with: ".mtp.", options: .regularExpression)
+                let routerNormalizedPath = path.replacingOccurrences(
+                    of: ".experts.router.", with: ".router.")
+                if let opt = dict[path]
+                    ?? dict["language_model.\(path)"]
+                    ?? dict[mtpNormalizedPath]
+                    ?? dict["language_model.\(mtpNormalizedPath)"]
+                    ?? dict[routerNormalizedPath]
+                    ?? dict["language_model.\(routerNormalizedPath)"]
+                {
+                    switch opt {
+                    case .skip: return nil
+                    case .quantize(let q): return q.asTuple
                     }
-                    return perLayerQuantization.quantization?.asTuple
-                } else {
-                    return quantization?.asTuple
                 }
+                return perLayerQuantization.quantization?.asTuple
             } else {
                 return nil
             }

@@ -1379,6 +1379,14 @@ private final class ProtocolDefaultTrimmabilityCache: KVCache {
         #expect(encodedPositions(short.0) == [17, 18, 19], "a short tail took the wrong end")
     }
 
+    @Test func testRotatingKVCacheReportsEvictedTokensThroughKVCache() {
+        let rotating = RotatingKVCache(maxSize: 8, keep: 2)
+        fillOneAtATime(rotating, positions: 0 ..< 20)
+
+        let cache: any KVCache = rotating
+        #expect(cache.evictedTokenCount == 12)
+    }
+
     @Test func testRotatingLogicalViewClampsTailToWhatTheCacheHolds() throws {
         let cache = RotatingKVCache(maxSize: 8, keep: 0)
         fillOneAtATime(cache, positions: 0 ..< 5)
@@ -1564,6 +1572,19 @@ private final class ProtocolDefaultTrimmabilityCache: KVCache {
         #expect(cache.state.count == 10)
         #expect(relativeRMSError(cachedKeys, keys) < 0.5)
         #expect(relativeRMSError(cachedValues, values) < 0.5)
+    }
+
+    @Test func testVarianceNormalizedKVCacheInnerStateHoldsTheStoredSlabs() throws {
+        let cache = VarianceNormalizedKVCache(
+            tileSize: 32, keyBits: 4, valueBits: 4, sinkhornIterations: 2)
+        let keys = MLXRandom.normal([1, 1, 8 * 32 + 5, 32]).asType(.float16)
+        let values = MLXRandom.normal([1, 1, 8 * 32 + 5, 32]).asType(.float16)
+        let (cachedKeys, cachedValues) = cache.update(keys: keys, values: values)
+        eval(cachedKeys, cachedValues)
+
+        let stateBytes = cache.state.reduce(0) { $0 + $1.nbytes }
+        #expect(KVCacheStatus(cache: [cache]).memoryBytes == stateBytes)
+        #expect(cache.innerState().count < cache.state.count)
     }
 
     @Test func testVarianceNormalizedKVCacheSerializationRoundTrip() throws {
