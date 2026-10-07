@@ -3426,7 +3426,14 @@ private func generateLoopTask<
                 iterator = finalizing
             }
 
-            handler.onGenerationEnd(emit: emit)
+            switch handler.onGenerationEnd(emit: emit) {
+            case .more:
+                break
+            case .stop:
+                if stopReason != .cancelled { stopReason = .stop }
+            case .cancelled:
+                stopReason = .cancelled
+            }
 
             let now = Date.timeIntervalSinceReferenceDate
             let generateTime = now - start

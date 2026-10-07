@@ -55,7 +55,7 @@ public struct LogProbabilityTokenLoopHandler<Base: TokenLoopHandler>: TokenLoopH
 
     public mutating func onGenerationEnd(
         emit: (sending Output) -> Bool
-    ) {
+    ) -> TokenLoopDisposition {
         base.onGenerationEnd { emit(.generation($0)) }
     }
 
