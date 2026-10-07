@@ -612,7 +612,32 @@ public func loadWeights(
     // still has exclusive access. Forward passes must remain read-only.
     if !lazyLoad {
         materializeModelForInference(model)
+    } else if streamsThisModel {
+        materializeNonExpertWeights(model)
     }
+}
+
+/// Read every non-expert weight of an SSD-streaming model into memory before serving.
+///
+/// Streaming loads lazily, so each weight is still an unevaluated `Load` node. Its file read
+/// runs on a CPU stream, and a GPU op that consumes it waits on an event inside its command
+/// buffer. On a cold page cache (or a slow external disk) the first forward pass can keep
+/// that command buffer waiting past the GPU watchdog, which kills the process with
+/// `kIOGPUCommandBufferCallbackErrorTimeout`. Evaluating the weights here moves those reads
+/// ahead of any GPU work.
+///
+/// The `SwitchLinear` expert `weight` tensors are skipped: they are placeholders paged from
+/// SSD on demand, and evaluating them would allocate the full expert stack in RAM. Their
+/// scales and biases are small and are read normally.
+func materializeNonExpertWeights(_ model: Module) {
+    var expertWeightKeys = Set<String>()
+    for (path, module) in model.leafModules().flattened() where module is SwitchLinear {
+        expertWeightKeys.insert(path + ".weight")
+    }
+    let arrays = model.parameters().flattened()
+        .filter { !expertWeightKeys.contains($0.0) }
+        .map { $0.1 }
+    eval(arrays)
 }
 
 /// Async variant of
