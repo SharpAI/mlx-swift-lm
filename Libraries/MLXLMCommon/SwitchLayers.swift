@@ -572,13 +572,15 @@ open class SwitchGLU: Module, @unchecked Sendable {
         }
 
         // ONE dispatch instead of two.
+        // slotPerToken holds LRU cache-slot ids: grouped in runs but not ascending, so they must not
+        // be declared sorted (mlx core 0.32 requires ascending ids for sortedIndices: true).
         let combined = MLX.gatherQuantizedMM(
             x, _stackedGateUp!,
             scales: stackedScales,
             biases: stackedBiases,
             rhsIndices: slotPerToken,
             transpose: true,
-            groupSize: qGate.groupSize, bits: qGate.bits, mode: qGate.mode, sortedIndices: true
+            groupSize: qGate.groupSize, bits: qGate.bits, mode: qGate.mode, sortedIndices: false
         )
 
         // Split [..., 2 * intermediate] into (xGate, xUp).
@@ -1936,13 +1938,15 @@ open class QuantizedSwitchLinear: SwitchLinear, Quantized {
         var stackedBiases: MLXArray? = nil
         if let b = self.biases { stackedBiases = MLX.take(b, slotExpertsMLX, axis: 0) }
 
+        // slotPerToken holds LRU cache-slot ids: grouped in runs but not ascending, so they must not
+        // be declared sorted (mlx core 0.32 requires ascending ids for sortedIndices: true).
         var output = MLX.gatherQuantizedMM(
             x, stackedBuffer,
             scales: stackedScales,
             biases: stackedBiases,
             rhsIndices: slotPerToken,
             transpose: true,
-            groupSize: self.groupSize, bits: self.bits, mode: mode, sortedIndices: true
+            groupSize: self.groupSize, bits: self.bits, mode: mode, sortedIndices: false
         )
 
         // Optional per-token bias add (gathered from per-slot bias).
