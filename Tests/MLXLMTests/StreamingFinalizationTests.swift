@@ -147,7 +147,7 @@ import Testing
         var info: GenerateCompletionInfo?
         for await event in stream {
             switch event {
-            case .chunk(let text):
+            case .chunk(let text, _):
                 #expect(info == nil)
                 output += text
             case .info(let value): info = value
@@ -180,6 +180,7 @@ private struct FinalizationTokenizer: Tokenizer {
 
 private struct FinalizationTokenIterator: TokenIteratorProtocol {
     var tokenCount = 0
+    let streamingError: SSDStreamingError? = nil
     let maxTokens: Int? = 1
     let promptPrefillTime: TimeInterval = 0
     mutating func next() -> Int? {
