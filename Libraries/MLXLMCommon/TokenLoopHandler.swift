@@ -52,7 +52,7 @@ public protocol TokenLoopHandler: SendableMetatype {
     /// Called after the token loop finishes, before the info event.
     mutating func onGenerationEnd(
         emit: (sending Output) -> Bool
-    )
+    ) -> TokenLoopDisposition
 
     func infoEvent(_ info: GenerateCompletionInfo) -> Output
 }
@@ -106,7 +106,7 @@ public struct TextToolTokenLoopHandler: TokenLoopHandler {
 
     public mutating func onGenerationEnd(
         emit: (sending Generation) -> Bool
-    ) {
+    ) -> TokenLoopDisposition {
         var decoder = self.decoder
         var disposition = TokenLoopDisposition.more
         _ = decoder.finish { event in
@@ -114,6 +114,7 @@ public struct TextToolTokenLoopHandler: TokenLoopHandler {
             return disposition.shouldContinue
         }
         self.decoder = decoder
+        return disposition
     }
 
     public func infoEvent(_ info: GenerateCompletionInfo) -> Generation {
@@ -218,7 +219,7 @@ public struct RawTokenLoopHandler: TokenLoopHandler {
 
     public mutating func onGenerationEnd(
         emit: (sending TokenGeneration) -> Bool
-    ) {}
+    ) -> TokenLoopDisposition { .more }
 
     public func infoEvent(_ info: GenerateCompletionInfo) -> TokenGeneration {
         .info(info)
