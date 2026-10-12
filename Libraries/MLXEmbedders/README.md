@@ -43,7 +43,13 @@ let resultEmbeddings = await modelContainer.perform { context -> [[Float]] in
                         repeating: context.tokenizer.eosTokenId ?? 0,
                         count: maxLength - elem.count))
         })
-    let mask = (padded .!= context.tokenizer.eosTokenId ?? 0)
+    // Mask from the real lengths: some tokenizers end every text with a real EOS token.
+    let mask = stacked(
+        inputs.map { elem in
+            MLXArray(
+                Array(repeating: true, count: elem.count)
+                    + Array(repeating: false, count: maxLength - elem.count))
+        })
     let tokenTypes = MLXArray.zeros(like: padded)
     let result = context.pooling(
         context.model(padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask),

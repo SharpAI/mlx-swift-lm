@@ -992,7 +992,7 @@ public class Gemma4TextModel: Module, LLMModel, KVCacheDimensionProvider {
             out = model.embedTokens.asLinear(out)
         }
         if let cap = config.finalLogitSoftcapping {
-            out = tanh(out / cap) * cap
+            out = gemma4LogitSoftcap(out, cap)
         }
         return out
     }

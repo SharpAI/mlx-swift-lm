@@ -2201,8 +2201,12 @@ public func loadPromptCache(
 }
 
 /// Load a prompt cache and its associated model state from a file.
+///
+/// The arrays are read before this returns, so the file can be overwritten or removed afterwards.
 public func loadPromptCacheSnapshot(url: URL) throws -> PromptCacheSnapshot {
     var (arrays, metadata) = try loadArraysAndMetadata(url: url)
+    // A loaded array reads the file only when it is evaluated.
+    eval(arrays.values)
 
     // Unflatten metadata using tree_unflatten compatible logic
     let unflattenedMetadata = unflattenMetadata(metadata)

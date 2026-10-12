@@ -1,10 +1,48 @@
 import Foundation
 import MLX
-import MLXLLM
 import MLXLMCommon
+import MLXNN
 import Testing
 
+@_spi(GemmaEncoder) @testable import MLXLLM
+
 struct Gemma4TextTests {
+    @Test(
+        "Gemma4Text softcap preserves prefill and decode logits",
+        arguments: [DType.float16, .bfloat16, .float32], [false, true]
+    )
+    func softcapPreservesLogits(dtype: DType, tiedEmbeddings: Bool) throws {
+        for quantized in [false, true] {
+            var config = try Self.configuration(attentionKEqV: true)
+            config.hiddenSize = 64
+            config.intermediateSize = 128
+            config.tieWordEmbeddings = tiedEmbeddings
+            config.finalLogitSoftcapping = 7.25
+            let model = Gemma4TextModel(config)
+            model.apply { $0.dtype.isFloatingPoint ? $0.asType(dtype) : $0 }
+            if quantized { quantize(model: model, groupSize: 32, bits: 4) }
+            eval(model)
+            let actualCache = try model.newCache(parameters: nil)
+            let expectedCache = try model.newCache(parameters: nil)
+
+            for tokens in [[1, 2, 3], [4]] {
+                let input = MLXArray(tokens).reshaped(1, tokens.count)
+                let actual = model(input, cache: actualCache)
+                let hidden = model.model(input, cache: expectedCache)
+                let logits = model.lmHead?(hidden) ?? model.model.embedTokens.asLinear(hidden)
+                let expected =
+                    tanh(logits / config.finalLogitSoftcapping)
+                    * config.finalLogitSoftcapping
+                #expect(actual.dtype == expected.dtype)
+                #expect(actual.shape == expected.shape)
+                #expect(
+                    actual.asType(.float32).asArray(Float.self).map(\.bitPattern)
+                        == expected.asType(.float32).asArray(Float.self).map(\.bitPattern))
+                #expect(actualCache.map(\.offset) == expectedCache.map(\.offset))
+            }
+        }
+    }
+
     @Test("Gemma4Text handles quantized KV cache in shared full attention")
     func quantizedKVCacheSupportsSharedFullAttention() throws {
         let model = Gemma4TextModel(try Self.configuration(attentionKEqV: false))

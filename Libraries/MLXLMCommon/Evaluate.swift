@@ -1155,7 +1155,8 @@ public struct TokenIterator: TokenIteratorProtocol {
     mutating func step(previous: LMInput.Text) throws -> MLXArray {
         let result = withPreparedCache(cache, lengths: previous.sequenceLengths) {
             SSDStreamingErrorLatch.withActive(ssdErrorLatch) {
-                model(previous[text: .newAxis], cache: cache.isEmpty ? nil : cache, state: state)
+                model.nextTokenLogits(
+                    previous[text: .newAxis], cache: cache.isEmpty ? nil : cache, state: state)
             }
         }
         cacheStorage.commitProcessedTokens(previous.cacheSequenceLength)

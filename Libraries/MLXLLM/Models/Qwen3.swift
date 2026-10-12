@@ -212,13 +212,17 @@ public class Qwen3Model: Module, LLMModel, KVCacheDimensionProvider {
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
-        var out = model(inputs, cache: cache)
-        if let lmHead {
-            out = lmHead(out)
-        } else {
-            out = model.embedTokens.asLinear(out)
+        projectLogits(hiddenStates(inputs, cache: cache))
+    }
+
+    public func nextTokenLogits(
+        _ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?
+    ) -> LMOutput {
+        var hidden = hiddenStates(input.tokens, cache: cache)
+        if lmHead == nil {
+            hidden = quantizedVocabularyProjectionInput(hidden, projection: model.embedTokens)
         }
-        return out
+        return .init(logits: projectLogits(hidden))
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
@@ -231,16 +235,13 @@ public class Qwen3Model: Module, LLMModel, KVCacheDimensionProvider {
     }
 }
 
-extension Qwen3Model: CausalRerankerModel {
-    package func lastTokenLogits(_ inputs: MLXArray, sequenceLengths: [Int]) -> MLXArray {
-        let hidden = model(inputs, cache: nil)
-        let lastHidden = stacked(
-            sequenceLengths.enumerated().map { row, length in hidden[row, length - 1] })
-        if let lmHead {
-            return lmHead(lastHidden)
-        } else {
-            return model.embedTokens.asLinear(lastHidden)
-        }
+extension Qwen3Model: HiddenStateLanguageModel {
+    package func hiddenStates(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        model(inputs, cache: cache)
+    }
+
+    package func projectLogits(_ hiddenStates: MLXArray) -> MLXArray {
+        lmHead?(hiddenStates) ?? model.embedTokens.asLinear(hiddenStates)
     }
 }
 

@@ -363,6 +363,14 @@ public protocol LanguageModel: BaseLanguageModel, ChatConventionsProviding {
     func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?)
         -> LMOutput
 
+    /// Evaluate all input positions when only the final position's logits are needed.
+    ///
+    /// Implementations may omit earlier logit rows, but must preserve cache updates and
+    /// output state. The default uses the regular forward. Scoring and speculative
+    /// verification must use the regular forward when they need multiple positions.
+    func nextTokenLogits(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?)
+        -> LMOutput
+
     /// Models may implement this simplified interface if they do not produce any ``LMOutput/State``
     func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray
 
@@ -392,6 +400,12 @@ public protocol LanguageModel: BaseLanguageModel, ChatConventionsProviding {
 }
 
 extension LanguageModel {
+    public func nextTokenLogits(
+        _ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?
+    ) -> LMOutput {
+        callAsFunction(input, cache: cache, state: state)
+    }
+
     /// Most language models have no derived inference state to prepare.
     public func prepare() throws {}
 
@@ -500,4 +514,21 @@ extension MTPLanguageModel {
     public func makeMTPCaches(parameters: GenerateParameters?) -> [[KVCache]] {
         return []  // Default: no persistent MTP caches
     }
+}
+
+/// Optional capability for language models whose forward pass is a final-hidden-state
+/// stack followed by a vocabulary projection.
+///
+/// Callers can select positions before projecting, for example to score only the last
+/// token of each row. The model keeps ownership of normalization, masking, and the cache;
+/// pass ragged batches through ``withPreparedCache(_:lengths:_:)`` as for any forward pass.
+package protocol HiddenStateLanguageModel: LanguageModel {
+    /// Returns final, normalized hidden states `[batch, sequence, hidden]`.
+    func hiddenStates(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray
+
+    /// Projects hidden states `[..., hidden]` to vocabulary logits `[..., vocabulary]`.
+    ///
+    /// Include any logit scaling or soft-capping, so that projecting all positions gives the
+    /// same logits as ``LanguageModel/callAsFunction(_:cache:)``.
+    func projectLogits(_ hiddenStates: MLXArray) -> MLXArray
 }
