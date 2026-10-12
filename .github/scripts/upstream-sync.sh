@@ -18,8 +18,11 @@
 #            - the fork already contains upstream
 #            - a sync PR is already open (by branch name, or because an open PR
 #              already contains the upstream commit): someone is on it
+#              (red once it has been open STALE_PR_DAYS days, see below)
 #            - the bot opened the PR (review and merge it)
 #   red    a person has to act (the failed run is the alert; Issues are off)
+#            - a sync PR has been open STALE_PR_DAYS+ days: it blocks all
+#              further syncing, so the run fails until it is merged or closed
 #            - the merge conflicts            -> nothing is pushed; the
 #              conflicted files are in the log and the step summary
 #            - the merge is clean but no PR could be opened (no token may do
@@ -291,7 +294,13 @@ if [ -n "$sync_prs" ]; then
   log "an upstream sync PR is already open, nothing to do:$sync_prs"
   summary "Upstream sync PR already open:$sync_prs. The fork is $behind commit(s) behind \`$UPSTREAM_REPO\` (\`$up_short\`)."
   if [ -n "$stale_pr" ]; then
-    echo "::warning::upstream sync PR$stale_pr has been open for $STALE_PR_DAYS+ days; the fork is $behind commit(s) behind $UPSTREAM_REPO"
+    # Red on purpose: a sync PR that sits for days (typically red CI after a
+    # merge the bot cannot fix) silently stops all syncing, and a warning on a
+    # green run is read by nobody. The failed run is the alert; the bot still
+    # touches nothing on the PR.
+    summary "**Stalled:** upstream sync PR$stale_pr has been open for $STALE_PR_DAYS+ days, so no newer upstream commits are being synced. Check its CI, fix or merge it (merge commit, not squash), or close it so the next run opens a fresh one."
+    echo "::error::upstream sync PR$stale_pr has been open for $STALE_PR_DAYS+ days and blocks further syncing; the fork is $behind commit(s) behind $UPSTREAM_REPO. Fix and merge it, or close it."
+    exit 1
   fi
   exit 0
 fi
