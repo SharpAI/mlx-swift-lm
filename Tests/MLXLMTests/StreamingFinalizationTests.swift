@@ -181,6 +181,8 @@ private struct FinalizationTokenizer: Tokenizer {
 private struct FinalizationTokenIterator: TokenIteratorProtocol {
     var tokenCount = 0
     let streamingError: SSDStreamingError? = nil
+    let acceptedDraftTokens = 0
+    let totalDraftTokens = 0
     let maxTokens: Int? = 1
     let promptPrefillTime: TimeInterval = 0
     mutating func next() -> Int? {
