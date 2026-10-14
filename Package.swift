@@ -43,6 +43,9 @@ let package = Package(
         .library(
             name: "IntegrationTestHelpers",
             targets: ["IntegrationTestHelpers"]),
+        .library(
+            name: "MLXScriptedLM",
+            targets: ["MLXScriptedLM"]),
     ],
     traits: [
         // Gates the MLXLanguageModel adapter for Apple's FoundationModels
@@ -171,6 +174,14 @@ let package = Package(
             name: "MLXLMTestSupport",
             path: "Tests/MLXLMTestSupport"
         ),
+
+        // Scripted tokenizers and models
+        .target(
+            name: "MLXScriptedLM",
+            dependencies: ["MLXLMCommon"],
+            path: "Libraries/MLXScriptedLM",
+            exclude: ["README.md"]
+        ),
         .testTarget(
             name: "MLXLMTests",
             dependencies: [
@@ -184,6 +195,7 @@ let package = Package(
                 "MLXEmbedders",
                 "MLXHuggingFace",
                 "MLXRerankers",
+                "MLXScriptedLM",
             ],
             path: "Tests/MLXLMTests",
             exclude: [

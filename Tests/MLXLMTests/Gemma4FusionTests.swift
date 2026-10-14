@@ -42,6 +42,85 @@ final class Gemma4FusionTests: XCTestCase {
         }
     }
 
+    func testScalarSoftcapPreservesDtypeAndRuntimeCaps() {
+        for dtype in [DType.float16, .bfloat16, .float32] {
+            let logits = MLX.linspace(Float(-100), Float(100), count: 4096)
+                .reshaped(2, 2, 1024).asType(dtype)
+            for cap: Float in [30, 7.25, 30.1, 1, -30] {
+                assertIdentical(gemma4LogitSoftcap(logits, cap), tanh(logits / cap) * cap)
+                let strided = logits[.ellipsis, .stride(by: 2)]
+                assertIdentical(gemma4LogitSoftcap(strided, cap), tanh(strided / cap) * cap)
+            }
+        }
+    }
+
+    func testScalarSoftcapPreservesEveryFiniteLowPrecisionValue() {
+        for dtype in [DType.float16, .bfloat16] {
+            let exponentMask: UInt16 = dtype == .float16 ? 0x7c00 : 0x7f80
+            let bits = (0 ... 65535).map { UInt16($0) }.filter {
+                $0 & exponentMask != exponentMask
+            }
+            let logits = MLXArray(bits).view(dtype: dtype)
+            for cap: Float in [30, 7.25, 30.1, 1, -30] {
+                assertIdentical(gemma4LogitSoftcap(logits, cap), tanh(logits / cap) * cap)
+            }
+        }
+    }
+
+    func testScalarSoftcapGradientsMatchOriginal() {
+        for dtype in [DType.float16, .bfloat16, .float32] {
+            let logits = MLX.linspace(Float(-3), Float(3), count: 64)
+                .reshaped(1, 1, 64).asType(dtype)
+            let cap: Float = 30
+            assertIdentical(
+                grad({ sum(gemma4LogitSoftcap($0, cap)) })(logits),
+                grad({ sum(tanh($0 / cap) * cap) })(logits))
+        }
+    }
+
+    func testScalarSoftcapPreservesSpecialValues() {
+        for dtype in [DType.float16, .bfloat16, .float32] {
+            let logits = MLXArray([-Float.infinity, -100, -0.0, 0.0, 100, .infinity, .nan])
+                .asType(dtype)
+            for cap: Float in [30, -30, 0] {
+                let actual = gemma4LogitSoftcap(logits, cap)
+                let expected = tanh(logits / cap) * cap
+                XCTAssertEqual(actual.dtype, expected.dtype)
+                for (a, b) in zip(
+                    actual.asType(.float32).asArray(Float.self),
+                    expected.asType(.float32).asArray(Float.self))
+                {
+                    if b.isNaN {
+                        XCTAssertTrue(a.isNaN)
+                    } else {
+                        XCTAssertEqual(a.bitPattern, b.bitPattern)
+                    }
+                }
+            }
+        }
+    }
+
+    func testScalarSoftcapOnCPU() {
+        Stream.withNewDefaultStream(device: .cpu) {
+            for dtype in [DType.float16, .bfloat16, .float32] {
+                let logits = MLX.linspace(Float(-100), Float(100), count: 128).asType(dtype)
+                let cap: Float = 30
+                assertIdentical(gemma4LogitSoftcap(logits, cap), tanh(logits / cap) * cap)
+                let tensorCap = MLXArray(cap)
+                assertIdentical(
+                    gemma4LogitSoftcap(logits, tensorCap), tanh(logits / tensorCap) * tensorCap)
+            }
+        }
+        for dtype in [DType.float16, .bfloat16, .float32] {
+            let logits = MLX.linspace(Float(-100), Float(100), count: 128).asType(dtype)
+            let cap: Float = 30
+            assertIdentical(gemma4LogitSoftcap(logits, cap), tanh(logits / cap) * cap)
+            let tensorCap = MLXArray(cap)
+            assertIdentical(
+                gemma4LogitSoftcap(logits, tensorCap), tanh(logits / tensorCap) * tensorCap)
+        }
+    }
+
     func testFusionLatency() throws {
         guard ProcessInfo.processInfo.environment["MLX_BENCHMARK_GEMMA4_FUSIONS"] == "1" else {
             throw XCTSkip("Set MLX_BENCHMARK_GEMMA4_FUSIONS=1 to benchmark")
@@ -50,7 +129,11 @@ final class Gemma4FusionTests: XCTestCase {
         let cap = MLXArray(Float(30))
         eval(logits, cap)
         let cases: [(String, () -> MLXArray, () -> MLXArray)] = [
-            ("VLM softcap", { tanh(logits / cap) * cap }, { gemma4LogitSoftcap(logits, cap) })
+            ("VLM softcap", { tanh(logits / cap) * cap }, { gemma4LogitSoftcap(logits, cap) }),
+            (
+                "text softcap", { tanh(logits / Float(30)) * Float(30) },
+                { gemma4LogitSoftcap(logits, Float(30)) }
+            ),
         ]
         for (name, original, fused) in cases {
             assertIdentical(fused(), original())

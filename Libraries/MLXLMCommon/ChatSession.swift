@@ -162,6 +162,11 @@ public final class ChatSession {
         /// leave its final verifier sample here.
         var uncommittedTokens: [Int] = []
 
+        /// `false` after ``ChatSession/fork(history:)`` pairs the cache with a
+        /// transcript it was not built from. Until the next prompt is reconciled,
+        /// only an exact token match can reuse it.
+        var transcriptBuiltCache = true
+
         @discardableResult
         mutating func record(
             _ assistant: AssistantGeneration,
@@ -195,10 +200,11 @@ public final class ChatSession {
                 uncommittedTokens.removeAll()
             }
 
-            messages.append(
-                .assistant(
-                    assistant.content,
-                    toolCalls: assistant.toolCalls.isEmpty ? nil : assistant.toolCalls))
+            var message = Chat.Message.assistant(
+                assistant.content,
+                toolCalls: assistant.toolCalls.isEmpty ? nil : assistant.toolCalls)
+            message.prefilledReasoningStartDelimiter = assistant.prefilledReasoningStartDelimiter
+            messages.append(message)
             return true
         }
     }
@@ -213,6 +219,7 @@ public final class ChatSession {
     }
 
     private struct AssistantGeneration {
+        var prefilledReasoningStartDelimiter: String? = nil
         var content = ""
         var toolCalls: [ToolCall] = []
         var rejectedToolCalls: [RejectedToolCall] = []
@@ -239,6 +246,24 @@ public final class ChatSession {
             if let info = item.info {
                 stopReason = info.stopReason
             }
+        }
+    }
+
+    private static func prefilledReasoningStartDelimiter(
+        in promptTokens: [Int], config: ReasoningConfig?, tokenizer: any Tokenizer
+    ) -> String? {
+        guard let delimiter = config?.startDelimiter, !delimiter.isEmpty else { return nil }
+
+        // Decode a tail, expanding when trailing whitespace could hide the delimiter.
+        var count = min(64, promptTokens.count)
+        while true {
+            let tail = tokenizer.decode(
+                tokenIds: Array(promptTokens.suffix(count)), skipSpecialTokens: false
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            if tail.count >= delimiter.count || count == promptTokens.count {
+                return tail.hasSuffix(delimiter) ? delimiter : nil
+            }
+            count = min(promptTokens.count, count * 2)
         }
     }
 
@@ -288,6 +313,12 @@ public final class ChatSession {
                     requested: requested.configuration)
             }
         }
+
+        /// A copy that shares no mutable state with this cache.
+        func copy() -> RealizedCache {
+            RealizedCache(
+                main: main.copy(), draft: draft?.copy(), state: state, conversation: conversation)
+        }
     }
 
     private enum Cache {
@@ -298,6 +329,37 @@ public final class ChatSession {
         case empty
         case kvcache(RealizedCache)
         case history([Chat.Message])
+
+        /// A copy that shares no mutable state with this cache.
+        func copy() -> Cache {
+            guard case .kvcache(let stored) = self else { return self }
+            return .kvcache(stored.copy())
+        }
+
+        /// A copy of this cache paired with `history`, a transcript it was not built from.
+        ///
+        /// Equal tokens prove equal cache contents only for text: a media
+        /// placeholder renders the same tokens for different pixels. A
+        /// transcript with media on either side therefore starts cold, and
+        /// nothing is copied.
+        func replacingTranscript(with history: [Chat.Message]) -> Cache {
+            let carriesMedia = { (messages: [Chat.Message]) in
+                messages.contains {
+                    !$0.images.isEmpty || !$0.videos.isEmpty || !$0.audios.isEmpty
+                }
+            }
+            guard case .kvcache(let stored) = self,
+                var conversation = stored.conversation,
+                !carriesMedia(conversation.messages), !carriesMedia(history)
+            else {
+                return .history(history)
+            }
+            conversation.messages = history
+            conversation.transcriptBuiltCache = false
+            var copied = stored.copy()
+            copied.conversation = conversation
+            return .kvcache(copied)
+        }
     }
 
     private let model: ModelContainer
@@ -549,6 +611,8 @@ public final class ChatSession {
     ) {
         self.model = model
         self.instructions = instructions
+        // Each response uses the cache on another thread, and a fork shares its arrays.
+        eval(cache)
         self.cache = .init(
             .kvcache(
                 .init(
@@ -616,6 +680,8 @@ public final class ChatSession {
     ) {
         self.model = ModelContainer(context: model)
         self.instructions = instructions
+        // Each response uses the cache on another thread, and a fork shares its arrays.
+        eval(cache)
         self.cache = .init(
             .kvcache(
                 .init(
@@ -701,6 +767,22 @@ public final class ChatSession {
             additionalContext: additionalContext,
             tools: tools,
             toolDispatch: toolDispatch)
+    }
+
+    /// A session configured like `source` that starts from `cache`.
+    private init(forking source: ChatSession, cache: Cache) {
+        self.model = source.model
+        self.instructions = source.instructions
+        self.cache = .init(cache)
+        // The same configuration loads the same draft model, so the sessions share it.
+        self.loadedDraftModel = source.loadedDraftModel
+        self.processing = source.processing
+        self.generateParameters = source.generateParameters
+        self.components = source.components
+        self.tools = source.tools
+        self.toolDispatch = source.toolDispatch
+        self.additionalContext = source.additionalContext
+        self.speculativeDecoding = source.speculativeDecoding
     }
 
     /// Produces a response to a prompt.
@@ -1014,9 +1096,11 @@ public final class ChatSession {
 
                     // loop can restart on tool calls
                     restart: while !pendingMessages.isEmpty {
+                        // Only a cache these calls were generated into can resume them.
                         let isToolResultContinuation =
                             pendingMessages.contains { $0.role == .tool }
                             && conversation?.messages.last?.tool?.calls?.isEmpty == false
+                            && conversation?.transcriptBuiltCache == true
                         let templateMessages: [Chat.Message]
                         let conversationMessageCountBeforePending: Int?
                         if var currentConversation = conversation {
@@ -1044,6 +1128,7 @@ public final class ChatSession {
                             tools: tools, additionalContext: additionalContext)
                         let preparedInput = try await processor.prepare(input: userInput)
                         var input = preparedInput
+                        var prefilledReasoningStartDelimiter: String?
                         pendingMessages.removeAll()
 
                         let speculativeMemoryEvaluation: SpeculativeDecodingMemoryEvaluation?
@@ -1074,7 +1159,11 @@ public final class ChatSession {
                             preparedInput.image != nil || preparedInput.video != nil
                             || preparedInput.audio != nil
                         if var currentConversation = conversation {
-                            let promptTokenIds = input.text.tokens.asArray(Int.self)
+                            let promptTokenIds = preparedInput.text.tokens.asArray(Int.self)
+                            prefilledReasoningStartDelimiter =
+                                ChatSession.prefilledReasoningStartDelimiter(
+                                    in: promptTokenIds, config: modelConfiguration.reasoningConfig,
+                                    tokenizer: tokenizer)
                             let cachedTokenIds = currentConversation.cachedTokens
                             assert(
                                 kvCache.nativeAttentionOffsetsAreAligned,
@@ -1138,6 +1227,11 @@ public final class ChatSession {
 
                                 if !(mainTrimIsAligned && draftTrimIsAligned) {
                                     decision = .rebuild
+                                } else if !currentConversation.transcriptBuiltCache {
+                                    // A fork shares its source's arrays. A copy keeps only
+                                    // the prefix, so the next write does not copy the rest.
+                                    kvCache = kvCache.copy()
+                                    draftKVCache = draftKVCache?.copy()
                                 }
                             }
 
@@ -1221,6 +1315,7 @@ public final class ChatSession {
                                 currentConversation.cachedTokens = promptTokenIds
                             }
                             currentConversation.uncommittedTokens.removeAll()
+                            currentConversation.transcriptBuiltCache = true
                             conversation = currentConversation
                         }
 
@@ -1379,7 +1474,8 @@ public final class ChatSession {
                         }
 
                         var pendingToolCalls: [ToolCall] = []
-                        var assistant = AssistantGeneration()
+                        var assistant = AssistantGeneration(
+                            prefilledReasoningStartDelimiter: prefilledReasoningStartDelimiter)
 
                         for await item in generation.stream {
                             let item = item.attributingCachedPromptTokens(cachedPromptTokenCount)
@@ -1519,6 +1615,43 @@ public final class ChatSession {
         await cache.update { cache in
             cache = .empty
         }
+    }
+
+    /// Create a session that starts from a copy of this session's cache.
+    ///
+    /// Each session continues without affecting the other. Copying is cheap: they share the
+    /// cache's arrays until one of them writes. Once either loads the draft model for
+    /// speculative decoding, both use it.
+    ///
+    /// Without `history`, the new session continues this conversation, which branches it.
+    /// With `history`, it holds that conversation instead. Its first response keeps only the
+    /// part of the cache that its prompt starts with, and prefills the rest of the prompt.
+    /// Conversations that share instructions and tools therefore prefill them once:
+    ///
+    /// ```swift
+    /// let session = ChatSession(model, instructions: instructions, tools: tools)
+    /// _ = try await session.respond(to: "What time is it?")
+    ///
+    /// let next = await session.fork(history: [])
+    /// _ = try await next.respond(to: "What is the weather like?")
+    /// ```
+    ///
+    /// A transcript with images, videos or audios, in either session, starts from an empty
+    /// cache: their placeholder tokens are the same for different media, so they cannot
+    /// prove the cached prefix matches.
+    ///
+    /// The new session copies this session's configuration, which can be changed before it
+    /// responds. A response in progress finishes before the cache is copied.
+    ///
+    /// - Parameter history: the conversation the new session holds, or `nil` to continue
+    ///   this one
+    /// - Returns: a session that owns a copy of this session's cache
+    public nonisolated(nonsending) func fork(history: [Chat.Message]? = nil) async -> ChatSession {
+        let history = SendableBox(history)
+        let forked = await cache.read { cache in
+            SendableBox(history.consume().map(cache.replacingTranscript) ?? cache.copy())
+        }.consume()
+        return ChatSession(forking: self, cache: forked)
     }
 
     /// Wait for exclusive access to the KVCache.

@@ -1595,6 +1595,32 @@ public class TurboQuantKVCache: BaseKVCache {
         }
         return trimCount
     }
+
+    override public func copy() -> any KVCache {
+        let new = TurboQuantKVCache(
+            bits: bits, keyBits: keyBits, valueBits: valueBits, seed: seed,
+            keyGroupSize: keyGroupSize)
+        new.offset = offset
+        new.keyMSECodec = keyMSECodec
+        new.valueMSECodec = valueMSECodec
+        // Like `state`, keep only the positions this cache holds. A slice is a new array
+        // object, so a write to either cache rebinds only its own arrays.
+        func held(_ array: MLXArray?) -> MLXArray? { array?[0..., 0..., ..<offset] }
+        new.affKeyW = held(affKeyW)
+        new.affKeyScales = held(affKeyScales)
+        new.affKeyBiases = held(affKeyBiases)
+        new.rawKeys = held(rawKeys)
+        new.rawValues = held(rawValues)
+        new.rawAllocSteps = new.rawKeys?.dim(2) ?? 0
+        new.keyPackedMSE = held(keyPackedMSE)
+        new.keyNorms = held(keyNorms)
+        new.valPackedMSE = held(valPackedMSE)
+        new.valNorms = held(valNorms)
+        new.compressedAllocSteps = new.valPackedMSE?.dim(2) ?? 0
+        new.keyCalibScale = keyCalibScale?[.ellipsis]
+        new.isCompressed = isCompressed
+        return new
+    }
 }
 
 // MARK: - kvScheme routing

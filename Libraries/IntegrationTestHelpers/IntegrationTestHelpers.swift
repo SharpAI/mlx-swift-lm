@@ -671,7 +671,13 @@ public enum EmbedderTests {
                                 count: maxLength - elem.count))
                 })
 
-            let mask = (padded .!= (tokenizer.eosTokenId ?? 0))
+            // Mask from the real lengths: some tokenizers end every text with a real EOS token.
+            let mask = stacked(
+                encoded.map { elem in
+                    MLXArray(
+                        Array(repeating: true, count: elem.count)
+                            + Array(repeating: false, count: maxLength - elem.count))
+                })
             let tokenTypes = MLXArray.zeros(like: padded)
 
             let modelOutput = context.model(
@@ -733,7 +739,13 @@ public enum EmbedderTests {
                                 repeating: tokenizer.eosTokenId ?? 0,
                                 count: maxLength - elem.count))
                 })
-            let mask = (padded .!= tokenizer.eosTokenId ?? 0)
+            // Mask from the real lengths: some tokenizers end every text with a real EOS token.
+            let mask = stacked(
+                inputs.map { elem in
+                    MLXArray(
+                        Array(repeating: true, count: elem.count)
+                            + Array(repeating: false, count: maxLength - elem.count))
+                })
             let tokenTypes = MLXArray.zeros(like: padded)
             let result = context.pooling(
                 context.model(
@@ -1237,7 +1249,10 @@ public enum ToolCallTests {
                 // flaky — the model may emit no tool call or malformed arguments on
                 // some runs (matches the temperature: 0 used by the coherence/MTP tests).
                 parameters: GenerateParameters(maxTokens: maxTokens, temperature: 0),
-                context: context
+                context: context,
+                // Declared tools drive name authorization and, for markerless
+                // dialects such as GLM-4-0414, the schema-anchored detection.
+                tools: input.tools
             )
             var text = ""
             var toolCalls: [ToolCall] = []

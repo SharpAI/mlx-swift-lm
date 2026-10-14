@@ -308,6 +308,23 @@ private final class ProtocolDefaultTrimmabilityCache: KVCache {
         #expect(metadata["2.0"] == "KVCache")
     }
 
+    @Test func testLoadedPromptCacheNoLongerReadsItsFile() throws {
+        let cache = KVCacheSimple()
+        let keys = MLXArray(0 ..< 32).reshaped([1, 2, 4, 4]).asType(.float32)
+        let values = -keys
+        _ = cache.update(keys: keys, values: values)
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try savePromptCache(url: url, cache: [cache])
+
+        // Saving truncates the file before it evaluates what it writes.
+        let snapshot = try loadPromptCacheSnapshot(url: url)
+        try savePromptCache(url: url, cache: snapshot.cache)
+
+        let restored = try loadPromptCacheSnapshot(url: url)
+        assertArraysClose(restored.cache[0].state, [keys, values])
+    }
+
     @Test func testEmptyPromptCacheStateUsesTheLegacyFormat() throws {
         let cache = KVCacheSimple()
         _ = cache.update(
