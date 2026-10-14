@@ -30,9 +30,8 @@ struct Gemma4TextTests {
                 let actual = model(input, cache: actualCache)
                 let hidden = model.model(input, cache: expectedCache)
                 let logits = model.lmHead?(hidden) ?? model.model.embedTokens.asLinear(hidden)
-                let expected =
-                    tanh(logits / config.finalLogitSoftcapping)
-                    * config.finalLogitSoftcapping
+                let cap = try #require(config.finalLogitSoftcapping)
+                let expected = tanh(logits / cap) * cap
                 #expect(actual.dtype == expected.dtype)
                 #expect(actual.shape == expected.shape)
                 #expect(
