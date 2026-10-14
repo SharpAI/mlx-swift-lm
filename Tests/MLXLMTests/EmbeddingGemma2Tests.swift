@@ -208,7 +208,7 @@ struct EmbeddingGemma2Tests {
         await #expect(throws: EmbeddingGemma2Embedding.Error.unsupportedMedia) {
             try await actor.embed(.init([.image(.url(directory))]), task: .document)
         }
-        let cancelled = Swift.Task {
+        let cancelled = _Concurrency.Task {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await actor.embed(.init(text: "Swift"), task: .searchQuery)
         }
@@ -511,9 +511,12 @@ struct EmbeddingGemma2Tests {
         try model.update(
             parameters: ModuleParameters.unflattened(try Self.deterministicWeights(for: model)),
             verify: .all)
-        let ids = MLXArray(
-            Array(1 ..< 10).map(Int32.init) + Array(3 ..< 9).map(Int32.init) + [0, 0, 0], [2, 9])
-        let mask = MLXArray(Array(repeating: Int32(1), count: 15) + [0, 0, 0], [2, 9])
+        let firstRow: [Int32] = Array(1 ..< 10).map(Int32.init)
+        let secondRow: [Int32] = Array(3 ..< 9).map(Int32.init)
+        let paddedIds: [Int32] = firstRow + secondRow + [0, 0, 0]
+        let ids = MLXArray(paddedIds, [2, 9])
+        let maskValues: [Int32] = Array(repeating: Int32(1), count: 15) + [0, 0, 0]
+        let mask = MLXArray(maskValues, [2, 9])
         let expected: [[Float]] = [
             [
                 -0.062816948, 0.280682176, 0.407530546, 0.737360120, 0.214800760, 0.127999231,

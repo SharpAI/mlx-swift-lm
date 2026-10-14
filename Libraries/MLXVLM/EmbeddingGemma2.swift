@@ -305,9 +305,13 @@ package struct EmbeddingGemma2AudioProcessor: Sendable {
         self.fftLength = extractor.fftLength
         self.featureSize = extractor.featureSize
         self.melFloor = extractor.melFloor
-        self.window = (0 ..< extractor.frameLength).map {
-            Float(0.5 - 0.5 * cos(2 * Double.pi * Double($0) / Double(extractor.frameLength)))
+        let frameCount = extractor.frameLength
+        var hann = [Float](repeating: 0, count: frameCount)
+        for index in 0 ..< frameCount {
+            let phase: Double = 2 * Double.pi * Double(index) / Double(frameCount)
+            hann[index] = Float(0.5 - 0.5 * cos(phase))
         }
+        self.window = hann
         self.melFilters = Self.melFilters(
             bins: extractor.fftLength / 2 + 1, mels: extractor.featureSize,
             minFrequency: extractor.minFrequency, maxFrequency: extractor.maxFrequency,
@@ -330,6 +334,11 @@ package struct EmbeddingGemma2AudioProcessor: Sendable {
             processing.sampleRate = Double(sampleRate)
             // A new value, not the caller's, crosses into the concurrent decoder.
             samples = try await UserInput.Audio.url(url).asMLXArray(processing: processing)
+        case .data(let data, let format):
+            var processing = UserInput.AudioProcessing()
+            processing.sampleRate = Double(sampleRate)
+            samples = try await UserInput.Audio(source: .data(data, format: format))
+                .asMLXArray(processing: processing)
         }
         guard samples.ndim == 1 else { throw EmbeddingGemma2Embedding.Error.invalidMedia }
         let frames = features(samples: samples)
@@ -427,7 +436,7 @@ package enum EmbeddingGemma2Sequence {
         throws -> [Int]?
     {
         func marked(_ begin: Int, _ token: Int, _ count: Int, _ end: Int) -> [Int] {
-            [begin] + repeatElement(token, count: count) + [end]
+            [begin] + [Int](repeating: token, count: count) + [end]
         }
         switch segment {
         case .text:
@@ -581,7 +590,7 @@ public actor EmbeddingGemma2Embedding {
             modelDirectory: modelDirectory, model: model,
             perLayerQuantization: base.perLayerQuantization,
             excludedComponents: excluded, componentLoading: componentLoading)
-        try Swift.Task.checkCancellation()
+        try _Concurrency.Task.checkCancellation()
         self.model = model
         self.modelDirectory = modelDirectory
         self.tokenizer = try await tokenizerLoader.load(from: modelDirectory)
@@ -602,7 +611,7 @@ public actor EmbeddingGemma2Embedding {
         var vectors: [[Float]] = []
         vectors.reserveCapacity(inputs.count)
         for input in inputs {
-            try Swift.Task.checkCancellation()
+            try _Concurrency.Task.checkCancellation()
             vectors.append(try await embed(input, task: task, dimensions: dimensions))
         }
         return vectors
@@ -615,7 +624,7 @@ public actor EmbeddingGemma2Embedding {
     public func embed(
         _ input: Input, task: Task, dimensions: Int? = nil
     ) async throws -> [Float] {
-        try Swift.Task.checkCancellation()
+        try _Concurrency.Task.checkCancellation()
         let dimension = dimensions ?? model.config.embeddingDim
         guard
             dimension == model.config.embeddingDim
@@ -657,7 +666,7 @@ public actor EmbeddingGemma2Embedding {
                 softTokens.append(features.reshaped(-1, features.dim(-1)))
             }
             segments.append(segment)
-            try Swift.Task.checkCancellation()
+            try _Concurrency.Task.checkCancellation()
         }
         if !text.isEmpty {
             segments.append(.text(tokenizer.encode(text: text, addSpecialTokens: false)))
@@ -670,7 +679,7 @@ public actor EmbeddingGemma2Embedding {
             inputIds: MLXArray(tokens.map(Int32.init), [1, tokens.count]), attentionMask: nil,
             softTokens: softTokens.isEmpty ? nil : concatenated(softTokens, axis: 0))
         try MLX.checkedEval(vector)
-        try Swift.Task.checkCancellation()
+        try _Concurrency.Task.checkCancellation()
         let values = vector.asArray(Float.self)
         let truncated = Array(values.prefix(dimension))
         guard values.allSatisfy(\.isFinite), values.contains(where: { $0 != 0 }) else {
@@ -694,9 +703,9 @@ public actor EmbeddingGemma2Embedding {
             imageProcessor = processor
             let pixels = try processor.pixels(for: image).pixels
             try MLX.checkedEval(pixels)
-            try Swift.Task.checkCancellation()
+            try _Concurrency.Task.checkCancellation()
             try await model.loadMediaComponents([.vision])
-            try Swift.Task.checkCancellation()
+            try _Concurrency.Task.checkCancellation()
             guard let features = try model.imageFeatures(pixels) else {
                 throw Error.unsupportedMedia
             }
@@ -706,9 +715,9 @@ public actor EmbeddingGemma2Embedding {
                 try videoProcessor ?? EmbeddingGemma2VideoProcessor(directory: modelDirectory)
             videoProcessor = processor
             let pixels = try await processor.frames(for: video)
-            try Swift.Task.checkCancellation()
+            try _Concurrency.Task.checkCancellation()
             try await model.loadMediaComponents([.vision])
-            try Swift.Task.checkCancellation()
+            try _Concurrency.Task.checkCancellation()
             guard let features = try model.imageFeatures(pixels) else {
                 throw Error.unsupportedMedia
             }
@@ -720,9 +729,9 @@ public actor EmbeddingGemma2Embedding {
             let frames = try await processor.features(for: audio)
             // Audio shorter than one frame keeps its markers and no soft tokens.
             guard frames.dim(0) > 0 else { return (.audio(tokens: 0), nil) }
-            try Swift.Task.checkCancellation()
+            try _Concurrency.Task.checkCancellation()
             try await model.loadMediaComponents([.audio])
-            try Swift.Task.checkCancellation()
+            try _Concurrency.Task.checkCancellation()
             guard let features = try model.audioFeatures(frames) else {
                 throw Error.unsupportedMedia
             }

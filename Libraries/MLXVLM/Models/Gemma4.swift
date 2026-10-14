@@ -408,7 +408,7 @@ public struct Gemma4Configuration: Codable, Sendable {
     public let visionSoftTokensPerImage: Int
     public let visionSoftTokensPerVideoFrame: Int
     public let tieWordEmbeddings: Bool
-    public let audioConfig: Gemma4AudioConfiguration?
+    package let audioConfig: Gemma4AudioConfiguration?
 
     private let _vocabularySize: Int?
     private let _hiddenSize: Int?
@@ -1482,7 +1482,7 @@ public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider, Streamabl
         if let acfg = config.audioConfig {
             self._audioTower.wrappedValue = Gemma4AudioModel(config: acfg)
             self._embedAudio.wrappedValue = Gemma4MultimodalEmbedder(
-                embeddingDim: acfg.outputProjDims,
+                embeddingDim: acfg.outputProjectionDimensions,
                 textHiddenSize: config.textConfiguration.hiddenSize,
                 eps: config.visionConfiguration.rmsNormEps
             )
@@ -1575,8 +1575,7 @@ public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider, Streamabl
         }
 
         if let audio, let audioTower, let embedAudio, let audioTokenId = config.audioTokenId {
-            let actualAudioMask = audio.mask ?? MLXArray.ones(audio.features.shape[0..<2], dtype: .bool)
-            let (audioOutputs, _) = audioTower(audio.features, mask: actualAudioMask)
+            let audioOutputs = audioTower(audio.features)
             eval(audioOutputs)
             let audioFeatures = embedAudio(audioOutputs).asType(inputsEmbeds.dtype)
             eval(audioFeatures)
