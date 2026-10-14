@@ -18,6 +18,12 @@ package struct Qwen35CheckpointPolicy: Sendable {
         self.preconvertedNorms = preconvertedNorms
     }
 
+    package init(modelType: String, preconvertedNorms: Bool) {
+        self.init(
+            layout: ["qwen3_5_mtp", "qwen3_8_mtp"].contains(modelType) ? .standalone : .embedded,
+            preconvertedNorms: preconvertedNorms)
+    }
+
     package static let normMetadataKey = "mlx_swift_lm.qwen_mtp.norm_convention"
     private static let mtpComponent = CheckpointComponent(
         name: "Qwen MTP", namespaces: ["mtp", "language_model.mtp"], destination: "mtp",
@@ -30,6 +36,11 @@ package struct Qwen35CheckpointPolicy: Sendable {
         ".input_layernorm.weight", ".post_attention_layernorm.weight",
         ".q_norm.weight", ".k_norm.weight",
     ]
+
+    /// Target namespaces an embedded head drops on selection, so the loader need not read them.
+    package var excludedCheckpointNamespaces: [String] {
+        layout == .embedded ? Self.mtpComponent.excludedNamespaces : []
+    }
 
     package static func targetWeights(
         _ weights: [String: MLXArray], retainMTP: Bool = false
@@ -54,9 +65,15 @@ package struct Qwen35CheckpointPolicy: Sendable {
         var rules = [CheckpointNameMapping.Rule]()
         if tiedWordEmbeddings { rules.append(.excludeModule("lm_head")) }
         if layout == .vision {
-            rules.append(.replacePrefix("model.visual", with: "vision_tower"))
+            rules += [
+                .replacePrefix("model.visual", with: "vision_tower"),
+                .replacePrefix("visual", with: "vision_tower"),
+            ]
         } else {
-            rules += [.excludePrefix("model.visual"), .excludePrefix("vision_tower")]
+            rules += [
+                .excludePrefix("model.visual"), .excludePrefix("vision_tower"),
+                .excludePrefix("visual"),
+            ]
         }
         rules.append(.replacePrefix("model.language_model", with: "model"))
         if layout == .text {

@@ -33,6 +33,8 @@ private final class MockDrafter: Module, StatefulMTPDrafterModel {
         super.init()
     }
 
+    func isCompatible(with target: any LanguageModel) -> Bool { true }
+
     func makeState(parameters: GenerateParameters?) -> MTPDrafterState {
         MTPDrafterState(cache: [CountingKVCache()])
     }
@@ -293,6 +295,36 @@ private final class NonTrimmableCountingKVCache: CountingKVCache {
         let c = NonTrimmableCountingKVCache()
         c.offset = offset
         return c
+    }
+}
+
+// MARK: - Prefill reporting
+
+private final class PrefixLog: @unchecked Sendable {
+    var positions: [Int] = []
+}
+
+@Suite("MTP prefill reporting")
+struct MTPPrefillReportingTests {
+    @Test("the main cache's prefix is reported once")
+    func reusedPrefix() throws {
+        let main = MockMainModel(nextLogitTokens: [0, 0, 7])
+        let drafter = MockDrafter(draftedTokenValue: 7)
+        let log = PrefixLog()
+        var parameters = GenerateParameters(maxTokens: 1)
+        parameters.prefill = PrefillParameters(prefix: { log.positions.append($0) })
+        let warmCache = KVCacheSimple()
+        warmCache.offset = 2
+
+        _ = try MTPSpeculativeTokenIterator(
+            input: LMInput(tokens: MLXArray([Int32(1), 2, 3])),
+            mainModel: main,
+            drafter: drafter,
+            mainCache: [warmCache],
+            parameters: parameters,
+            blockSize: 4)
+
+        #expect(log.positions == [2])
     }
 }
 

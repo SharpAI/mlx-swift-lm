@@ -51,6 +51,8 @@ public struct Qwen35Configuration: Codable, Sendable {
         public var headDim: Int?
         public var ropeParameters: [String: StringOrNumber]?
         public var fullAttentionInterval: Int = 4
+        public var layerTypes: [String]?
+        var resolvedLayerTypes: [String] = []
         public var mtpNumHiddenLayers: Int = 0
         public var mtpUseDedicatedEmbeddings: Bool = false
 
@@ -84,6 +86,7 @@ public struct Qwen35Configuration: Codable, Sendable {
             case headDim = "head_dim"
             case ropeParameters = "rope_parameters"
             case fullAttentionInterval = "full_attention_interval"
+            case layerTypes = "layer_types"
             case mtpNumHiddenLayers = "mtp_num_hidden_layers"
             case mtpUseDedicatedEmbeddings = "mtp_use_dedicated_embeddings"
             case numExperts = "num_experts"
@@ -127,6 +130,13 @@ public struct Qwen35Configuration: Codable, Sendable {
             self.headDim = try container.decodeIfPresent(Int.self, forKey: .headDim)
             self.fullAttentionInterval =
                 try container.decodeIfPresent(Int.self, forKey: .fullAttentionInterval) ?? 4
+            self.layerTypes = try container.decodeIfPresent([String].self, forKey: .layerTypes)
+            let layerSchedule = try HybridAttentionSchedule(
+                hiddenLayerCount: hiddenLayers,
+                fullAttentionInterval: fullAttentionInterval,
+                explicitLayerTypes: layerTypes
+            )
+            self.resolvedLayerTypes = layerSchedule.layerTypes
             self.mtpNumHiddenLayers =
                 try container.decodeIfPresent(Int.self, forKey: .mtpNumHiddenLayers) ?? 0
             self.mtpUseDedicatedEmbeddings =
@@ -926,7 +936,8 @@ public enum Qwen35Language {
             self.allowsCompiledDecode = !forceFullAttention
             self.isLinear =
                 forceFullAttention
-                ? false : (layerIdx + 1) % args.fullAttentionInterval != 0
+                ? false
+                : args.resolvedLayerTypes[layerIdx] == HybridAttentionSchedule.linearAttention
 
             if isLinear {
                 _linearAttn.wrappedValue = GatedDeltaNet(args)
@@ -1100,8 +1111,8 @@ public enum Qwen35Language {
         @ModuleInfo(key: "layers") fileprivate var layers: [DecoderLayer]
         @ModuleInfo(key: "norm") var norm: MathRMSNorm
 
-        let ssmIdx: Int
-        let faIdx: Int
+        let ssmIdx: Int?
+        let faIdx: Int?
 
         // LayerPartitionable
         public var gpuLayerCount: Int?
@@ -1123,8 +1134,8 @@ public enum Qwen35Language {
             _layers.wrappedValue = layers
             _norm.wrappedValue = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
 
-            self.ssmIdx = 0
-            self.faIdx = args.fullAttentionInterval - 1
+            self.ssmIdx = layers.firstIndex(where: { $0.isLinear })
+            self.faIdx = layers.firstIndex(where: { !$0.isLinear })
 
             let segments = CompiledDecodeSegment.schedule(
                 linearLayers: layers.map(\.isLinear))
@@ -1141,7 +1152,6 @@ public enum Qwen35Language {
                 body: { model, index, arguments in
                     model.segmentBody(at: index, arguments)
                 })
-
             super.init()
         }
 
@@ -1192,15 +1202,21 @@ public enum Qwen35Language {
                 cacheArray = Array(repeating: nil as KVCache?, count: layers.count)
             }
 
-            let faMaskMode = createAttentionMask(
-                h: hiddenStates, cache: cacheArray?[faIdx], returnArray: true)
             let faMask: MLXArray?
-            if case .array(let arrayMask) = faMaskMode {
-                faMask = arrayMask
+            if let faIdx {
+                let faMaskMode = createAttentionMask(
+                    h: hiddenStates, cache: cacheArray?[faIdx], returnArray: true)
+                if case .array(let arrayMask) = faMaskMode {
+                    faMask = arrayMask
+                } else {
+                    faMask = nil
+                }
             } else {
                 faMask = nil
             }
-            let ssmMask = createSSMMask(h: hiddenStates, cache: cacheArray?[ssmIdx] as? MambaCache)
+            let ssmMask = ssmIdx.flatMap {
+                createSSMMask(h: hiddenStates, cache: cacheArray?[$0] as? MambaCache)
+            }
 
             let allowLayerCompilation =
                 useCompiledDecode && type(of: self) == Model.self && !training
@@ -1306,12 +1322,17 @@ public enum Qwen35Language {
             let embedded = embedTokens(inputs)
             guard supportsExactCompiledDecode(embedded.dtype) else { return nil }
             guard cache.count == layers.count else { return nil }
-            if createSSMMask(h: embedded, cache: cache[ssmIdx] as? MambaCache) != nil {
+            if let ssmIdx,
+                createSSMMask(h: embedded, cache: cache[ssmIdx] as? MambaCache) != nil
+            {
                 return nil
             }
-            guard let faCache = cache[faIdx],
-                case .none = createAttentionMask(h: embedded, cache: faCache, returnArray: true)
-            else { return nil }
+            if let faIdx {
+                guard let faCache = cache[faIdx],
+                    case .none = createAttentionMask(
+                        h: embedded, cache: faCache, returnArray: true)
+                else { return nil }
+            }
 
             var mambaCaches = [MambaCache?](repeating: nil, count: layers.count)
             for (index, layer) in layers.enumerated() {
@@ -1419,9 +1440,14 @@ public enum Qwen35Language {
             let precomputedPositionIds = state[precomputedPositionIdsKey]
             let ropeDeltas = state[ropeDeltasKey]
 
+            let cacheAnchorIndex = model.faIdx ?? model.ssmIdx
             var cacheOffset = 0
-            if let cache, let faCache = cache[model.faIdx] {
-                cacheOffset = faCache.offset
+            var hasCacheAnchor = false
+            if let cache, let cacheAnchorIndex, cache.indices.contains(cacheAnchorIndex),
+                let cacheAnchor = cache[cacheAnchorIndex]
+            {
+                cacheOffset = cacheAnchor.offset
+                hasCacheAnchor = true
             }
 
             var ropeMask = mask
@@ -1431,7 +1457,7 @@ public enum Qwen35Language {
 
             var positionIds = providedPositionIds
             if positionIds == nil && (ropeMask == nil || ropeMask?.ndim == 2) {
-                if (cache != nil && cache?[model.faIdx] != nil && cacheOffset == 0)
+                if (hasCacheAnchor && cacheOffset == 0)
                     || ropeDeltas == nil
                     || cache == nil
                 {
@@ -1508,7 +1534,10 @@ public enum Qwen35Language {
                     cache: cache, fullAttentionIndex: model.faIdx)
                 state[mtpSharedKVOffsetsKey] = qwen35VLMSharedKVOffsets(
                     cache: cache, fullAttentionIndex: model.faIdx)
-                state[mtpSharedKVSourceIndicesKey] = ["full_attention": model.faIdx]
+                state[mtpSharedKVSourceIndicesKey] =
+                    model.faIdx.map {
+                        ["full_attention": $0]
+                    } ?? [:]
                 state[mtpPositionDeltasKey] = state[ropeDeltasKey]
             }
 
@@ -1539,9 +1568,9 @@ public enum Qwen35Language {
 
 private func qwen35VLMSharedKVState(
     cache: [KVCache?]?,
-    fullAttentionIndex: Int
+    fullAttentionIndex: Int?
 ) -> [String: (MLXArray, MLXArray)] {
-    guard let cache,
+    guard let cache, let fullAttentionIndex,
         fullAttentionIndex < cache.count,
         let faCache = cache[fullAttentionIndex]
     else {
@@ -1556,9 +1585,9 @@ private func qwen35VLMSharedKVState(
 
 private func qwen35VLMSharedKVOffsets(
     cache: [KVCache?]?,
-    fullAttentionIndex: Int
+    fullAttentionIndex: Int?
 ) -> [String: Int]? {
-    guard let cache,
+    guard let cache, let fullAttentionIndex,
         fullAttentionIndex < cache.count,
         let faCache = cache[fullAttentionIndex]
     else {
@@ -1569,16 +1598,28 @@ private func qwen35VLMSharedKVOffsets(
 
 // MARK: - Model
 
+/// The vision tower at the path it has in ``Qwen35`` when it loads separately.
+private final class Qwen35Vision: Module {
+    @ModuleInfo(key: "vision_tower") var model: Qwen3VLVision.VisionModel
+
+    init(_ config: Qwen35Configuration) {
+        _model.wrappedValue = Qwen3VLVision.VisionModel(config.visionConfiguration)
+        super.init()
+    }
+}
+
 public class Qwen35: Module, VLMModel {
-    @ModuleInfo(key: "vision_tower") private var visionModel: Qwen3VLVision.VisionModel
+    @ModuleInfo(key: "vision_tower") private var visionModel: Qwen3VLVision.VisionModel?
     @ModuleInfo(key: "language_model") var languageModel: Qwen35Language.LanguageModel
 
     public let config: Qwen35Configuration
+    private let onDemandVision: OnDemandComponent<Qwen35Vision>
 
     public init(_ config: Qwen35Configuration) {
         self.config = config
         _visionModel.wrappedValue = Qwen3VLVision.VisionModel(config.visionConfiguration)
         _languageModel.wrappedValue = Qwen35Language.LanguageModel(config)
+        onDemandVision = OnDemandComponent(.vision) { Qwen35Vision(config) }
         super.init()
     }
 
@@ -1594,6 +1635,11 @@ public class Qwen35: Module, VLMModel {
 
     public func prepare() throws {
         try languageModel.prepare()
+    }
+
+    private func vision() throws -> Qwen3VLVision.VisionModel {
+        if let visionModel { return visionModel }
+        return try onDemandVision.load().model
     }
 
     private func mergeInputIdsWithImageFeatures(
@@ -1667,30 +1713,29 @@ public class Qwen35: Module, VLMModel {
         var imageFrames: [THW]?
         var videoFrames: [THW]?
 
-        let visionDType = visionModel.patchEmbed.proj.weight.dtype
         var pixelParts: [MLXArray] = []
 
         if let image = input.image {
-            pixelParts.append(image.pixels.asType(visionDType))
+            pixelParts.append(image.pixels)
             imageFrames = image.frames
         }
         if let video = input.video {
-            pixelParts.append(video.pixels.asType(visionDType))
+            pixelParts.append(video.pixels)
             videoFrames = video.frames
-        }
-        if !pixelParts.isEmpty {
-            pixelValues = concatenated(pixelParts)
         }
 
         var inputEmbeddings: MLXArray?
 
-        if let pixelValues,
+        if !pixelParts.isEmpty,
             let frames = combinedFrames(imageFrames: imageFrames, videoFrames: videoFrames)
                 .nilIfEmpty
         {
+            let vision = try vision()
+            let typedPixels = concatenated(pixelParts).asType(vision.patchEmbed.proj.weight.dtype)
+            pixelValues = typedPixels
             let inputIds = input.text.tokens
             let textEmbeds = languageModel.model.embedTokens(inputIds)
-            let (visionHidden, _) = visionModel(pixelValues, gridTHW: frames)
+            let (visionHidden, _) = vision(typedPixels, gridTHW: frames)
             let visionFeatures = visionHidden.asType(textEmbeds.dtype)
 
             let (mergedEmbeds, _) = try mergeInputIdsWithImageFeatures(
@@ -1714,7 +1759,7 @@ public class Qwen35: Module, VLMModel {
     ) throws -> PrepareResult {
         let inputIds = input.text.tokens
         let inputIds2D = inputIds.ndim == 1 ? inputIds[.newAxis, 0...] : inputIds
-        let cacheOffset = faCacheOffset(cache)
+        let cacheOffset = anchorCacheOffset(cache)
         // Resolved before the routing decision so a warm cache fails closed on either path.
         let positionOffset = try QwenVL.continuationAnchor(
             model: "Qwen35", key: ropeDeltasKey, cacheOffset: cacheOffset,
@@ -1762,11 +1807,14 @@ public class Qwen35: Module, VLMModel {
         return .logits(output)
     }
 
-    /// Offset of the first full-attention layer's cache — the model's notion
-    /// of "how many tokens are already cached".
-    private func faCacheOffset(_ cache: [any KVCache]) -> Int {
-        let faIdx = languageModel.model.faIdx
-        return cache.indices.contains(faIdx) ? cache[faIdx].offset : 0
+    /// Cached token count from a full-attention layer, or a linear layer when no full attention exists.
+    private func anchorCacheOffset(_ cache: [any KVCache]) -> Int {
+        guard let index = languageModel.model.faIdx ?? languageModel.model.ssmIdx,
+            cache.indices.contains(index)
+        else {
+            return 0
+        }
+        return cache[index].offset
     }
 
     /// Warm, windowed continuation through an image-bearing remainder — the
@@ -1874,7 +1922,7 @@ public class Qwen35: Module, VLMModel {
         _ input: LMInput.Text, cache: [any KVCache]?, state: LMOutput.State?
     ) -> LMOutput {
         precondition(
-            faCacheOffset(cache ?? []) == 0 || state?[ropeDeltasKey] != nil,
+            anchorCacheOffset(cache ?? []) == 0 || state?[ropeDeltasKey] != nil,
             "Qwen35 cannot continue a warm prompt cache without \(ropeDeltasKey.id)")
         let typedCache = castCacheOptional(cache)
         let result = languageModel(
@@ -1958,8 +2006,24 @@ public class Qwen35: Module, VLMModel {
             sanitized[key] = value
         }
 
-        return visionModel.sanitize(weights: sanitized)
+        return Qwen3VLVision.VisionModel.sanitize(
+            weights: sanitized, config: config.visionConfiguration)
     }
+}
+
+extension Qwen35: ModelComponentsProviding {
+    public var modelComponents: [ModelComponent: [CheckpointComponent]] {
+        [
+            .vision: [
+                CheckpointComponent(
+                    name: "vision_tower",
+                    namespaces: ["vision_tower", "model.visual", "visual"],
+                    destination: "vision_tower")
+            ]
+        ]
+    }
+
+    public var onDemandComponents: [AnyOnDemandComponent] { [onDemandVision] }
 }
 
 extension Qwen35: SpeculativeCacheRewindModel {

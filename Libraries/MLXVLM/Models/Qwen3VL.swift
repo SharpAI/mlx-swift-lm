@@ -1018,7 +1018,9 @@ enum Qwen3VLVision {
             return (hiddenStates, deepstackOutputs)
         }
 
-        func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
+        static func sanitize(
+            weights: [String: MLXArray], config: Qwen3VLConfiguration.VisionConfiguration
+        ) -> [String: MLXArray] {
             var sanitized: [String: MLXArray] = [:]
             for (key, value) in weights {
                 if key.contains("position_ids") {
@@ -1034,6 +1036,10 @@ enum Qwen3VLVision {
                 }
             }
             return sanitized
+        }
+
+        func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
+            Self.sanitize(weights: weights, config: config)
         }
     }
 }
