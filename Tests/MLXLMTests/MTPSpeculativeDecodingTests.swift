@@ -750,8 +750,12 @@ extension MLXTestingSuite {
                 maxDraftLookahead = Swift.max(maxDraftLookahead, draftBefore - tokens.count)
                 iter.finalizeGeneration()
                 #expect(consumed() == Swift.min(before, tokens.count), "stop \(stop)")
+                // Upstream's finalize feeds the last returned draft once the draft cache is behind.
                 #expect(
-                    draftConsumed() == Swift.min(draftBefore, tokens.count), "stop \(stop): draft")
+                    draftConsumed()
+                        == Swift.min(
+                            draftBefore + (draftBefore < before && tokens.count >= before ? 1 : 0),
+                            tokens.count), "stop \(stop): draft")
                 #expect(iter.mainCacheStorage.processedTokenCount == consumed() + prompt.size)
                 #expect(iter.draftCacheStorage.processedTokenCount == draftConsumed() + prompt.size)
                 expectSameCache(
@@ -856,7 +860,12 @@ extension MLXTestingSuite {
                 let after = consumedTokens(mainCache, promptLength: prompt.size)
                 let draftAfter = consumedTokens(draftCache, promptLength: prompt.size)
                 #expect(after == Swift.min(before, tokens.count), "stop \(stop)")
-                #expect(draftAfter == Swift.min(draftBefore, tokens.count), "stop \(stop): draft")
+                // Upstream's finalize feeds the last returned draft once the draft cache is behind.
+                #expect(
+                    draftAfter
+                        == Swift.min(
+                            draftBefore + (draftBefore < before && tokens.count >= before ? 1 : 0),
+                            tokens.count), "stop \(stop): draft")
                 expectSameCache(
                     try referenceCache(
                         trunk, prompt: prompt, tokens: tokens.prefix(after), parameters: params),
