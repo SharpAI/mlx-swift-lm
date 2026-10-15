@@ -395,6 +395,13 @@ public struct Gemma4TextConfiguration: Codable, Sendable {
 
 /// Configuration of the Gemma 4 audio encoder (`model_type: gemma4_audio`).
 
+/// Shape of the Gemma 4 audio encoder, as exposed to API clients.
+public struct Gemma4AudioSummary: Sendable, Equatable {
+    public let hiddenSize: Int
+    public let numHiddenLayers: Int
+    public let numAttentionHeads: Int
+}
+
 public struct Gemma4Configuration: Codable, Sendable {
     public let textConfiguration: Gemma4TextConfiguration
     public let visionConfiguration: Gemma4VisionConfiguration
@@ -408,7 +415,17 @@ public struct Gemma4Configuration: Codable, Sendable {
     public let visionSoftTokensPerImage: Int
     public let visionSoftTokensPerVideoFrame: Int
     public let tieWordEmbeddings: Bool
-    package let audioConfig: Gemma4AudioConfiguration?
+    package let audioEncoderConfiguration: Gemma4AudioConfiguration?
+
+    /// Public view of the audio encoder shape; the full configuration is package-scoped
+    /// because the encoder is shared with upstream's MLXLMCommon implementation.
+    public var audioConfig: Gemma4AudioSummary? {
+        audioEncoderConfiguration.map {
+            Gemma4AudioSummary(
+                hiddenSize: $0.hiddenSize, numHiddenLayers: $0.hiddenLayers,
+                numAttentionHeads: $0.attentionHeads)
+        }
+    }
 
     private let _vocabularySize: Int?
     private let _hiddenSize: Int?
@@ -431,7 +448,7 @@ public struct Gemma4Configuration: Codable, Sendable {
         case visionSoftTokensPerImage = "vision_soft_tokens_per_image"
         case visionSoftTokensPerVideoFrame = "vision_soft_tokens_per_video_frame"
         case tieWordEmbeddings = "tie_word_embeddings"
-        case audioConfig = "audio_config"
+        case audioEncoderConfiguration = "audio_config"
         case _vocabularySize = "vocab_size"
         case _hiddenSize = "hidden_size"
         case _padTokenId = "pad_token_id"
@@ -462,7 +479,8 @@ public struct Gemma4Configuration: Codable, Sendable {
         _vocabularySize = try c.decodeIfPresent(Int.self, forKey: CodingKeys._vocabularySize)
         _hiddenSize = try c.decodeIfPresent(Int.self, forKey: CodingKeys._hiddenSize)
         _padTokenId = try c.decodeIfPresent(Int.self, forKey: CodingKeys._padTokenId)
-        audioConfig = try c.decodeIfPresent(Gemma4AudioConfiguration.self, forKey: CodingKeys.audioConfig)
+        audioEncoderConfiguration = try c.decodeIfPresent(
+            Gemma4AudioConfiguration.self, forKey: CodingKeys.audioEncoderConfiguration)
     }
 }
 
@@ -1479,7 +1497,7 @@ public final class Gemma4: Module, VLMModel, KVCacheDimensionProvider, Streamabl
             textHiddenSize: config.textConfiguration.hiddenSize,
             eps: config.visionConfiguration.rmsNormEps
         )
-        if let acfg = config.audioConfig {
+        if let acfg = config.audioEncoderConfiguration {
             self._audioTower.wrappedValue = Gemma4AudioModel(config: acfg)
             self._embedAudio.wrappedValue = Gemma4MultimodalEmbedder(
                 embeddingDim: acfg.outputProjectionDimensions,

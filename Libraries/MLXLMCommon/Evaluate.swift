@@ -1583,7 +1583,9 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
         // A multi-token y or draftY (an unprocessed prompt tail) is fed as a plain step
         // first, so a round only ever rewinds 1 + numDraft tokens. A TurboKV cache can
         // rewind only its uncompressed tail.
-        if y.tokens.dim(0) > 1 {
+        // A staged round is exact at any width and snapshots the live caches when it opens,
+        // so it takes the whole tail; only the trim fallback needs the split.
+        if round == nil, y.tokens.dim(0) > 1 {
             let n = y.tokens.dim(0)
             let head = LMInput.Text(tokens: y.tokens[..<(n - 1)])
             state = mainModel(head[text: .newAxis], cache: mainCache, state: state).state
@@ -1592,7 +1594,7 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
         }
         // A 2-token draftY (the last accepted draft plus the final token) stays a
         // bounded rewind; only a prompt tail is split off.
-        if draftY.tokens.dim(0) > 2 {
+        if round == nil, draftY.tokens.dim(0) > 2 {
             let n = draftY.tokens.dim(0)
             let head = LMInput.Text(tokens: draftY.tokens[..<(n - 1)])
             _ = draftModel(head[text: .newAxis], cache: draftCache, state: nil)
