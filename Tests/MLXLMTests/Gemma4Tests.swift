@@ -757,7 +757,9 @@ extension MLXTestingSuite {
             #expect(after == Swift.min(before, tokens.count), "stop \(stop)")
             #expect(
                 draftCache[1].offset - wrappingPrompt.size
-                    == Swift.min(draftBefore, tokens.count), "stop \(stop): draft")
+                    == Swift.min(
+                        draftBefore + (draftBefore < before && tokens.count >= before ? 1 : 0),
+                        tokens.count), "stop \(stop): draft")
             #expect(mainCache[0].offset == mainCache[1].offset)
             #expect(iter.mainCacheStorage.processedTokenCount == mainCache[1].offset)
             #expect(draftCache[0].offset == draftCache[1].offset)

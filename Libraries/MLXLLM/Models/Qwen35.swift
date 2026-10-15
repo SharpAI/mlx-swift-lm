@@ -42,6 +42,8 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
     var headDim: Int?
     var ropeScaling: [String: StringOrNumber]?
     var fullAttentionInterval: Int = 4
+    var layerTypes: [String]?
+    var resolvedLayerTypes: [String] = []
     var mtpNumHiddenLayers: Int = 0
     var mtpUseDedicatedEmbeddings: Bool = false
 
@@ -78,6 +80,7 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
         case headDim = "head_dim"
         case ropeScaling = "rope_scaling"
         case fullAttentionInterval = "full_attention_interval"
+        case layerTypes = "layer_types"
         case mtpNumHiddenLayers = "mtp_num_hidden_layers"
         case mtpUseDedicatedEmbeddings = "mtp_use_dedicated_embeddings"
         case numExperts = "num_experts"
@@ -127,6 +130,13 @@ public struct Qwen35TextConfiguration: Codable, Sendable {
         self.headDim = try container.decodeIfPresent(Int.self, forKey: .headDim)
         self.fullAttentionInterval =
             try container.decodeIfPresent(Int.self, forKey: .fullAttentionInterval) ?? 4
+        self.layerTypes = try container.decodeIfPresent([String].self, forKey: .layerTypes)
+        let layerSchedule = try HybridAttentionSchedule(
+            hiddenLayerCount: hiddenLayers,
+            fullAttentionInterval: fullAttentionInterval,
+            explicitLayerTypes: layerTypes
+        )
+        self.resolvedLayerTypes = layerSchedule.layerTypes
         self.mtpNumHiddenLayers =
             try container.decodeIfPresent(Int.self, forKey: .mtpNumHiddenLayers) ?? 0
         self.mtpUseDedicatedEmbeddings =
@@ -738,7 +748,8 @@ final class Qwen35DecoderLayer: Module {
 
     init(_ args: Qwen35TextConfiguration, layerIdx: Int, forceFullAttention: Bool = false) {
         self.isLinear =
-            forceFullAttention ? false : (layerIdx + 1) % args.fullAttentionInterval != 0
+            forceFullAttention
+            ? false : args.resolvedLayerTypes[layerIdx] == HybridAttentionSchedule.linearAttention
 
         if isLinear {
             _linearAttn.wrappedValue = Qwen35GatedDeltaNet(args)
@@ -978,11 +989,11 @@ final class Qwen35DecoderLayer: Module {
 public class Qwen35TextModelInner: Module, LayerPartitionable, StreamableMoE {
     @ModuleInfo(key: "embed_tokens") public var embedTokens: Embedding
 
-    fileprivate let layers: [Qwen35DecoderLayer]
+    let layers: [Qwen35DecoderLayer]
     let norm: MathRMSNorm
 
-    let ssmIdx: Int
-    let faIdx: Int
+    let ssmIdx: Int?
+    let faIdx: Int?
 
     // LayerPartitionable
     public var gpuLayerCount: Int?
@@ -1006,8 +1017,8 @@ public class Qwen35TextModelInner: Module, LayerPartitionable, StreamableMoE {
 
         self.norm = MathRMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
 
-        self.ssmIdx = 0
-        self.faIdx = args.fullAttentionInterval - 1
+        self.ssmIdx = layers.firstIndex(where: { $0.isLinear })
+        self.faIdx = layers.firstIndex(where: { !$0.isLinear })
 
         let segments = CompiledDecodeSegment.schedule(
             linearLayers: layers.map(\.isLinear))
@@ -1062,8 +1073,13 @@ public class Qwen35TextModelInner: Module, LayerPartitionable, StreamableMoE {
             cacheArray = Array(repeating: nil as KVCache?, count: layers.count)
         }
 
-        let faMask = createAttentionMask(h: hiddenStates, cache: cacheArray?[faIdx])
-        let ssmMask = createSSMMask(h: hiddenStates, cache: cacheArray?[ssmIdx] as? MambaCache)
+        let faMask =
+            faIdx.map {
+                createAttentionMask(h: hiddenStates, cache: cacheArray?[$0])
+            } ?? .none
+        let ssmMask = ssmIdx.flatMap {
+            createSSMMask(h: hiddenStates, cache: cacheArray?[$0] as? MambaCache)
+        }
 
         for (i, layer) in layers.enumerated() {
             let mask = layer.isLinear ? ssmMask : nil
@@ -1147,10 +1163,16 @@ public class Qwen35TextModelInner: Module, LayerPartitionable, StreamableMoE {
         }
         // The schedule is only valid when the masks the general path would
         // build both come out empty.
-        if createSSMMask(h: inputs, cache: cache[ssmIdx] as? MambaCache) != nil { return nil }
-        guard let faCache = cache[faIdx],
-            case .none = createAttentionMask(h: inputs, cache: faCache)
-        else { return nil }
+        if let ssmIdx,
+            createSSMMask(h: inputs, cache: cache[ssmIdx] as? MambaCache) != nil
+        {
+            return nil
+        }
+        if let faIdx {
+            guard let faCache = cache[faIdx],
+                case .none = createAttentionMask(h: inputs, cache: faCache)
+            else { return nil }
+        }
 
         // Cache kinds can change mid-generation (`maybeQuantizeKVCache` swaps
         // array entries), so eligibility is re-checked every step.
@@ -1210,8 +1232,13 @@ public class Qwen35TextModelInner: Module, LayerPartitionable, StreamableMoE {
             cacheArray = Array(repeating: nil as KVCache?, count: layers.count)
         }
 
-        let faMask = createAttentionMask(h: hiddenStates, cache: cacheArray?[faIdx])
-        let ssmMask = createSSMMask(h: hiddenStates, cache: cacheArray?[ssmIdx] as? MambaCache)
+        let faMask =
+            faIdx.map {
+                createAttentionMask(h: hiddenStates, cache: cacheArray?[$0])
+            } ?? .none
+        let ssmMask = ssmIdx.flatMap {
+            createSSMMask(h: hiddenStates, cache: cacheArray?[$0] as? MambaCache)
+        }
 
         var captured = [Int: MLXArray]()
 
@@ -1322,7 +1349,10 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
             cache: cache, fullAttentionIndex: model.faIdx)
         outState[mtpSharedKVOffsetsKey] = qwen35SharedKVOffsets(
             cache: cache, fullAttentionIndex: model.faIdx)
-        outState[mtpSharedKVSourceIndicesKey] = ["full_attention": model.faIdx]
+        outState[mtpSharedKVSourceIndicesKey] =
+            model.faIdx.map {
+                ["full_attention": $0]
+            } ?? [:]
         return LMOutput(logits: logits, state: outState)
     }
 
@@ -1429,9 +1459,9 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
 
 private func qwen35SharedKVState(
     cache: [KVCache]?,
-    fullAttentionIndex: Int
+    fullAttentionIndex: Int?
 ) -> [String: (MLXArray, MLXArray)] {
-    guard let cache, fullAttentionIndex < cache.count else {
+    guard let cache, let fullAttentionIndex, fullAttentionIndex < cache.count else {
         return [:]
     }
     let state = cache[fullAttentionIndex].state
@@ -1443,9 +1473,9 @@ private func qwen35SharedKVState(
 
 private func qwen35SharedKVOffsets(
     cache: [KVCache]?,
-    fullAttentionIndex: Int
+    fullAttentionIndex: Int?
 ) -> [String: Int]? {
-    guard let cache, fullAttentionIndex < cache.count else {
+    guard let cache, let fullAttentionIndex, fullAttentionIndex < cache.count else {
         return nil
     }
     return ["full_attention": cache[fullAttentionIndex].offset]

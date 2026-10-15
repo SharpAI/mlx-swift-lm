@@ -1010,7 +1010,7 @@ public struct TokenIterator: TokenIteratorProtocol {
         self.cacheStorage = cacheStorage
 
         try components.validate(parameters: parameters)
-        self.processor = components.logitProcessor(parameters: parameters)
+        self.processor = components.logitProcessor(parameters: parameters, model: model)
         self.sampler = parameters.sampler()
         self.logProbabilityTopK = parameters.logProbabilities.map { Swift.max($0, 0) }
         self.maxTokens = parameters.maxTokens
@@ -1075,6 +1075,7 @@ public struct TokenIterator: TokenIteratorProtocol {
 
     mutating func prepare(input: LMInput, prefill: PrefillParameters = .init()) throws {
         processor?.prompt(input.text.tokens)
+        prefill.prefix?(cacheStorage.processedTokenCount)
         let inputLength = input.text.cacheSequenceLength
 
         let preparation = try SSDStreamingErrorLatch.withActive(ssdErrorLatch) {
@@ -1323,6 +1324,11 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
     /// The draft model's recurrent state and `draftY` at the start of the last round.
     private var draftRoundStart: (recurrent: [MambaCache.Snapshot], y: LMInput.Text)?
 
+    /// Why speculation stopped and the rest of the stream decodes one token at a time, or `nil`
+    /// while rounds are still speculative. Engaged when a cache can neither stage nor trim a
+    /// round: generation stays correct, it just stops speculating.
+    private(set) var passthroughReason: String?
+
     // Internal metrics
     public var promptPrefillTime: TimeInterval = 0.0
     private var telemetry = SpeculativeDecodingTelemetry()
@@ -1404,12 +1410,25 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             throw KVCacheError(
                 message: "Speculative caches must represent the same processed-token position.")
         }
-        // Per layer: a wrapped sliding window isn't trimmable now but still rewinds.
-        guard
-            mainCacheStorage.cache.allSatisfy(canRewindCacheLayer),
-            draftCacheStorage.cache.allSatisfy(canRewindCacheLayer)
-        else {
-            throw KVCacheError(message: "Speculative decoding requires trimmable KV caches.")
+        guard draftCacheStorage.cache.allSatisfy(canRewindCacheLayer) else {
+            throw KVCacheError(
+                message: "Speculative decoding requires a trimmable draft KV cache.")
+        }
+        // Per layer: a wrapped sliding window isn't trimmable now but still rewinds. Otherwise
+        // the main cache rewinds rejected drafts through a staged round once a rotating cache
+        // has wrapped. Probe with a round at the width rounds will use, as
+        // `MTPSpeculativeTokenIterator` does, so this check cannot drift from the leaf
+        // classification.
+        if !mainCacheStorage.cache.allSatisfy(canRewindCacheLayer) {
+            guard
+                let probe = mainCacheStorage.beginRound(
+                    maximumPositions: numDraftTokens + 1)
+            else {
+                throw KVCacheError(
+                    message:
+                        "Speculative decoding requires a trimmable or stageable main KV cache.")
+            }
+            mainCacheStorage.rollback(probe)
         }
         // With two or more drafts a hybrid draft rewinds up to numDraftTokens + 1
         // single-token writes, which a wrapped sliding window must still hold past its
@@ -1444,7 +1463,7 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
 
         self.sampler = parameters.sampler()
         try components.validate(parameters: parameters)
-        self.processor = components.logitProcessor(parameters: parameters)
+        self.processor = components.logitProcessor(parameters: parameters, model: mainModel)
 
         self.maxTokens = parameters.maxTokens
         self.numDraftTokens = numDraftTokens
@@ -1467,6 +1486,7 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
     /// Prefill both main and draft models with the prompt, priming caches for generation
     mutating func prepare(input: LMInput, prefill: PrefillParameters = .init()) throws {
         processor?.prompt(input.text.tokens)
+        prefill.prefix?(mainCacheStorage.processedTokenCount)
         let inputLength = input.text.cacheSequenceLength
 
         // Prefill main model
@@ -1492,6 +1512,10 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             processor?.didSample(token: token)
             y = .init(tokens: token)
             state = result.state
+            // The verify pass only emits tokens *after* `y`, so the
+            // prefill-sampled token must be queued here or the stream would
+            // silently start at the second generated token.
+            pendingTokens.append(token.item(Int.self))
         }
 
         // Prefill draft model, don't call didSample here -- processor tracks main model's accepted sequence only
@@ -1528,11 +1552,40 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
         guard numDraft > 0 else {
             return
         }
+        guard passthroughReason == nil else {
+            plainRound()
+            return
+        }
+
+        // Rewinding must be possible *before* anything is written. A staged round commits only
+        // the accepted rows, so it stays exact after a rotating cache wraps and can no longer
+        // trim; with no round available, fall back to trim only while every leaf can still take
+        // back the width. After a `.tokens`-returning `prepare`, `y` is the whole remaining
+        // prompt, so the width comes from `y` rather than from `numDraft` alone.
+        let ySize = y.cacheSequenceLength
+        let roundWidth = ySize + numDraft
+        // A cache-less model has nothing to stage or rewind: an empty round
+        // would report zero written positions and refuse any commit.
+        let round =
+            mainCache.isEmpty
+            ? nil : mainCacheStorage.beginRound(maximumPositions: roundWidth)
+        if round == nil,
+            !mainCache.allSatisfy({
+                $0.isTrimmable(after: roundWidth) || canRewindCacheLayer($0)
+                    || !recurrentCaches(in: [$0]).isEmpty
+            })
+        {
+            passthroughReason = "main KV cache can neither stage nor trim a speculative round"
+            plainRound()
+            return
+        }
 
         // A multi-token y or draftY (an unprocessed prompt tail) is fed as a plain step
         // first, so a round only ever rewinds 1 + numDraft tokens. A TurboKV cache can
         // rewind only its uncompressed tail.
-        if y.tokens.dim(0) > 1 {
+        // A staged round is exact at any width and snapshots the live caches when it opens,
+        // so it takes the whole tail; only the trim fallback needs the split.
+        if round == nil, y.tokens.dim(0) > 1 {
             let n = y.tokens.dim(0)
             let head = LMInput.Text(tokens: y.tokens[..<(n - 1)])
             state = mainModel(head[text: .newAxis], cache: mainCache, state: state).state
@@ -1541,7 +1594,7 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
         }
         // A 2-token draftY (the last accepted draft plus the final token) stays a
         // bounded rewind; only a prompt tail is split off.
-        if draftY.tokens.dim(0) > 2 {
+        if round == nil, draftY.tokens.dim(0) > 2 {
             let n = draftY.tokens.dim(0)
             let head = LMInput.Text(tokens: draftY.tokens[..<(n - 1)])
             _ = draftModel(head[text: .newAxis], cache: draftCache, state: nil)
@@ -1580,13 +1633,18 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             draftY = .init(tokens: draftToken)
         }
 
-        // Verification: main model processes proposals in one pass
+        // Verification: main model processes proposals in one pass. With a
+        // staged round the model runs against the round's presented caches;
+        // the live entries stay untouched until the commit below.
         let verifyTokens = [y.tokens] + draftTokens
         let verifyInput = LMInput.Text(tokens: concatenated(verifyTokens))
         let verifyStart = verifyInput.tokens.dim(0) - (numDraft + 1)
         let preVerifyState = state
-        let mainResult = mainModel(verifyInput[text: .newAxis], cache: mainCache, state: state)
-        mainCacheStorage.commitProcessedTokens(verifyInput.cacheSequenceLength)
+        let mainResult = mainModel(
+            verifyInput[text: .newAxis], cache: round?.caches ?? mainCache, state: state)
+        if round == nil {
+            mainCacheStorage.commitProcessedTokens(verifyInput.cacheSequenceLength)
+        }
         let mainLogits = mainResult.logits
         state = mainResult.state
 
@@ -1704,24 +1762,29 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             targetVerified: numDraft + 1
         )
 
-        // Rewind rejected tokens per layer, so a wrapped sliding window doesn't keep them.
-        // A recurrent layer can only go back to its checkpoint, so with one the whole
-        // round is rewound and the kept tokens are re-fed (one extra forward per
-        // rejected round, on hybrid models only).
-        let mainRejected = numDraft - accepted
-        if mainRejected > 0, !mainRecurrent.isEmpty {
-            // `y` can be several tokens on the first round (an unprocessed prompt tail).
-            let verified = verifyInput.tokens.dim(0)
-            let trimmed = mainCacheStorage.trimEachLayer(verified)
-            precondition(trimmed == verified || mainCache.isEmpty, "Speculative main rewind was partial")
-            let kept = LMInput.Text(tokens: concatenated([y.tokens] + draftTokens.prefix(accepted)))
-            let refed = mainModel(kept[text: .newAxis], cache: mainCache, state: preVerifyState)
-            mainCacheStorage.commitProcessedTokens(kept.cacheSequenceLength)
-            state = refed.state
-            eval(refed.logits)
+        // Rewind caches for rejected tokens. Committing a staged round keeps what `y` carried
+        // plus the accepted prefix and the correction token, drops the rejected tail without the
+        // live caches ever holding it, and advances the processed-token timeline to match.
+        // Without a round (recurrent layers cannot be staged) rewind per layer below, so a
+        // wrapped sliding window doesn't keep the rejected tokens.
+        if let round {
+            mainCacheStorage.commit(round, retaining: ySize + accepted)
         } else {
-            let trimmed = mainCacheStorage.trimEachLayer(mainRejected)
-            precondition(trimmed == mainRejected || mainCache.isEmpty, "Speculative main rewind was partial")
+            let mainRejected = numDraft - accepted
+            if mainRejected > 0, !mainRecurrent.isEmpty {
+                // `y` can be several tokens on the first round (an unprocessed prompt tail).
+                let verified = verifyInput.tokens.dim(0)
+                let trimmed = mainCacheStorage.trimEachLayer(verified)
+                precondition(trimmed == verified || mainCache.isEmpty, "Speculative main rewind was partial")
+                let kept = LMInput.Text(tokens: concatenated([y.tokens] + draftTokens.prefix(accepted)))
+                let refed = mainModel(kept[text: .newAxis], cache: mainCache, state: preVerifyState)
+                mainCacheStorage.commitProcessedTokens(kept.cacheSequenceLength)
+                state = refed.state
+                eval(refed.logits)
+            } else {
+                let trimmed = mainCacheStorage.trimEachLayer(mainRejected)
+                precondition(trimmed == mainRejected || mainCache.isEmpty, "Speculative main rewind was partial")
+            }
         }
         let draftRejected = Swift.max(numDraft - accepted - 1, 0)
         if draftRejected > 0, !recurrentCaches(in: draftCache).isEmpty {
@@ -1734,7 +1797,12 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
             eval(draftModel(kept[text: .newAxis], cache: draftCache, state: nil).logits)
             draftCacheStorage.commitProcessedTokens(kept.cacheSequenceLength)
         } else {
-            draftCacheStorage.trimEachLayer(draftRejected)
+            let trimmed = draftCacheStorage.trimEachLayer(draftRejected)
+            if trimmed < draftRejected, !draftCache.isEmpty {
+                // A draft cache that cannot rewind would desynchronize future proposals:
+                // stop speculating rather than draft from a corrupted history.
+                passthroughReason = "draft KV cache could not rewind rejected drafts"
+            }
         }
 
         // Apply dynamic cache quantization after rewind
@@ -1755,6 +1823,25 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
                 ])
             )
         }
+    }
+
+    /// One non-speculative decode step for the sticky fallback: feed the last
+    /// sampled token, sample the next, and commit exactly one position — no
+    /// rewind is ever needed, so no rewindability is required.
+    private mutating func plainRound() {
+        let result = mainModel(y[text: .newAxis], cache: mainCache, state: state)
+        mainCacheStorage.commitProcessedTokens(y.cacheSequenceLength)
+        state = result.state
+        var logits = result.logits[0..., -1, 0...]
+        logits = processor?.process(logits: logits) ?? logits
+        let token = sampler.sample(logits: logits)
+        processor?.didSample(token: token)
+        eval(token)
+        pendingTokens.append(token.item(Int.self))
+        mainCommittedPendingTokenCount = 0
+        draftCommittedPendingTokenCount = 0
+        y = .init(tokens: token)
+        kvCachePlan.apply(to: mainCacheStorage)
     }
 
     mutating public func next() -> Int? {
@@ -1794,6 +1881,19 @@ public struct SpeculativeTokenIterator: TokenIteratorProtocol {
 extension SpeculativeTokenIterator: GenerationFinalizingTokenIterator {
     mutating func finalizeGeneration() {
         defer { processor?.finalizeGeneration() }
+        // A round that accepted every draft left the last one for the next round to feed
+        // (`draftY` carries it). Feed it now if it was returned, so both caches end together.
+        if draftCommittedPendingTokenCount < mainCommittedPendingTokenCount,
+            pendingIndex >= mainCommittedPendingTokenCount,
+            passthroughReason == nil, !Task.isCancelled
+        {
+            let lastDraft = LMInput.Text(tokens: draftY.tokens[0 ..< 1])
+            _ = draftModel(lastDraft[text: .newAxis], cache: draftCache, state: nil)
+            eval(draftCache)
+            draftCacheStorage.commitProcessedTokens(1)
+            draftCommittedPendingTokenCount += 1
+        }
+
         // Trim through the storages so the model-wide processed-token timeline
         // rewinds with the caches; `ChatSession` reconciles its ledger against
         // that timeline, not against per-entry offsets.
@@ -1813,7 +1913,14 @@ extension SpeculativeTokenIterator: GenerationFinalizingTokenIterator {
             state = mainModel(kept[text: .newAxis], cache: mainCache, state: start.state).state
             mainCacheStorage.commitProcessedTokens(kept.cacheSequenceLength)
         } else if mainLookahead > 0 {
-            mainCacheStorage.trimEachLayer(mainLookahead)
+            // The staged-round commit recorded how to take back positions a trim cannot (a
+            // wrapped sliding-window ring); `rewindLastRound` uses that record and falls back
+            // to a plain trim otherwise. A layer the plain trim can't take back is rewound
+            // per layer.
+            let rewound = mainCacheStorage.rewindLastRound(mainLookahead)
+            if rewound < mainLookahead {
+                mainCacheStorage.trimEachLayer(mainLookahead - rewound)
+            }
         }
 
         let draftConsumed = Swift.min(pendingIndex, draftCommittedPendingTokenCount)

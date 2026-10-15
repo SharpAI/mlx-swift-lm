@@ -51,6 +51,13 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
     var processor: LogitProcessor?
     let sampler: LogitSampler
 
+    /// Sampler handed to ``MTPDrafterModel/draftBlock``: the base sampler,
+    /// wrapped to mask suppressed token IDs when the target has any.
+    /// `draftBlock` receives no ``LogitProcessor``, and an unsuppressed
+    /// draft of a suppressed token would always be rejected by the
+    /// verifier, wasting draft slots.
+    let draftSampler: LogitSampler
+
     public var tokenCount: Int { telemetry.emittedTokenCount }
     public let maxTokens: Int?
     /// Total tokens proposed per round (`blockSize - 1` drafted, plus the
@@ -129,6 +136,11 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
         precondition(
             blockSize >= 2,
             "MTPSpeculativeTokenIterator requires blockSize >= 2 (1 bonus + K-1 drafted)")
+        guard drafter.isCompatible(with: mainModel) else {
+            throw ModelFactoryError.invalidConfiguration(
+                "MTP drafter \(type(of: drafter)) is incompatible with target "
+                    + "\(type(of: mainModel))")
+        }
 
         let kvCachePlan = try parameters.kvCachePlan()
         let mainCache = try kvCachePlan.validated(
@@ -143,7 +155,15 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
 
         self.sampler = parameters.sampler()
         try components.validate(parameters: parameters)
-        self.processor = components.logitProcessor(parameters: parameters)
+        self.processor = components.logitProcessor(parameters: parameters, model: mainModel)
+        // Draft proposals bypass the iterator's processor chain, so suppressed
+        // ids have to be masked at the drafter's own sampler: a proposal the
+        // verifier will always reject is a wasted speculation slot.
+        if let suppressor = makeSuppressTokensProcessor(model: mainModel) {
+            self.draftSampler = SuppressTokensSampler(base: self.sampler, suppressor: suppressor)
+        } else {
+            self.draftSampler = self.sampler
+        }
 
         self.maxTokens = parameters.maxTokens
         // A round presents `blockSize` positions at once, and a sliding layer can only show a
@@ -226,6 +246,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
     /// `LMOutput.state`.
     mutating func prepare(input: LMInput, prefill: PrefillParameters = .init()) throws {
         processor?.prompt(input.text.tokens)
+        prefill.prefix?(mainCacheStorage.processedTokenCount)
         let inputLength = input.text.cacheSequenceLength
 
         var prefillState = LMOutput.State()
@@ -480,7 +501,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
                 queryOffset: queryOffset,
                 blockSize: numDraft + 1,  // total round size: bonus + numDraft
                 state: &currentDrafterState,
-                sampler: sampler
+                sampler: draftSampler
             )
             drafterState = currentDrafterState
         } else {
@@ -492,7 +513,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
                 positionDeltas: state[mtpPositionDeltasKey],
                 queryOffset: queryOffset,
                 blockSize: numDraft + 1,  // total round size: bonus + numDraft
-                sampler: sampler
+                sampler: draftSampler
             )
         }
         // draftTokens shape [B, numDraft] -> flatten to [numDraft].
