@@ -187,12 +187,19 @@ extension MessageGenerator {
         }
     }
 
+    /// Avoid truthy empty text parts on assistant tool calls.
+    /// Keep empty text parts elsewhere for templates that require nonempty lists.
     package func contentParts(
         for message: Chat.Message, layout: MessageContentLayout
     ) -> [[String: String]] {
         var parts: [[String: String]] = []
 
         func appendText(_ text: String) {
+            if text.isEmpty, message.role == .assistant, let calls = message.tool?.calls,
+                !calls.isEmpty
+            {
+                return
+            }
             parts.append(["type": "text", "text": text])
         }
 

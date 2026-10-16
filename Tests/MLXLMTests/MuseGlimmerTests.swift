@@ -1576,7 +1576,7 @@ struct MuseGlimmerOnyxCacheTests {
             processedTokenCount: live.count,
             mainCacheIsAligned: true,
             draftCacheIsAligned: true,
-            isTrimmable: true)
+            maxTrimCount: live.count)
 
         let decision = try #require(rule.reuse(turn: turn, cache: cache))
         guard case .appendSuffix(let suffixStart, let represented) = decision else {
@@ -1609,7 +1609,7 @@ struct MuseGlimmerOnyxCacheTests {
             processedTokenCount: live.count,
             mainCacheIsAligned: true,
             draftCacheIsAligned: true,
-            isTrimmable: true)
+            maxTrimCount: live.count)
 
         let decision = try #require(rule.reuse(turn: turn, cache: cache))
         guard case .appendSuffix(let suffixStart, let represented) = decision else {
@@ -1642,7 +1642,7 @@ struct MuseGlimmerOnyxCacheTests {
             processedTokenCount: live.count,
             mainCacheIsAligned: true,
             draftCacheIsAligned: true,
-            isTrimmable: true)
+            maxTrimCount: live.count)
 
         #expect(rule.reuse(turn: turn, cache: cache) == nil)
         var uncommitted = turn

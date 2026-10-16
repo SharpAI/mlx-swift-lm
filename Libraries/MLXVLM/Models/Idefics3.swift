@@ -734,7 +734,8 @@ public class Idefics3: Module, VLMModel, KVCacheDimensionProvider {
     ) throws
         -> PrepareResult
     {
-        let inputIds = input.text.tokens
+        var inputIds = input.text.tokens
+        if inputIds.ndim == 1 { inputIds = inputIds.expandedDimensions(axis: 0) }
         let pixelValues = input.image?.pixels
         let embeddings = getInputEmbeddings(
             inputIds: inputIds,

@@ -1289,8 +1289,9 @@ public struct Qwen2VLMessageGenerator: MessageGenerator {
         // a deterministic ~9 px bbox offset vs the Python mlx-vlm reference.
         var content = contentParts(for: message, layout: .imagesThenVideosThenText)
         // Audio is fork-only: its placeholders go between the videos and the trailing text.
-        content.insert(
-            contentsOf: message.audios.map { _ in ["type": "audio"] }, at: content.count - 1)
+        // A tool-call message can have no text part at all, so the slot is not always there.
+        let textSlot = content.last?["type"] == "text" ? content.count - 1 : content.count
+        content.insert(contentsOf: message.audios.map { _ in ["type": "audio"] }, at: textSlot)
         var dictionary: MLXLMCommon.Message = [
             "role": message.role.rawValue,
             "content": content,

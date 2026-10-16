@@ -479,12 +479,8 @@ private enum Language {
 
             var swaMask: MLXFast.ScaledDotProductAttentionMaskMode = .none
             if let swaIndex, let slidingWindow, !cache.isEmpty {
-                let t = h.dim(1)
-                if t > 1 {
-                    let swaOffset = min(slidingWindow, cache[swaIndex].offset)
-                    swaMask = .array(
-                        createCausalMask(n: t, offset: swaOffset, windowSize: slidingWindow))
-                }
+                swaMask = createAttentionMask(
+                    h: h, cache: cache[swaIndex], windowSize: slidingWindow)
             }
 
             let beta = config.ropeParameters?["llama_4_scaling_beta"]?.asFloat() ?? 0.0
@@ -723,7 +719,8 @@ public class Mistral3VLM: Module, VLMModel, KVCacheDimensionProvider {
     ) throws
         -> PrepareResult
     {
-        let inputIds = input.text.tokens
+        var inputIds = input.text.tokens
+        if inputIds.ndim == 1 { inputIds = inputIds.expandedDimensions(axis: 0) }
         let pixelValues = input.image?.pixels
 
         // Extract image sizes from frames or fall back to config defaults
@@ -742,18 +739,16 @@ public class Mistral3VLM: Module, VLMModel, KVCacheDimensionProvider {
             imageSizes: imageSizes
         )
 
-        var tokens = inputIds
-        if tokens.ndim == 1 { tokens = tokens.expandedDimensions(axis: 0) }
         let totalPositions = embeddings.dim(1)
         let processed = try prefill.forEachChunk(total: totalPositions) { range in
             _ = languageModel(
-                tokens[0..., range], cache: cache,
+                inputIds[0..., range], cache: cache,
                 inputsEmbeds: embeddings[0..., range, 0...])
             asyncEval(cache)
         }
         if processed > 0 { eval(cache) }
         let logits = languageModel(
-            tokens[0..., processed...], cache: cache,
+            inputIds[0..., processed...], cache: cache,
             inputsEmbeds: embeddings[0..., processed..., 0...])
         prefill.progress?(totalPositions, totalPositions)
         return .logits(.init(logits: logits))
@@ -1022,9 +1017,8 @@ public struct Mistral3VLMProcessor: UserInputProcessor {
                 tools: input.tools,
                 additionalContext: input.additionalContext
             )
-            let tokensArray = MLXArray(promptTokens).expandedDimensions(axis: 0)
-            let mask = ones(like: tokensArray)
-            return LMInput(text: .init(tokens: tokensArray, mask: mask), image: nil)
+            // No mask: one unpadded sequence needs none, and a mask stops prompt-cache reuse.
+            return LMInput(tokens: MLXArray(promptTokens).expandedDimensions(axis: 0))
         }
 
         guard input.images.count == 1 else {
