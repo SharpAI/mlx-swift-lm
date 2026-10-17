@@ -1087,6 +1087,11 @@ public struct Gemma3Processor: UserInputProcessor {
             messages: messages, tools: input.tools,
             additionalContext: input.additionalContext)
 
+        if input.images.isEmpty {
+            // No mask: one unpadded sequence needs none, and a mask stops prompt-cache reuse.
+            return LMInput(tokens: MLXArray(promptTokens).expandedDimensions(axis: 0))
+        }
+
         // Process images if any
         var processedImage: LMInput.ProcessedImage?
 

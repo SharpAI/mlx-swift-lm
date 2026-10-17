@@ -1544,15 +1544,12 @@ public enum Qwen35Language {
             return LMOutput(logits: out, state: state)
         }
 
-        func makeCache(capacity: KVCacheConfiguration.Capacity?) -> [KVCache] {
-            model.layers.map { layer in
+        func makeCache(parameters: GenerateParameters?) throws -> [KVCache] {
+            try model.layers.map { layer in
                 if layer.isLinear {
                     return MambaCache()
                 }
-                if let capacity {
-                    return capacity.makeRotatingCache()
-                }
-                return KVCacheSimple()
+                return try makeAttentionKVCache(parameters: parameters)
             }
         }
 
@@ -1630,7 +1627,8 @@ public class Qwen35: Module, VLMModel {
     }
 
     public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
-        languageModel.makeCache(capacity: try parameters?.effectiveKVCacheCapacity())
+        _ = try parameters?.kvCachePlan()
+        return try languageModel.makeCache(parameters: parameters)
     }
 
     public func prepare() throws {

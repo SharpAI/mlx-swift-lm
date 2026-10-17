@@ -2260,8 +2260,9 @@ public struct Gemma4MessageGenerator: MessageGenerator {
     public init() {}
 
     public func generate(message: Chat.Message) -> MLXLMCommon.Message {
-        // System/assistant/tool roles: no media, use plain string content
-        if message.role != .user || (message.images.isEmpty && message.videos.isEmpty && message.audios.isEmpty) {
+        // Only the system prompt stays a plain string; every other role takes content parts
+        // like upstream, so a tool-call message with no text carries no empty text part.
+        if message.role == .system {
             var dictionary: MLXLMCommon.Message = [
                 "role": message.role.rawValue,
                 "content": message.content,
@@ -2269,9 +2270,9 @@ public struct Gemma4MessageGenerator: MessageGenerator {
             addToolMetadata(to: &dictionary, for: message)
             return dictionary
         }
-        // User messages with media: images/videos FIRST, then text, then audio
-        // This matches the Python: apply_chat_template(..., image_first=True)
-        // contentParts adds upstream's named-image text parts; audio is fork-only.
+        // Images/videos FIRST, then text, then audio. This matches the Python
+        // apply_chat_template(..., image_first=True). contentParts adds upstream's
+        // named-image text parts; audio is fork-only.
         var content: [[String: any Sendable]] = contentParts(
             for: message, layout: .imagesThenVideosThenText
         ).map { $0 as [String: any Sendable] }
@@ -2363,6 +2364,11 @@ public struct Gemma4Processor: UserInputProcessor {
             additionalContext: input.additionalContext)
         
         print("[Omni Debug] Full decoded prompt: \(tokenizer.decode(tokenIds: promptTokens))")
+
+        if input.images.isEmpty, input.videos.isEmpty {
+            // No mask: one unpadded sequence needs none, and a mask stops prompt-cache reuse.
+            return LMInput(tokens: MLXArray(promptTokens).expandedDimensions(axis: 0))
+        }
 
         var processedImage: LMInput.ProcessedImage?
         if !input.images.isEmpty {
@@ -2993,6 +2999,11 @@ public struct Gemma4UnifiedProcessor: UserInputProcessor {
         var promptTokens = try tokenizer.applyChatTemplate(
             messages: messages, tools: input.tools,
             additionalContext: input.additionalContext)
+
+        if input.images.isEmpty {
+            // No mask: one unpadded sequence needs none, and a mask stops prompt-cache reuse.
+            return LMInput(tokens: MLXArray(promptTokens).expandedDimensions(axis: 0))
+        }
 
         var processedImage: LMInput.ProcessedImage?
         if !input.images.isEmpty {

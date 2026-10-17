@@ -854,8 +854,8 @@ public class FalconH1Model: Module, LLMModel, KVCacheDimensionProvider, Trailing
     private func makeAttentionCache(parameters: GenerateParameters?) throws -> any KVCache {
         // Sliding-window attention: only the KV attention cache is bounded. The Mamba
         // recurrent state retains its full history because it cannot be safely windowed.
-        if let capacity = try parameters?.effectiveKVCacheCapacity() {
-            return capacity.makeRotatingCache()
+        if try parameters?.effectiveKVCacheCapacity() != nil {
+            return try makeAttentionKVCache(parameters: parameters)
         }
 
         // Quantized attention cache. We create it eagerly when quantization starts at

@@ -315,9 +315,8 @@ public struct SmolVLMProcessor: UserInputProcessor {
             let promptTokens = try tokenizer.applyChatTemplate(
                 messages: messages, tools: input.tools,
                 additionalContext: input.additionalContext)
-            let tokensArray = MLXArray(promptTokens).expandedDimensions(axis: 0)
-            let mask = ones(like: tokensArray)
-            return LMInput(text: .init(tokens: tokensArray, mask: mask), image: nil)
+            // No mask: one unpadded sequence needs none, and a mask stops prompt-cache reuse.
+            return LMInput(tokens: MLXArray(promptTokens).expandedDimensions(axis: 0))
         } else if input.images.count > 0 && input.videos.isEmpty {
             // Single image scenario
             guard input.images.count == 1 else {

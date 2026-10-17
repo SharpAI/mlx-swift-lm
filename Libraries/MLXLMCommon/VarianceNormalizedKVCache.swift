@@ -4,6 +4,19 @@ import Foundation
 import MLX
 import MLXNN
 
+extension VarianceNormalizedKVCache: SharedAttentionKVCache {
+    package func updateForAttention(keys: MLXArray, values: MLXArray) {
+        append(keys: keys, values: values)
+    }
+
+    package func attend(
+        queries: MLXArray, scale: Float,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode
+    ) -> MLXArray {
+        quantizedRotatedAttention(queries: queries, scale: scale, mask: mask)
+    }
+}
+
 private struct VarianceNormalizedKVTile {
     var keyWeight: MLXArray
     var keyScales: MLXArray
@@ -110,6 +123,86 @@ extension KVCacheSimple {
 public class VarianceNormalizedKVCache: BaseKVCache, KVCacheAttentionProtocol,
     CustomDebugStringConvertible
 {
+    public override class var serializedClassName: String? { "VarianceNormalizedKVCache" }
+
+    public override class func restore(
+        state: [MLXArray], metaState: [String]
+    ) throws -> any KVCache {
+        guard metaState.count == 7 || metaState.count == 10 else {
+            throw KVCacheError(
+                message:
+                    "Corrupt prompt cache: VarianceNormalizedKVCache metadata must contain 7 legacy or 10 versioned values."
+            )
+        }
+        let values = try promptCacheIntegers(
+            Array(metaState.prefix(7)), className: "VarianceNormalizedKVCache")
+        let tileSize = values[0]
+        let offset = values[1]
+        let keyBits = values[2]
+        let valueBits = values[3]
+        let sinkhornIterations = values[4]
+        let tileCount = values[5]
+        let tailLength = values[6]
+        guard
+            (try? VarianceNormalizedKVCacheConfiguration(
+                keyBits: keyBits,
+                valueBits: valueBits,
+                tileSize: tileSize,
+                sinkhornIterations: sinkhornIterations)) != nil,
+            offset >= 0,
+            tileCount >= 0,
+            (0 ..< tileSize).contains(tailLength),
+            metaState.count == 7
+                || (Int(metaState[7]) == VarianceNormalizedKVCache.metadataVersion
+                    && (metaState[8] == "none"
+                        || varianceNormalizedDType(named: metaState[8])
+                            .map(isSupportedVarianceNormalizedDType) == true)
+                    && (metaState[9] == "none"
+                        || varianceNormalizedDType(named: metaState[9])
+                            .map(isSupportedVarianceNormalizedDType) == true))
+        else {
+            throw KVCacheError(
+                message: "Corrupt prompt cache: invalid VarianceNormalizedKVCache metadata."
+            )
+        }
+        let (tiledLength, tileLengthOverflow) = tileCount.multipliedReportingOverflow(
+            by: tileSize)
+        let (representedLength, offsetOverflow) = tiledLength.addingReportingOverflow(tailLength)
+        let tailStateCount =
+            tailLength > 0 ? VarianceNormalizedKVCache.tailStateCount : 0
+        let tileStateCount = state.count - min(state.count, tailStateCount)
+        let hasValidTileStateCount =
+            if tileCount == 0 {
+                tileStateCount == 0
+            } else {
+                tileStateCount.isMultiple(of: tileCount)
+                    && [
+                        VarianceNormalizedKVCache.compactTileStateCount,
+                        VarianceNormalizedKVCache.legacyTileStateCount,
+                    ].contains(tileStateCount / tileCount)
+            }
+        guard
+            !tileLengthOverflow,
+            !offsetOverflow,
+            offset == representedLength,
+            state.count >= tailStateCount,
+            hasValidTileStateCount,
+            state.allSatisfy({ $0.ndim == 4 })
+        else {
+            throw KVCacheError(
+                message: "Corrupt prompt cache: invalid VarianceNormalizedKVCache state."
+            )
+        }
+        let cache = VarianceNormalizedKVCache(
+            tileSize: tileSize,
+            keyBits: keyBits,
+            valueBits: valueBits,
+            sinkhornIterations: sinkhornIterations)
+        cache.metaState = metaState
+        cache.state = state
+        return cache
+    }
+
     static let compactTileStateCount = 8
     static let legacyTileStateCount = 10
     static let tailStateCount = 2
@@ -910,8 +1003,8 @@ public class VarianceNormalizedKVCache: BaseKVCache, KVCacheAttentionProtocol,
         scale: Float,
         mask: MLXFast.ScaledDotProductAttentionMaskMode = .none
     ) -> MLXArray {
-        append(keys: keys, values: values)
-        return quantizedRotatedAttention(queries: queries, scale: scale, mask: mask)
+        updateForAttention(keys: keys, values: values)
+        return attend(queries: queries, scale: scale, mask: mask)
     }
 
     public override var state: [MLXArray] {

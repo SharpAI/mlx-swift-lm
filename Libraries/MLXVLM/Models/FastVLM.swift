@@ -992,9 +992,8 @@ public struct FastVLMProcessor: UserInputProcessor {
             let promptTokens = try tokenizer.applyChatTemplate(
                 messages: messages, tools: input.tools,
                 additionalContext: input.additionalContext)
-            let tokensArray = MLXArray(promptTokens).expandedDimensions(axis: 0)
-            let mask = ones(like: tokensArray)
-            return LMInput(text: .init(tokens: tokensArray, mask: mask), image: nil)
+            // No mask: one unpadded sequence needs none, and a mask stops prompt-cache reuse.
+            return LMInput(tokens: MLXArray(promptTokens).expandedDimensions(axis: 0))
         }
 
         guard input.images.count == 1 else {
@@ -1189,8 +1188,10 @@ public class FastVLM: Module, VLMModel, KVCacheDimensionProvider {
     ) throws
         -> PrepareResult
     {
+        var tokens = input.text.tokens
+        if tokens.ndim == 1 { tokens = tokens.expandedDimensions(axis: 0) }
         let embeddings = try getInputEmbeddings(
-            inputIds: input.text.tokens,
+            inputIds: tokens,
             pixelValues: input.image?.pixels,
             mask: input.text.mask
         )
