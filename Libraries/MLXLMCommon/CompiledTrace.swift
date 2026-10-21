@@ -158,10 +158,23 @@ public final class CompiledTrace<Owner: Module>: CompiledTraceInvalidating {
 
         // The one place in this package that captures a module in a compiled
         // body: `unowned` because the module stores the trace, and a strong
-        // capture would cycle and leak the weights with it.
-        return MLX.compile(inputs: [weights]) { [unowned owner] arguments in
-            body(owner, arguments)
+        // capture would cycle and leak the weights with it. The capture goes
+        // through a box because `MLX.compile` takes a `@Sendable` closure and a
+        // module is not `Sendable`.
+        let owned = UnownedOwner(owner)
+        return MLX.compile(inputs: [weights]) { arguments in
+            body(owned.owner, arguments)
         }
+    }
+}
+
+/// Holds a module unowned so a compiled closure can name it without retaining it.
+/// Unchecked: the trace is stored by that module and only ever runs against it.
+private final class UnownedOwner<Owner: Module>: @unchecked Sendable {
+    unowned let owner: Owner
+
+    init(_ owner: Owner) {
+        self.owner = owner
     }
 }
 
