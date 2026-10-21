@@ -99,7 +99,7 @@ public final class CompiledTrace<Owner: Module>: CompiledTraceInvalidating {
     // Compiled on first call rather than at init, because weights load later.
     // The lock keeps two concurrent first calls from installing rival traces.
     private let lock = NSLock()
-    private var function: (@Sendable ([MLXArray]) -> [MLXArray])?
+    private var function: (([MLXArray]) -> [MLXArray])?
     private var tracedOwner: ObjectIdentifier?
 
     /// - Parameters:
@@ -146,7 +146,7 @@ public final class CompiledTrace<Owner: Module>: CompiledTraceInvalidating {
         self(owner, [argument])[0]
     }
 
-    private func compiled(_ owner: Owner) -> @Sendable ([MLXArray]) -> [MLXArray] {
+    private func compiled(_ owner: Owner) -> ([MLXArray]) -> [MLXArray] {
         let body = self.body
 
         // A snapshot is enough: `update(parameters:)`, the path optimizers and
@@ -158,23 +158,14 @@ public final class CompiledTrace<Owner: Module>: CompiledTraceInvalidating {
 
         // The one place in this package that captures a module in a compiled
         // body: `unowned` because the module stores the trace, and a strong
-        // capture would cycle and leak the weights with it. The capture goes
-        // through a box because `MLX.compile` takes a `@Sendable` closure and a
-        // module is not `Sendable`.
-        let owned = UnownedOwner(owner)
-        return MLX.compile(inputs: [weights]) { arguments in
-            body(owned.owner, arguments)
+        // capture would cycle and leak the weights with it.
+        //
+        // `MLX.compile(inputs:)` returns a plain (non-`@Sendable`) function, so
+        // the trace keeps that type too. Declaring it `@Sendable` fails to compile
+        // against mlx-swift's `compile` overloads that take `@Sendable` closures.
+        return MLX.compile(inputs: [weights]) { [unowned owner] arguments in
+            body(owner, arguments)
         }
-    }
-}
-
-/// Holds a module unowned so a compiled closure can name it without retaining it.
-/// Unchecked: the trace is stored by that module and only ever runs against it.
-private final class UnownedOwner<Owner: Module>: @unchecked Sendable {
-    unowned let owner: Owner
-
-    init(_ owner: Owner) {
-        self.owner = owner
     }
 }
 
