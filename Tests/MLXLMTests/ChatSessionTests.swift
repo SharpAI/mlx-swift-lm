@@ -569,7 +569,7 @@ public class ChatSessionTests: XCTestCase {
         XCTAssertEqual(
             classify(ChatSessionError.kvCacheConfigurationChanged(previous: nil, requested: nil)), 2
         )
-        XCTAssertEqual(classify(Generation.chunk("text")), 0)
+        XCTAssertEqual(classify(Generation.chunk("text", tokenId: 0)), 0)
         XCTAssertEqual(classify(TokenGeneration.token(1)), 0)
 
         let session = ChatSession(
