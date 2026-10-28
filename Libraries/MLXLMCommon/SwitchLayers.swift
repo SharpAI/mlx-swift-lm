@@ -10,6 +10,12 @@ public let compiledSiluProduct: @Sendable (MLXArray, MLXArray) -> MLXArray = com
     MLXNN.silu(gate) * up
 }
 
+public let compiledGeluApproximateProduct: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(
+    shapeless: true
+) { gate, up in
+    geluApproximate(gate) * up
+}
+
 public let weightedExpertSum: @Sendable (MLXArray, MLXArray) -> MLXArray = compile(
     shapeless: true
 ) { outputs, weights in
@@ -129,6 +135,13 @@ open class SwitchGLU: Module, @unchecked Sendable {
     let numExperts: Int
     let activation: (MLXArray) -> MLXArray
     let activationProduct: (@Sendable (MLXArray, MLXArray) -> MLXArray)?
+
+    /// `activation(gate) * up`, as one compiled dispatch when a fused product was supplied.
+    @inline(__always)
+    func activated(_ gate: MLXArray, _ up: MLXArray) -> MLXArray {
+        if let activationProduct { return activationProduct(gate, up) }
+        return activation(gate) * up
+    }
 
     // ── Async pipeline state (SSD streaming optimization) ──
     // Persistent buffers: allocated once per layer, reused across tokens.
@@ -529,13 +542,13 @@ open class SwitchGLU: Module, @unchecked Sendable {
                 gateProj: gateProj,
                 slotPerToken: slotPerToken,
                 slotExperts: slotExperts)
-            intermediate = activation(xGate) * xUp
+            intermediate = activated(xGate, xUp)
         } else {
             let xGate = gateProj.computeExpertsFused(x, stackedBuffer: _stackedGate!,
                                                   slotPerToken: slotPerToken, slotExperts: slotExperts)
             let xUp = upProj.computeExpertsFused(x, stackedBuffer: _stackedUp!,
                                               slotPerToken: slotPerToken, slotExperts: slotExperts)
-            intermediate = activation(xGate) * xUp
+            intermediate = activated(xGate, xUp)
         }
         x = downProj.computeExpertsFused(intermediate, stackedBuffer: _stackedDown!,
                                       slotPerToken: slotPerToken, slotExperts: slotExperts)
@@ -614,7 +627,7 @@ open class SwitchGLU: Module, @unchecked Sendable {
             
             let xGate = gateProj(xSorted, idx, sortedIndices: doSort)
             let xUp = upProj(xSorted, idx, sortedIndices: doSort)
-            let intermediate = self.activation(xGate) * xUp
+            let intermediate = activated(xGate, xUp)
             let result = downProj(intermediate, idx, sortedIndices: doSort)
             
             if doSort {
@@ -649,13 +662,14 @@ open class SwitchGLU: Module, @unchecked Sendable {
         hiddenDims: Int,
         numExperts: Int,
         activation: @escaping (MLXArray) -> MLXArray,
+        activationProduct: (@Sendable (MLXArray, MLXArray) -> MLXArray)? = nil,
         bias: Bool = false
     ) {
         self.inputDims = inputDims
         self.hiddenDims = hiddenDims
         self.numExperts = numExperts
         self.activation = activation
-        self.activationProduct = nil
+        self.activationProduct = activationProduct
 
         self._gateProj.wrappedValue = SwitchLinear(
             inputDims: inputDims, outputDims: hiddenDims, numExperts: numExperts, bias: bias)
@@ -833,7 +847,7 @@ open class SwitchGLU: Module, @unchecked Sendable {
                     let usedDown = Array(_persistentDown![0..<ranges.count])
                     let xGate = gateProj.computeExperts(x, buffers: usedGate, ranges: ranges)
                     let xUp = upProj.computeExperts(x, buffers: usedUp, ranges: ranges)
-                    let intermediate = activation(xGate) * xUp
+                    let intermediate = activated(xGate, xUp)
                     x = downProj.computeExperts(intermediate, buffers: usedDown, ranges: ranges)
 
                 } else {
@@ -1017,7 +1031,7 @@ open class SwitchGLU: Module, @unchecked Sendable {
                     // Lazy compute (no eval — next layer forces it)
                     let xGate = gateProj.computeExperts(x, buffers: usedGate, ranges: ranges)
                     let xUp = upProj.computeExperts(x, buffers: usedUp, ranges: ranges)
-                    let intermediate = activation(xGate) * xUp
+                    let intermediate = activated(xGate, xUp)
                     x = downProj.computeExperts(intermediate, buffers: usedDown, ranges: ranges)
                 }
 
@@ -1084,7 +1098,7 @@ open class SwitchGLU: Module, @unchecked Sendable {
                 // Lazy compute (no eval — next layer forces it)
                 let xGate = gateProj.computeExperts(x, buffers: gateBuffers, ranges: ranges)
                 let xUp = upProj.computeExperts(x, buffers: upBuffers, ranges: ranges)
-                let intermediate = activation(xGate) * xUp
+                let intermediate = activated(xGate, xUp)
                 x = downProj.computeExperts(intermediate, buffers: downBuffers, ranges: ranges)
             }
 
@@ -1095,15 +1109,10 @@ open class SwitchGLU: Module, @unchecked Sendable {
         // ── Fallback: original sequential path (non-SSD or non-quantized) ──
         let xUp = upProj(x, idx, sortedIndices: doSort)
         let xGate = gateProj(x, idx, sortedIndices: doSort)
-        var activated =
-            if let activationProduct {
-                activationProduct(xGate, xUp)
-            } else {
-                activation(xGate) * xUp
-            }
-        activated = transformHidden(activated)
+        var hidden = activated(xGate, xUp)
+        hidden = transformHidden(hidden)
         x = downProj(
-            activated,
+            hidden,
             idx,
             sortedIndices: doSort)
 
