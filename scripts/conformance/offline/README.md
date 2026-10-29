@@ -14,3 +14,13 @@ processors.** Part of the conformance harness (SharpAI/SwiftLM#254).
 * Loading from Swift: `ConformanceBundle` in `Tests/MLXLMTests/Conformance/ConformanceOfflineBundleTests.swift`
   finds this directory through `#filePath`. It lives outside every SwiftPM target, so `Package.swift` is not touched
   and SwiftPM reports no unhandled files.
+
+## Offline switch (SL-28 A1)
+
+`SWIFTLM_OFFLINE=1` (or `HF_HUB_OFFLINE=1`; accepted truthy values: 1/true/yes/on) makes every `Downloader.download`
+call issued by mlx-swift-lm throw `SharpAIOverlay.OfflineError.networkBlocked(url)` before any I/O. Unset = identity
+(no behaviour change). Code: `Libraries/MLXLMCommon/SharpAIOverlay/OfflineGuard.swift`; hooks (one line each):
+`resolve` (ModelFactory.swift), `resolveForModelConversion` (ModelConversion.swift), `ModelAdapterFactory.load`.
+Not covered: URLSession in BenchmarkHelpers / IntegrationTestHelpers, and the internals of external packages
+(swift-huggingface, swift-transformers) when a caller supplies its own non-`Downloader` path. Cache hits in a
+Downloader are blocked too; offline runs use `.directory` sources. Tests: `ConformanceOfflineGuardTests`.

@@ -359,6 +359,7 @@ package func resolveForModelConversion(
     useLatest: Bool,
     progressHandler: @Sendable @escaping (Progress) -> Void
 ) async throws -> ResolvedModelConfiguration {
+    let downloader = SharpAIOverlay.guarded(downloader)  // SharpAI overlay: SWIFTLM_OFFLINE guard (SL-28)
     let modelDirectory: URL
     switch configuration.id {
     case .id(let id, let revision):
