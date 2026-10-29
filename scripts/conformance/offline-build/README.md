@@ -28,13 +28,15 @@ cache, or a SwiftPM mirror (`swift package config set-mirror`) pointing at an in
 
 0. Self-test (so a pass is not vacuous): a local TCP listener is reachable outside `sandbox-exec -p
    '(version 1)(allow default)(deny network*)'` and unreachable inside; `curl https://1.1.1.1` and `git ls-remote`
-   of the SwiftPM remote fail inside. Any miss gives `EXIT=70` and nothing else runs.
+   of the SwiftPM remote fail inside. Each inside-sandbox probe has an outside control and must fail with the sandbox's own error (EPERM / curl exit 7), not just any failure; with no uplink the external probes are reported INCONCLUSIVE and the loopback probes carry the proof. Any miss gives `EXIT=70` and nothing else runs.
 1. `swift package resolve` into a fresh scratch dir, inside the sandbox; fails (naming the URL) if a dependency
    is not in the cache; also fails (71) if a line says Fetching without `from cache`.
 2. `swift build --build-tests` into the fresh scratch dir (default `$TMPDIR/swiftlm-blocked-build`), inside the
    sandbox. `--disable-sandbox` is required because SwiftPM's own sandbox cannot nest.
 3. `swift test --skip-build --filter <f>` per filter (default `ConformanceOfflineGuard`,
    `ConformanceOfflineBundleTests`) inside the sandbox with `SWIFTLM_OFFLINE=1 HF_HUB_OFFLINE=1`.
+
+Stage 3 fails with `EXIT=72` if a filter matched zero tests (a vacuous pass). `SCRATCH` is `rm -rf`'d, so it is validated first (`EXIT=64`): it must be strictly inside the session scratchpad or a `swiftlm-blocked*` temp dir, never `/`, HOME, the repo or a parent of it.
 
 `LOCK_BUILD` / `LOCK_GPU` env vars take an optional command prefix (a lock wrapper) for shared machines.
 

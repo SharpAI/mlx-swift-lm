@@ -5,9 +5,14 @@
 // returns the original downloader unchanged (identity), so behaviour is byte-for-byte the same.
 //
 // upstream-watch: after a sync, grep the tree for `downloader.download(` / `.download(id:`. Every call site
-// in Libraries/ that is not behind `SharpAIOverlay.guarded` is an unguarded egress. Known hook sites:
-// ModelFactory.swift `resolve`, ModelConversion.swift `resolveForModelConversion`,
-// Adapters/ModelAdapterFactory.swift `load(from:)`. Also re-check whether upstream added its own offline flag.
+// in Libraries/ that is not behind `SharpAIOverlay.guarded` is an unguarded egress. Known hook sites (five):
+//   1. MLXLMCommon/ModelFactory.swift `resolve`
+//   2. MLXLMCommon/ModelConversion.swift `resolveForModelConversion`
+//   3. MLXLMCommon/Adapters/ModelAdapterFactory.swift `load(from:)`
+//   4. BenchmarkHelpers/BenchmarkHelpers.swift `resolveTokenizerDirectory`
+//   5. BenchmarkHelpers/BenchmarkHelpers.swift `benchmarkDownloadCacheHit`
+// ConformanceOfflineGuardCoverageTests scans for these statically. Also re-check whether upstream added its own
+// offline flag.
 //
 // Scope: guards the `Downloader` protocol only. A Downloader that would have served a purely local cache hit
 // is blocked too (we cannot tell cache hits from network I/O at this layer); offline runs must use
