@@ -201,6 +201,7 @@ private func resolveTokenizerDirectory(
     configuration: MLXLMCommon.ModelConfiguration,
     useLatest: Bool
 ) async throws -> URL {
+    let downloader = SharpAIOverlay.guarded(downloader)  // SharpAI overlay: SWIFTLM_OFFLINE guard (SL-28 A4); upstream-watch
     switch configuration.tokenizerSource {
     case .id(let id, let revision):
         return try await downloader.download(
@@ -442,6 +443,7 @@ public func benchmarkDownloadCacheHit(
     modelId: String = "mlx-community/Qwen3-0.6B-4bit",
     runs: Int = BenchmarkDefaults.downloadRuns
 ) async throws -> BenchmarkStats {
+    let downloader = SharpAIOverlay.guarded(downloader)  // SharpAI overlay: SWIFTLM_OFFLINE guard (SL-28 A4); upstream-watch
     let patterns = modelDownloadPatterns
 
     // Warm-up: ensure the model is cached
