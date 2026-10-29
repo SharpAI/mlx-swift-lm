@@ -72,6 +72,7 @@ public final class ModelAdapterFactory: Sendable {
         useLatest: Bool = false,
         progressHandler: @Sendable @escaping (Progress) -> Void = { _ in }
     ) async throws -> ModelAdapter {
+        let downloader = SharpAIOverlay.guarded(downloader)  // SharpAI overlay: SWIFTLM_OFFLINE guard (SL-28)
         let adapterDirectory: URL
         switch configuration.id {
         case .id(let id, let revision):
