@@ -6,7 +6,8 @@
 // upstream sync that implements it is never blocked. Delete the wrapper in the PR that fixes it.
 // upstream-watch: DeepseekV4.swift in mlx-swift-lm (compressor / indexer / tid2eid / layer count).
 //
-// Evidence for each spec comes from the vLLM snapshot dc45a5f (vllm/models/deepseek_v4/*):
+// Evidence for each spec comes from vLLM snapshot dc45a5f (vllm/models/deepseek_v4/*; vLLM source is
+// not in this repo -- the file:line cites are from that snapshot and cannot be re-checked here):
 //   * MTP layers live at model.layers.{num_hidden_layers + i} (nvidia/mtp.py:217,352; quant_config.py:53),
 //     and compress_ratios has num_hidden_layers + num_nextn_predict_layers entries (fixtures below).
 //   * compressor exists for compress_ratio > 1; the indexer only for compress_ratio == 4 (attention.py:302,369).
@@ -44,7 +45,6 @@ enum ConformanceDeepseekV4 {
         o["index_head_dim"] = 8; o["index_n_heads"] = 2; o["index_topk"] = 4
         o["sliding_window"] = 8; o["max_position_embeddings"] = 256; o["hc_mult"] = 2
         o["compress_ratios"] = [0, 4, 128, 0]
-        o["rope_scaling"] = NSNull()
         o.removeValue(forKey: "rope_scaling")
         return try JSONSerialization.data(withJSONObject: o)
     }
