@@ -13,6 +13,9 @@ weights. Tracking issue and survey method: SharpAI/SwiftLM#254.
 | `Tests/MLXLMTests/Conformance/ConformanceForwardTests.swift` | Tiers 1-2: build from config JSON with random weights, forward, check numeric properties. |
 | `Tests/MLXLMTests/Conformance/ConformanceSynthWeightsTests.swift` | Synthetic checkpoint (random weights saved/loaded as safetensors) + `sanitize` key parity for llama / qwen3_moe / gemma3_text. |
 | `Tests/MLXLMTests/Conformance/ConformanceOfflineBundleTests.swift` | Loads `offline/` config fixtures (manifest consistency + one decode through the registry). |
+| `Tests/MLXLMTests/Conformance/ConformanceGapSoftcapTests.swift` | #254 gap pin: gemma3_text logits must equal `cap*tanh(unbounded/cap)` (known issue until softcapping lands). |
+| `Tests/MLXLMTests/Conformance/ConformanceGapDeepseekV4Tests.swift` | #254 gap pins for `deepseek_v4`: ignored config keys, main layer count, compressor/indexer/`tid2eid` modules, sanitize drops (all known issues), plus green fixture facts. |
+| `Tests/MLXLMTests/Conformance/ConformanceGapReferenceTests.swift` + `GapReference/` | Pure MLX reference implementations (V4 compressor, GLM5Next kpool, MXFP4 dequant, Qwen4Exp PLE gate/conv, tanh softcap) with hand-computed green tests; pins the spec for the later implementation. `GapReference/ConformanceGapSupport.swift` wraps known gaps; `CONFORMANCE_GAP_RAW=1` runs them bare to show the red. |
 | `offline/` (`make_bundle.py`, `MANIFEST.json`, `fixtures/`) | 169 config-only `config.json` files of the surveyed repos (no weights). Rebuild: `make_bundle.py --src DIR --csv-only`. |
 | `Tests/MLXLMTests/Conformance/ConformanceExtrapolation*.swift`, `extrapolate/README.md` | Slope extrapolation of step time from reduced-layer random-weight models (dense + MoE). Maths is unit-tested; timing outcomes are report-only. |
 | `run-test.sh`, `test-scripts.sh` | Run one named test filter and print the process `EXIT=`; self-test of these scripts. |
