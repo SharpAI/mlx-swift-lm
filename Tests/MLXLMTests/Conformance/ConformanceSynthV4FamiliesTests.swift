@@ -2,7 +2,7 @@
 //
 // Same pattern as ConformanceSynthWeightsTests (checkpoint-style keys -> random weights -> sanitize ->
 // parameter parity -> load -> forward), but the config of each family is a real offline fixture shrunk to
-// tiny dimensions with its FULL key set kept (`SynthFixture.tiny`). Families chosen from the registered
+// tiny dimensions with its FULL key set kept (`ConformanceSynthV4Fixture.tiny`). Families chosen from the registered
 // model types that have a fixture: nemotron_h (hybrid Mamba2 + attention + MoE), glm4_moe (MoE with a
 // trailing MTP layer in the checkpoint), lfm2 (hybrid short-conv + attention).
 // upstream-watch: NemotronH.swift, GLM4MOE.swift, LFM2.swift in mlx-swift-lm.
@@ -16,7 +16,7 @@ import Testing
 
 @testable import MLXLLM
 
-enum SynthFamilies {
+enum ConformanceSynthV4Families {
     typealias Entry = ConformanceSynth.Entry
 
     /// Depthwise conv weights are stored `[C, 1, K]` in HF checkpoints and `[C, K, 1]` in the module.
@@ -57,7 +57,7 @@ enum SynthFamilies {
     ) throws -> ConformanceSynth.SynthSpec {
         .init(
             name: name, modelType: modelType,
-            json: SynthFixture.string(try SynthFixture.tiny(dir, overrides: overrides)),
+            json: ConformanceSynthV4Fixture.string(try ConformanceSynthV4Fixture.tiny(dir, overrides: overrides)),
             checkpointEntries: checkpoint, strayKeys: stray)
     }
 
@@ -111,7 +111,7 @@ enum SynthFamilies {
 struct ConformanceSynthV4FamiliesTests {
 
     @Test("fixture-derived synthetic checkpoint: sanitize accepts exactly the module's keys, forward is finite",
-        arguments: SynthFamilies.all)
+        arguments: ConformanceSynthV4Families.all)
     func familyRoundTrip(spec: ConformanceSynth.SynthSpec) async throws {
         let out = try await ConformanceSynth.run(spec)
         #expect(out.report.missing.isEmpty, "\(spec.name) missing: \(out.report.missing.prefix(5))")
@@ -123,10 +123,10 @@ struct ConformanceSynthV4FamiliesTests {
 
     @Test("the shrunk config keeps the real fixture's complete key set (only values change)")
     func keySetPreserved() throws {
-        for (dir, spec) in [("nemotron_h", SynthFamilies.nemotronH), ("glm4_moe", SynthFamilies.glm4Moe),
-                            ("lfm2", SynthFamilies.lfm2)]
+        for (dir, spec) in [("nemotron_h", ConformanceSynthV4Families.nemotronH), ("glm4_moe", ConformanceSynthV4Families.glm4Moe),
+                            ("lfm2", ConformanceSynthV4Families.lfm2)]
         {
-            let real = Set(try SynthFixture.object(dir).keys)
+            let real = Set(try ConformanceSynthV4Fixture.object(dir).keys)
             let tiny = try #require(
                 try JSONSerialization.jsonObject(with: Data(spec.json.utf8)) as? [String: Any])
             #expect(Set(tiny.keys) == real, "\(dir): key set changed")
@@ -135,14 +135,14 @@ struct ConformanceSynthV4FamiliesTests {
 
     @Test("the MoE specs exercise the per-expert checkpoint path, the hybrid specs the conv axis swap")
     func pathsAreExercised() async throws {
-        for spec in [SynthFamilies.nemotronH, SynthFamilies.glm4Moe] {
+        for spec in [ConformanceSynthV4Families.nemotronH, ConformanceSynthV4Families.glm4Moe] {
             let model = try await ConformanceBuild.llm(spec.json, modelType: spec.modelType)
             let native = ConformanceSynth.nativeEntries(try #require(model as? Module))
             let ckpt = spec.checkpointEntries(native)
             #expect(ckpt.contains { $0.key.contains(".experts.3.") }, "\(spec.name): no per-expert tensors")
             #expect(!ckpt.contains { $0.key.contains(".switch_mlp.") && $0.shape.count == 3 }, "\(spec.name)")
         }
-        for spec in [SynthFamilies.nemotronH, SynthFamilies.lfm2] {
+        for spec in [ConformanceSynthV4Families.nemotronH, ConformanceSynthV4Families.lfm2] {
             let model = try await ConformanceBuild.llm(spec.json, modelType: spec.modelType)
             let native = ConformanceSynth.nativeEntries(try #require(model as? Module))
             let conv = try #require(native.first { $0.key.hasSuffix("conv1d.weight") || $0.key.hasSuffix("conv.conv.weight") })
@@ -153,7 +153,7 @@ struct ConformanceSynthV4FamiliesTests {
 
     // The checker must be able to fail: otherwise "clean" proves nothing.
     // (A hole inside a stacked expert set is not used: GLM4MoE.sanitize force-unwraps removeValue and would trap.)
-    @Test("a dropped dense tensor is detected as missing", arguments: SynthFamilies.all)
+    @Test("a dropped dense tensor is detected as missing", arguments: ConformanceSynthV4Families.all)
     func detectsMissingTensor(spec: ConformanceSynth.SynthSpec) async throws {
         var victim = ""
         let out = try await ConformanceSynth.run(spec) { ckpt in

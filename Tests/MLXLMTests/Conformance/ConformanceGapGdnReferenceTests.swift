@@ -2,7 +2,7 @@
 // GapReference/GdnReference.swift. They pin the spec of the recurrence family so the later kernels have an
 // oracle; they test reference code (and, where stated, existing public/internal GatedDelta code) only.
 //
-// Decisions these tests back (full evidence in scripts/conformance/README.md and the SL-31 kernel plan):
+// Decisions these tests back (summary in scripts/conformance/README.md; the SL-31 kernel plan is not in the repo):
 //   Qwen4Exp GDN       -> composable on GatedDelta.swift: scalar gate, flat [q|k|v|z] layout, silu conv; the
 //                         only deltas are the `output_gate_type` (silu|sigmoid) of the output norm and the
 //                         spec-decode state handling, neither needs a kernel.
@@ -10,9 +10,10 @@
 //                         (the contract MambaCache.checkpoint/trim and Qwen35 `checkpointAfter` implement).
 //   KDA / per-key gate -> composable only through the slow ops path (`gatedDeltaOps` already accepts a
 //                         [B,T,Hv,Dk] gate); the Metal kernel has NO per-key-gate variant -> SL-31 kernel.
-//   MuseSpark GDN2     -> INFERRED (vLLM raises NotImplementedError); pinned for both candidate gates.
-// Numeric oracles marked "python float64" come from scratchpad/unit/r3-gdn/oracle.py (pure python, no numpy,
-// independent of the MLX code). upstream-watch: Libraries/MLXLMCommon/GatedDelta.swift.
+//   MuseSpark GDN2     -> INFERRED (vLLM raises NotImplementedError); the tests are generic over the gate shape (scalar and per-key), they do not pin one candidate.
+// Numeric oracles marked "python float64" were computed once with a pure-python float64 script (no numpy,
+// independent of the MLX code); that script is not in the repo (source not in repo). Derivation in the tests:
+// S_t = diag(exp(g_t)) S_{t-1}; err = v_t - S_t k_t; S_t += beta_t * outer(err, k_t); y_t = S_t q_t. upstream-watch: Libraries/MLXLMCommon/GatedDelta.swift.
 
 import Foundation
 import MLX
@@ -60,7 +61,7 @@ enum ConformanceGdn {
         }
     }
 
-    /// Hand/float64 case: T=3, Hk=1, Hv=2, Dk=Dv=2. See oracle.py for the inputs.
+    /// Hand/float64 case: T=3, Hk=1, Hv=2, Dk=Dv=2. Inputs are the literals below (the python script that produced the oracle numbers is not in the repo).
     static func handCase() -> (q: MLXArray, k: MLXArray, v: MLXArray, lg: MLXArray, beta: MLXArray) {
         let q = MLXArray([Float](arrayLiteral: 0.5, 0.75, 1.0, 0.25, -0.5, 0.75), [1, 3, 1, 2])
         let k = MLXArray([Float](arrayLiteral: 1.0, 0.5, -0.5, 1.0, 0.25, -1.0), [1, 3, 1, 2])
@@ -84,7 +85,7 @@ struct ConformanceGapGdnReferenceTests {
     func kdaHandCase() {
         let c = G.handCase()
         let r = Ref.recurrent(q: c.q, k: c.k, v: c.v, logDecay: c.lg, beta: c.beta, keepStates: true)
-        // python float64 (oracle.py kda_y / kda_state_final / kda_state_after1)
+        // python float64 values (generator script not in the repo; recompute by the recurrence in the file header)
         let y: [Float] = [
             0.4375, 0.875, -0.21875, 0.109375, 0.285124923487, 0.851499846974, -0.631644299824, -0.184177850088,
             0.507280233179, -0.923472143763, 0.683282442954, 1.25857421014,
@@ -321,7 +322,7 @@ struct ConformanceGapGdnReferenceTests {
         }
     }
 
-    @Test("rollback through the REAL entry point: checkpoint + gatedDeltaUpdate(first k tokens) == slot k-1; and the unrolled state is wrong")
+    @Test("gatedDeltaUpdate over the first k tokens == the reference state after token k-1 (rollback target); the n-token state is not it. No MambaCache involved")
     func rollbackThroughGatedDeltaUpdate() {
         let (B, n, Hk, Hv, Dk, Dv) = (1, 5, 2, 4, 32, 16)
         let inp = withRandomState(MLXRandom.RandomState(seed: 41)) {

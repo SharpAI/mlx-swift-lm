@@ -21,7 +21,7 @@ import Testing
 
 @testable import MLXLLM
 
-enum MissingOps {
+enum ConformanceMissingOps {
     static let repoRoot: URL = {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 { url.deleteLastPathComponent() }
@@ -110,7 +110,7 @@ struct ConformanceMissingOpsTests {
 
     @Test("generator runs and its totals are internally consistent")
     func generatorRunsAndTotalsAreConsistent() throws {
-        let g = try MissingOps.generate()
+        let g = try ConformanceMissingOps.generate()
         let rows = g.rows
         #expect(!rows.isEmpty)
         #expect(g.summary["rows"] == rows.count)
@@ -121,9 +121,9 @@ struct ConformanceMissingOpsTests {
             let m = Int(r["ignored_metadata"] ?? "") ?? -1
             let c = Int(r["ignored_candidates"] ?? "") ?? -1
             #expect(t == m + c, "\(r["model_type"] ?? "?") \(r["repo"] ?? "?"): total \(t) != \(m)+\(c)")
-            #expect(MissingOps.list(r["candidates"]).count == c, "candidate list length: \(r["repo"] ?? "?")")
-            #expect(MissingOps.list(r["metadata"]).count == m, "metadata list length: \(r["repo"] ?? "?")")
-            #expect(Set(MissingOps.list(r["candidates"])).isDisjoint(with: MissingOps.list(r["metadata"])))
+            #expect(ConformanceMissingOps.list(r["candidates"]).count == c, "candidate list length: \(r["repo"] ?? "?")")
+            #expect(ConformanceMissingOps.list(r["metadata"]).count == m, "metadata list length: \(r["repo"] ?? "?")")
+            #expect(Set(ConformanceMissingOps.list(r["candidates"])).isDisjoint(with: ConformanceMissingOps.list(r["metadata"])))
             #expect(t <= (Int(r["fixture_keys"] ?? "") ?? 0), "ignored more keys than the fixture has")
             total += t; meta += m; cand += c; if c > 0 { withCand += 1 }
         }
@@ -138,7 +138,7 @@ struct ConformanceMissingOpsTests {
 
     @Test("script's (fixture, registry) rows equal what the real registries contain")
     func rowsMatchRuntimeRegistries() async throws {
-        let g = try MissingOps.generate()
+        let g = try ConformanceMissingOps.generate()
         var expected = Set<String>()  // "type|repo|registry"
         for e in try ConformanceBundle.manifest().fixtures {
             guard let mt = e.model_type else { continue }
@@ -156,7 +156,7 @@ struct ConformanceMissingOpsTests {
     /// Keys of `data` that the Configuration silently ignores, from a real decode -> encode round trip.
     /// Keys whose fixture value is JSON null are left out of both sides (an absent optional re-encodes as nothing).
     static func roundTripIgnored<C: Codable>(_ type: C.Type, fixture dir: String, file: String? = nil) throws -> Set<String> {
-        let obj = try SynthFixture.object(dir, file: file)
+        let obj = try ConformanceSynthV4Fixture.object(dir, file: file)
         let data = try JSONSerialization.data(withJSONObject: obj)
         let cfg = try JSONDecoder().decode(C.self, from: data)
         let encoder = JSONEncoder()
@@ -173,14 +173,14 @@ struct ConformanceMissingOpsTests {
             ("gemma3_text", ""),
         ])
     func staticParseAgreesWithRoundTrip(_ type: String, _ hint: String) throws {
-        let g = try MissingOps.generate()
-        let file = try SynthFixture.files(type).first { hint.isEmpty || $0.lastPathComponent.contains(hint) }
+        let g = try ConformanceMissingOps.generate()
+        let file = try ConformanceSynthV4Fixture.files(type).first { hint.isEmpty || $0.lastPathComponent.contains(hint) }
         let url = try #require(file)
         let repo = try #require(
             try ConformanceBundle.manifest().fixtures.first { $0.path.hasSuffix("fixtures/\(type)/\(url.lastPathComponent)") }
         ).repo
         let row = try #require(g.rows.first { $0["model_type"] == type && $0["repo"] == repo && $0["registry"] == "llm" })
-        let scripted = Set(MissingOps.list(row["candidates"]) + MissingOps.list(row["metadata"]))
+        let scripted = Set(ConformanceMissingOps.list(row["candidates"]) + ConformanceMissingOps.list(row["metadata"]))
 
         let dynamic: Set<String>
         switch type {
@@ -191,18 +191,49 @@ struct ConformanceMissingOpsTests {
         default:
             dynamic = try Self.roundTripIgnored(MLXLLM.Gemma3TextConfiguration.self, fixture: type, file: url.lastPathComponent)
         }
-        let nulls = Set(try SynthFixture.object(type, file: url.lastPathComponent).filter { $0.value is NSNull }.keys)
+        let nulls = Set(try ConformanceSynthV4Fixture.object(type, file: url.lastPathComponent).filter { $0.value is NSNull }.keys)
         let s = scripted.subtracting(nulls)
         #expect(s == dynamic, "\(type): script-only \(s.subtracting(dynamic).sorted()), round-trip-only \(dynamic.subtracting(s).sorted())")
     }
 
-    @Test("committed REPORT.md is current (warning only)")
+    @Test("a Configuration that decodes through several CodingKey enums is not reported as ignoring those keys")
+    func multipleCodingKeyEnumsAreRead() throws {
+        let g = try ConformanceMissingOps.generate()
+        // BertConfiguration decodes hidden_size & co. through `BertCodingKeys`, not `CodingKeys`.
+        let bert = try #require(g.rows.first { $0["model_type"] == "bert" && $0["registry"] == "embedder" })
+        let ignored = Set(ConformanceMissingOps.list(bert["candidates"]) + ConformanceMissingOps.list(bert["metadata"]))
+        let decoded: Set<String> = [
+            "hidden_size", "num_attention_heads", "intermediate_size", "num_hidden_layers", "type_vocab_size",
+        ]
+        #expect(ignored.isDisjoint(with: decoded), "bert keys wrongly reported ignored: \(ignored.intersection(decoded).sorted())")
+        // The distilbert keys are decoded as well (DistilBertCodingKeys), so a bert-family row never lists them either.
+        #expect(!ignored.contains("dim") && !ignored.contains("n_layers"))
+    }
+
+    /// Verdict on the committed report: `nil` when it is current, otherwise the message. The strictness is an
+    /// injected flag so the rule is testable without mutating the process environment.
+    static func staleReportProblem(committed: String?, fresh: String, strict: Bool) -> String? {
+        guard let committed else { return "REPORT.md must be committed" }
+        guard committed != fresh else { return nil }
+        let msg = "scripts/conformance/missing-ops/REPORT.md differs from a fresh run; regenerate with gen_report.py"
+        print("[missing-ops][STALE] \(msg)")
+        return strict ? msg : nil
+    }
+
+    @Test("a stale report is a warning by default and a failure only under strict mode")
+    func staleReportRule() {
+        #expect(Self.staleReportProblem(committed: "a", fresh: "a", strict: true) == nil)
+        #expect(Self.staleReportProblem(committed: "a", fresh: "b", strict: false) == nil, "default: warning only")
+        #expect(Self.staleReportProblem(committed: "a", fresh: "b", strict: true) != nil, "strict: failure")
+        #expect(Self.staleReportProblem(committed: nil, fresh: "b", strict: false) != nil, "missing file always fails")
+    }
+
+    @Test("committed REPORT.md is current (warning; failure under CONFORMANCE_STRICT=1)")
     func committedReportIsCurrent() throws {
-        let g = try MissingOps.generate()
-        let committed = try? String(contentsOf: MissingOps.scriptDir.appendingPathComponent("REPORT.md"), encoding: .utf8)
-        if committed != g.markdown {
-            print("[missing-ops][STALE] scripts/conformance/missing-ops/REPORT.md differs from a fresh run; regenerate with gen_report.py")
-        }
-        #expect(committed != nil, "REPORT.md must be committed")
+        let g = try ConformanceMissingOps.generate()
+        let committed = try? String(contentsOf: ConformanceMissingOps.scriptDir.appendingPathComponent("REPORT.md"), encoding: .utf8)
+        let strict = ProcessInfo.processInfo.environment["CONFORMANCE_STRICT"] == "1"
+        let problem = Self.staleReportProblem(committed: committed, fresh: g.markdown, strict: strict)
+        #expect(problem == nil, "\(problem ?? "")")
     }
 }
