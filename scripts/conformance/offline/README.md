@@ -21,6 +21,6 @@ processors.** Part of the conformance harness (SharpAI/SwiftLM#254).
 call issued by mlx-swift-lm throw `SharpAIOverlay.OfflineError.networkBlocked(url)` before any I/O. Unset = identity
 (no behaviour change). Code: `Libraries/MLXLMCommon/SharpAIOverlay/OfflineGuard.swift`; hooks (one line each):
 `resolve` (ModelFactory.swift), `resolveForModelConversion` (ModelConversion.swift), `ModelAdapterFactory.load`.
-Not covered: `Libraries/BenchmarkHelpers` (calls `downloader.download` directly, so a benchmark that injects a real Downloader still reaches the network), URLSession in BenchmarkHelpers / IntegrationTestHelpers, and the internals of external packages
+`Libraries/BenchmarkHelpers` is hooked too (`resolveTokenizerDirectory`, `benchmarkDownloadCacheHit`; r3-offline); `ConformanceOfflineGuardCoverageTests` fails on any unguarded `Downloader.download` call in `Libraries/`. Not covered: URLSession use in BenchmarkHelpers / IntegrationTestHelpers (`URLSession.shared.download`, text fetch), and the internals of external packages
 (swift-huggingface, swift-transformers) when a caller supplies its own non-`Downloader` path. Cache hits in a
 Downloader are blocked too; offline runs use `.directory` sources. Tests: `ConformanceOfflineGuardTests`.
