@@ -14,6 +14,7 @@ weights. Tracking issue and survey method: SharpAI/SwiftLM#254.
 | `Tests/MLXLMTests/Conformance/ConformanceSynthWeightsTests.swift` | Synthetic checkpoint (random weights saved/loaded as safetensors) + `sanitize` key parity for llama / qwen3_moe / gemma3_text. |
 | `Tests/MLXLMTests/Conformance/ConformanceOfflineBundleTests.swift` | Loads `offline/` config fixtures (manifest consistency + one decode through the registry). |
 | `offline/` (`make_bundle.py`, `MANIFEST.json`, `fixtures/`) | 169 config-only `config.json` files of the surveyed repos (no weights). Rebuild: `make_bundle.py --src DIR --csv-only`. |
+| `Tests/MLXLMTests/Conformance/ConformanceExtrapolation*.swift`, `extrapolate/README.md` | Slope extrapolation of step time from reduced-layer random-weight models (dense + MoE). Maths is unit-tested; timing outcomes are report-only. |
 | `run-test.sh`, `test-scripts.sh` | Run one named test filter and print the process `EXIT=`; self-test of these scripts. |
 | `upstream/sentinel.sh` | After an upstream sync: regenerate expectations, run the conformance tests with `CONFORMANCE_STRICT=1`, print a report. |
 | `upstream/shadow-check.sh` (+ `shadow-allowlist.txt`, `test-shadow-check.sh`) | `--upstream DIR`: fails on a COLLISION between our `SharpAIOverlay`/sharpai-prefixed declarations and an upstream declaration, and on a direct `registerModelType(` call outside the allow-list. Self-test: `test-shadow-check.sh`. |
