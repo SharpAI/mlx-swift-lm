@@ -15,8 +15,11 @@ weights. Tracking issue and survey method: SharpAI/SwiftLM#254.
 ## Reading a failure
 
 * `REGRESSION` -- a `model_type` that used to be registered is gone. A real bug.
-* `LANDED` -- a `model_type` we listed as missing is now registered. After an **upstream sync** this
-  means upstream implemented it: re-run `gen_expectations.py`, and delete any local overlay for it.
+* `LANDED` -- a registry holds a `model_type` the expectations do not list. After an **upstream sync**
+  this means upstream implemented it: re-run `gen_expectations.py`, and delete any local overlay for it.
+  By default this is only a printed warning (`[conformance][LANDED]`), so a correct upstream sync is
+  never blocked by the safety net. Run with `CONFORMANCE_STRICT=1` (the upstream sentinel does) to make
+  it fail.
 * A `withKnownIssue` test going red with "known issue not recorded" means the gap was fixed:
   remove the wrapper in the same change. A fix always lands together with the test that proves it.
 

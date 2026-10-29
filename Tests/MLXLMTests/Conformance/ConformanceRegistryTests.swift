@@ -4,12 +4,15 @@
 // scripts/conformance/gen_expectations.py from the static vLLM survey) with what the
 // LLM / VLM / embedder registries actually contain. No weights, no GPU, no network.
 //
-// A failure means exactly one of:
-//   * REGRESSION  -- a model_type we expected to be registered no longer is.
-//   * LANDED      -- a model_type we expected to be absent is now registered. This is how an
-//                    upstream sync announces "upstream implemented this": update the
-//                    expectation (re-run the generator) and retire any local overlay for it.
-//   * GREP DRIFT  -- the generator's static grep disagrees with the runtime registries.
+// Outcomes:
+//   * REGRESSION  -- a registry that was expected to hold a model_type no longer does.
+//                    Always fails: something we (or upstream) shipped disappeared.
+//   * LANDED      -- a registry holds a model_type the expectations do not list (a known-missing
+//                    model became registered, or an extra registry gained it). This is how an
+//                    upstream sync announces "upstream implemented this": regenerate the
+//                    expectations and retire any local overlay. It is only a WARNING by default,
+//                    so a correct upstream sync is never blocked by the safety net itself; the
+//                    sentinel / sync check runs with CONFORMANCE_STRICT=1 to make it fail.
 
 import Foundation
 import MLXEmbedders
@@ -28,41 +31,41 @@ struct ConformanceRegistryTests {
         return found
     }
 
+    static var strict: Bool { ProcessInfo.processInfo.environment["CONFORMANCE_STRICT"] == "1" }
+
     @Test("registries match the committed conformance expectations")
     func registriesMatchExpectations() async {
         var regressions: [String] = []
         var landed: [String] = []
-        var drift: [String] = []
         var absent = 0
 
         for e in ConformanceExpectations.all {
             let expected = Set(e.registries)
             let actual = await Self.actualRegistries(for: e.modelType)
             if expected.isEmpty { absent += 1 }
-            if actual == expected { continue }
             let line =
                 "\(e.modelType) (\(e.archs.joined(separator: ", "))): expected "
                 + "\(expected.map(\.rawValue).sorted()), actual \(actual.map(\.rawValue).sorted())"
-            if expected.isEmpty {
-                landed.append(line)
-            } else if actual.isEmpty {
+            if !expected.isSubset(of: actual) {
                 regressions.append(line)
-            } else {
-                drift.append(line)
+            } else if actual != expected {
+                landed.append(line)
             }
         }
 
         // Always print the summary so CI logs show the current gap size.
         print(
             "[conformance] \(ConformanceExpectations.all.count) model_types tracked, "
-                + "\(absent) known-absent")
+                + "\(absent) known-absent, \(landed.count) landed, \(regressions.count) regressed")
+        for line in landed { print("[conformance][LANDED] \(line)") }
 
         #expect(regressions.isEmpty, "REGRESSION (was registered, now absent):\n\(regressions.joined(separator: "\n"))")
-        #expect(
-            landed.isEmpty,
-            "LANDED (expected absent, now registered -- upstream or a local change added it; regenerate expectations and retire any overlay):\n\(landed.joined(separator: "\n"))"
-        )
-        #expect(drift.isEmpty, "GREP DRIFT / registry set changed:\n\(drift.joined(separator: "\n"))")
+        if Self.strict {
+            #expect(
+                landed.isEmpty,
+                "LANDED (registered but not expected -- upstream or a local change added it; regenerate expectations and retire any overlay):\n\(landed.joined(separator: "\n"))"
+            )
+        }
     }
 
     @Test("expectations contain no duplicate model_type")
