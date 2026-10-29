@@ -87,8 +87,8 @@ struct ConformanceGapReferenceTests {
 
     @Test("kpool Hadamard reference agrees with MLX hadamardTransform on random input")
     func hadamardMatchesMLX() {
-        MLXRandom.seed(7)
-        let x = MLXRandom.normal([3, 128])
+        // Local key, not the global MLXRandom.seed: tests run in parallel and a shared seed races.
+        let x = MLXRandom.normal([3, 128], key: MLXRandom.key(7))
         let a = Ref.hadamardRotate(x)
         let b = hadamardTransform(x)  // default scale 1/sqrt(n)
         let diff = abs(a - b).max().item(Float.self)
@@ -114,11 +114,11 @@ struct ConformanceGapReferenceTests {
 
     @Test("MXFP4 reference agrees with MLX dequantized(mode: .mxfp4) on random bits")
     func mxfp4MatchesMLX() {
-        MLXRandom.seed(11)
         let rows = 4, cols = 64
-        let bytes = MLXRandom.randInt(low: 0, high: 256, [rows, cols / 2]).asType(.uint8)
+        let kBytes = MLXRandom.key(11), kScales = MLXRandom.key(12)  // local keys (no global seed: parallel tests)
+        let bytes = MLXRandom.randInt(low: 0, high: 256, [rows, cols / 2], key: kBytes).asType(.uint8)
         // Keep E8M0 exponents in a sane range (120...134) so values are finite and comparable.
-        let scales = (MLXRandom.randInt(low: 120, high: 135, [rows, cols / 32])).asType(.uint8)
+        let scales = (MLXRandom.randInt(low: 120, high: 135, [rows, cols / 32], key: kScales)).asType(.uint8)
         let ref = Ref.mxfp4Dequant(packed: bytes, scales: scales)
         let mlx = dequantized(
             bytes.view(dtype: .uint32), scales: scales, biases: nil, groupSize: 32, bits: 4, mode: .mxfp4,

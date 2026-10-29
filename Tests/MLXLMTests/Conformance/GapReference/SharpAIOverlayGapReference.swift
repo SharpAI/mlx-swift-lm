@@ -8,7 +8,7 @@
 // ml-explore/mlx-swift-lm lands DeepSeek-V4 compressor / indexer, GLM5Next kpool, MXFP4 checkpoint
 // dequant or Qwen4Exp PLE, compare their output with these functions before retiring them.
 //
-// Provenance of each spec (vLLM snapshot dc45a5f under scratchpad/survey/vllm_src, read-only):
+// Provenance of each spec (vLLM snapshot dc45a5f; source not in repo, paths are inside that vLLM tree):
 //   softmaxPoolCompress -> vllm/models/deepseek_v4/common/ops/{save_partial_states,fused_compress_quant_cache}.py
 //   kpoolSoftmaxHadamard -> vllm/models/glm5next/nvidia/ops/kpool_compress.py
 //   mxfp4Dequant        -> vllm/models/deepseek_v4/quant_config.py (expert_dtype "fp4" = MXFP4)
