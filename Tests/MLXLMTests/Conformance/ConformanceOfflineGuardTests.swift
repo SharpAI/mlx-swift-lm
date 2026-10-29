@@ -71,6 +71,22 @@ struct ConformanceOfflineGuardTests {
         #expect(counter.count == 0)
     }
 
+    @Test func adapterFactoryLoadThrowsWhenOffline() async throws {
+        let counter = CallCounter()
+        let factory = ModelAdapterFactory(registry: ModelAdapterTypeRegistry())
+        await SharpAIOverlay.OfflineGuard.$environmentOverride.withValue(Self.on) {
+            do {
+                _ = try await factory.load(
+                    from: StubDownloader(counter: counter), configuration: ModelConfiguration(id: "org/adapter"))
+                Issue.record("expected networkBlocked")
+            } catch is SharpAIOverlay.OfflineError {
+            } catch {
+                Issue.record("wrong error type: \(error)")
+            }
+        }
+        #expect(counter.count == 0)
+    }
+
     @Test func directorySourceStillWorksOffline() async throws {
         let dir = URL(fileURLWithPath: "/tmp/some-local-dir")
         let counter = CallCounter()

@@ -23,13 +23,13 @@ the KV cache; times are finite and positive; the fixture layer count was found.
 
 Report-only (printed as `[extrapolation] ...`, never fails): R^2, monotonicity, slope, the extrapolated
 milliseconds. Wall-clock depends on machine load, so asserting on it would be flaky. Read the printed R^2
-(a clean run is >= 0.95) before trusting a number; a low R^2 or a non-monotonic line means a loaded machine,
+(a clean run is typically >= 0.95 in practice; this is a reading guide, not an assertion) before trusting a number; a low R^2 or a non-monotonic line means a loaded machine,
 re-run.
 
 ## What it CAN claim
 
 * The per-layer cost trend: the slope `b` and whether step time grows linearly with depth for this
-  architecture's code path (no accidental super-linear behaviour, e.g. a cache that copies per layer).
+  architecture's code path (a printed R^2 over only 3 points; nothing asserts linearity, so a green run is NOT evidence against super-linear behaviour).
 * A relative comparison between two architectures or two code revisions measured the same way
   (slope ratio), on this machine.
 * That the build -> forward -> cache path works at several depths from config alone.
@@ -38,7 +38,7 @@ re-run.
 
 * Absolute speed. The shrunk models are dispatch/launch-bound, not compute-bound; the fit's intercept can
   even come out negative. Two runs of the same test differ by tens of percent in the extrapolated number
-  (observed: 75 ms vs 94 ms for dense prefill).
+  (one observed run; illustrative only).
 * Output accuracy or quality: weights are random.
 * Memory-bandwidth effects of real weights: real decode is dominated by reading GBs of weights per token
   (cache misses, unified-memory pressure, quantised kernels, expert paging with `--stream-experts`), none

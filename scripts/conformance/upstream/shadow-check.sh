@@ -67,7 +67,9 @@ scan "$repo/Libraries" >"$work/ours-all.tsv"
 if [ -d "$upstream/Libraries" ]; then scan "$upstream/Libraries" >"$work/up-all.tsv"; else scan "$upstream" >"$work/up-all.tsv"; fi
 
 # Ours: sharpai-prefixed (any level), plus public declarations under a SharpAIOverlay/ directory.
-awk -F'\t' 'tolower($1) ~ /^sharpai/ || ($3 == "public" && $2 ~ /(^|\/)SharpAIOverlay\//) { print $1 "\t" $2 }' \
+# Protocol witnesses (CustomStringConvertible etc.) cannot collide with an upstream declaration of the same name.
+awk -F'\t' '$1 ~ /^(description|errorDescription|debugDescription|hash|hashValue|id)$/ { next }
+    tolower($1) ~ /^sharpai/ || ($3 == "public" && $2 ~ /(^|\/)SharpAIOverlay\//) { print $1 "\t" $2 }' \
     "$work/ours-all.tsv" | sort -u >"$work/ours.tsv"
 cut -f1 "$work/up-all.tsv" | sort -u >"$work/up-names.txt"
 

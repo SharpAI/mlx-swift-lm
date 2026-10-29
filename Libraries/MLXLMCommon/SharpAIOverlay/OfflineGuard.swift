@@ -15,7 +15,7 @@
 
 import Foundation
 
-public enum SharpAIOverlay {
+extension SharpAIOverlay {
     public enum OfflineError: Error, Equatable, CustomStringConvertible {
         case networkBlocked(URL)
 
