@@ -5,6 +5,10 @@
 # the expectations, runs the conformance tests with CONFORMANCE_STRICT=1 and prints a short report:
 #   conflicts (files), LANDED, REGRESSION, EXIT.
 #
+# Step BEFORE running this: diff the harness against upstream (git diff HEAD...upstream/main on Libraries,
+# Tests/MLXLMTests/Conformance, scripts/conformance) and run shadow-check.sh --upstream <checkout>. This script
+# merges and tests but never reviews harness-side changes for you. See README.md, "After an upstream sync".
+#
 # usage: scripts/conformance/upstream/sentinel.sh [scratch-clone-dir]   (default: the clone holding this script)
 #
 # Safe by construction:

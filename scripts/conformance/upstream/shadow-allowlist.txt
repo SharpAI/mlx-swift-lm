@@ -1,0 +1,8 @@
+# Files outside Libraries/MLXLMCommon/SharpAIOverlay/ that may call registerModelType directly.
+# Everything else must use SharpAIOverlay.registerIfAbsent (README rule 4). One repo-relative path per line.
+# Keep in step with OverlayRegistrationTests.allowList (exact call counts live there).
+Libraries/MLXVLM/Qwen35VLMMTPRegistration.swift
+Libraries/MLXLLM/Qwen35TextMTPRegistration.swift
+Libraries/MLXVLM/Gemma4AssistantRegistration.swift
+# Defines registerModelType itself.
+Libraries/MLXLMCommon/Registries/ModelTypeRegistry.swift

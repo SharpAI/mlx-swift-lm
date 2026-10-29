@@ -16,6 +16,9 @@ weights. Tracking issue and survey method: SharpAI/SwiftLM#254.
 | `offline/` (`make_bundle.py`, `MANIFEST.json`, `fixtures/`) | 169 config-only `config.json` files of the surveyed repos (no weights). Rebuild: `make_bundle.py --src DIR --csv-only`. |
 | `run-test.sh`, `test-scripts.sh` | Run one named test filter and print the process `EXIT=`; self-test of these scripts. |
 | `upstream/sentinel.sh` | After an upstream sync: regenerate expectations, run the conformance tests with `CONFORMANCE_STRICT=1`, print a report. |
+| `upstream/shadow-check.sh` (+ `shadow-allowlist.txt`, `test-shadow-check.sh`) | `--upstream DIR`: fails on a COLLISION between our `SharpAIOverlay`/sharpai-prefixed declarations and an upstream declaration, and on a direct `registerModelType(` call outside the allow-list. Self-test: `test-shadow-check.sh`. |
+| `upstream/UPSTREAM_WATCH.md` | Per overlay item: upstream symbol / `model_type` to look for, and the action when it LANDED. |
+| `Tests/MLXLMTests/Conformance/OverlayRegistrationTests.swift` | `SharpAIOverlay.registerIfAbsent` (atomic, existing registration wins) + lint of direct `registerModelType` calls in `Libraries/`. |
 
 ## Reading a failure
 
@@ -40,6 +43,17 @@ weights. Tracking issue and survey method: SharpAI/SwiftLM#254.
    an upstream registration wins automatically.
 5. **Upstream watch.** Record, next to each overlay, the upstream symbol / `model_type` to look for;
    the periodic upstream check runs this harness after every sync.
+
+## After an upstream sync: order of steps
+
+1. **Diff the harness before merging upstream.** Before running the merge, look at what the sync changes in
+   the harness's own inputs, so a red result is attributable: `git diff HEAD...upstream/main --stat -- Libraries Tests/MLXLMTests/Conformance scripts/conformance` (look at the three `*TypeRegistry.swift` files first)
+   (and `git diff HEAD...upstream/main -- Package.swift`). Also run
+   `upstream/shadow-check.sh --upstream <upstream checkout>`: a COLLISION must be fixed (rename ours) before
+   the merge can build at all. `sentinel.sh` does the merge itself on a throwaway branch and never
+   edits the harness, so this diff is the only place the harness-side changes are reviewed by a person.
+2. Run `upstream/sentinel.sh` and read `LANDED` / `REGRESSION` / conflicts.
+3. Walk `upstream/UPSTREAM_WATCH.md` for every LANDED name.
 
 ## Regenerating
 
