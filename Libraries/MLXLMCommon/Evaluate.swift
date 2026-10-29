@@ -533,29 +533,30 @@ struct TokenRing {
 
     /// Bulk-load from a prompt. Keeps the last `capacity` tokens.
     ///
+    /// Image sentinels (such as FastVLM's -200) are not vocabulary IDs, so they are
+    /// skipped. The prompt is read back to front, only as far as it takes to find
+    /// `capacity` tokens.
+    ///
     /// The prompt may arrive 1-D (`[N]`) or 2-D (`[1, N]` — how VLM prefill
-    /// supplies `input.text.tokens`). We flatten to 1-D first so `dim(0)`
-    /// reflects the true token count. Without this, a 2-D `[1, N]` is read as
-    /// `n = 1`, the `n < capacity` branch fires with a bogus count, and a
-    /// later `append(...)` crashes at `[broadcast_shapes] Shapes (capacity)
-    /// and (N + capacity - 1) cannot be broadcast`.
+    /// supplies `input.text.tokens`), so it is flattened to 1-D first; otherwise a 2-D
+    /// `[1, N]` reads as `n = 1` and a later `append(...)` crashes on mismatched shapes.
     mutating func loadPrompt(_ prompt: MLXArray) {
-        let promptTokens = prompt.asType(.int32).flattened()
-        let n = promptTokens.count
-        if n <= capacity {
-            if n < capacity {
-                let padding = MLXArray.zeros([capacity - n], type: Int32.self)
-                buffer = concatenated([promptTokens, padding])
-            } else {
-                buffer = promptTokens
-            }
-            count = n
-            writeIndex = n % capacity
-        } else {
-            buffer = promptTokens[(-capacity)...]
-            count = capacity
-            writeIndex = 0
+        let prompt = prompt.flattened()
+        var tokens = [Int32]()
+        var end = prompt.size
+        var length = capacity
+        while tokens.count < capacity, end > 0 {
+            let start = max(0, end - length)
+            // Converting on the CPU skips a GPU round trip for a handful of tokens.
+            let chunk = prompt[start ..< end].asType(.int32, stream: .cpu)
+            tokens = chunk.asArray(Int32.self).filter { $0 >= 0 } + tokens
+            end = start
+            length *= 2
         }
+        let kept = tokens.suffix(capacity)
+        buffer = MLXArray(Array(kept) + [Int32](repeating: 0, count: capacity - kept.count))
+        count = kept.count
+        writeIndex = count % capacity
     }
 
     /// Append a single token using GPU-only mask write (no CPU←GPU sync).
@@ -2712,7 +2713,7 @@ public func generate(
 /// * Important: if the stream is terminated early (e.g. break from the loop) computation will continue
 /// using the model, parameters, KVCache, etc. for some time (typically a few ms).  This is typically OK for
 /// one-shot calls, but for "chat session" type calls consider using
-/// ``generateTask(promptTokenCount:modelConfiguration:tokenizer:iterator:wiredMemoryTicket:tools:toolCallPolicy:)``
+/// ``generateTask(promptTokenCount:modelConfiguration:tokenizer:iterator:wiredMemoryTicket:tools:toolCallPolicy:reasoningPrimedInside:)``
 /// so that the end of the generation task can be observed.
 ///
 /// - Parameters:
@@ -2751,6 +2752,8 @@ public func generate(
 ///     switch generation {
 ///     case .chunk(let text, _):
 ///         print("Generated text: \(text)")
+///     case .reasoning(let text):
+///         print("Thinking: \(text)")
 ///     case .info(let info):
 ///         print("Finished: \(info.tokensPerSecond) tokens/s.")
 ///     case .toolCall(let call):
@@ -2767,6 +2770,9 @@ public func generate(
     wiredMemoryTicket: WiredMemoryTicket? = nil,
     tools: [[String: any Sendable]]? = nil
 ) throws -> AsyncStream<Generation> {
+    // Read the prompt before the iterator queues its prefill, which this would wait for.
+    let reasoningPrimedInside = promptPrimesReasoning(
+        input: input, modelConfiguration: context.configuration, tokenizer: context.tokenizer)
     let iterator = try TokenIterator(
         input: input, model: context.model, cache: cache, state: state,
         parameters: parameters, components: components)
@@ -2777,7 +2783,8 @@ public func generate(
         iterator: iterator,
         wiredMemoryTicket: wiredMemoryTicket,
         tools: tools,
-        toolCallPolicy: parameters.toolCallPolicy)
+        toolCallPolicy: parameters.toolCallPolicy,
+        reasoningPrimedInside: reasoningPrimedInside)
     return stream
 }
 
@@ -2807,6 +2814,8 @@ public func generate(
 ///     switch generation {
 ///     case .chunk(let text, _):
 ///         print("Generated text: \(text)")
+///     case .reasoning(let text):
+///         print("Thinking: \(text)")
 ///     case .info(let info):
 ///         print("Finished: \(info.tokensPerSecond) tokens/s.")
 ///     case .toolCall(let call):
@@ -2848,6 +2857,9 @@ public func generate(
     wiredMemoryTicket: WiredMemoryTicket? = nil,
     tools: [[String: any Sendable]]? = nil
 ) throws -> AsyncStream<Generation> {
+    // Read the prompt before the iterator queues its prefill, which this would wait for.
+    let reasoningPrimedInside = promptPrimesReasoning(
+        input: input, modelConfiguration: context.configuration, tokenizer: context.tokenizer)
 
     let iterator: any TokenIteratorProtocol
     if let mtpModel = draftModel as? DualModelMTP {
@@ -2867,8 +2879,10 @@ public func generate(
             draftModel: draftModel,
             mainCache: cache,
             draftCache: draftCache,
+            mainState: state,
             parameters: parameters,
-            numDraftTokens: numDraftTokens
+            numDraftTokens: numDraftTokens,
+            components: components
         )
     }
     let (stream, _) = generateLoopTask(
@@ -2879,7 +2893,13 @@ public func generate(
         wiredMemoryTicket: wiredMemoryTicket,
         handler: TextToolTokenLoopHandler(
             tokenizer: context.tokenizer,
-            format: context.configuration.toolCallFormat ?? .json
+            stopStrings: context.configuration.effectiveStopStrings,
+            format: context.configuration.toolCallFormat ?? .json,
+            tools: tools,
+            toolCallPolicy: parameters.toolCallPolicy,
+            reasoning: context.configuration.reasoningConfig.map {
+                (config: $0, primedInside: reasoningPrimedInside)
+            }
         )
     )
     return stream
@@ -2914,6 +2934,10 @@ public func generateMTP(
                             wiredMemoryTicket: wiredMemoryTicket, tools: tools)
     }
     let iterator = try MTPTokenIterator(
+    // Read the prompt before the iterator queues its prefill, which this would wait for.
+    let reasoningPrimedInside = promptPrimesReasoning(
+        input: input, modelConfiguration: context.configuration, tokenizer: context.tokenizer)
+    let iterator = try MTPTokenIterator(
         input: input,
         model: mtpModel,
         cache: cache,
@@ -2931,7 +2955,10 @@ public func generateMTP(
             stopStrings: context.configuration.effectiveStopStrings,
             format: context.configuration.toolCallFormat ?? .json,
             tools: tools,
-            toolCallPolicy: parameters.toolCallPolicy
+            toolCallPolicy: parameters.toolCallPolicy,
+            reasoning: context.configuration.reasoningConfig.map {
+                (config: $0, primedInside: reasoningPrimedInside)
+            }
         )
     )
     return stream
@@ -2951,7 +2978,10 @@ public func generate(
         modelConfiguration: context.configuration,
         tokenizer: context.tokenizer,
         iterator: iterator,
-        wiredMemoryTicket: wiredMemoryTicket)
+        wiredMemoryTicket: wiredMemoryTicket,
+        reasoningPrimedInside: promptPrimesReasoning(
+            input: input, modelConfiguration: context.configuration,
+            tokenizer: context.tokenizer))
     return stream
 }
 
@@ -2972,6 +3002,12 @@ public func generate(
 ///   - wiredMemoryTicket: Optional wired memory ticket for policy-based coordination.
 ///   - tools: Optional tool schemas used to parse tool-call arguments into their declared types.
 ///   - toolCallPolicy: Recovery and validation rules for generated tool calls.
+///   - reasoningPrimedInside: whether the rendered prompt ends inside an open reasoning
+///     block, which some families prefill (e.g. DeepSeek-R1's trailing `<think>`). Callers
+///     holding the prompt should pass
+///     ``ReasoningEventEmitter/promptEndsInsideReasoning(promptTokens:config:tokenizer:)``;
+///     leaving it `false` would misroute a primed model's whole thought block into `.chunk`.
+///     Check the whole rendered prompt, not only the part a prompt cache left to prefill.
 /// - Returns: An `AsyncStream` that emits `Generation` values and a `Task`
 public func generateTask<TOKEN: TokenIteratorProtocol>(
     promptTokenCount: Int,
@@ -2980,7 +3016,8 @@ public func generateTask<TOKEN: TokenIteratorProtocol>(
     iterator: consuming TOKEN,
     wiredMemoryTicket: WiredMemoryTicket? = nil,
     tools: [[String: any Sendable]]? = nil,
-    toolCallPolicy: ToolCallPolicy = .init()
+    toolCallPolicy: ToolCallPolicy = .init(),
+    reasoningPrimedInside: Bool = false
 ) -> (AsyncStream<Generation>, Task<Void, Never>) {
     generateLoopTask(
         promptTokenCount: promptTokenCount,
@@ -2993,7 +3030,10 @@ public func generateTask<TOKEN: TokenIteratorProtocol>(
             stopStrings: modelConfiguration.effectiveStopStrings,
             format: modelConfiguration.toolCallFormat ?? .json,
             tools: tools,
-            toolCallPolicy: toolCallPolicy
+            toolCallPolicy: toolCallPolicy,
+            reasoning: modelConfiguration.reasoningConfig.map {
+                (config: $0, primedInside: reasoningPrimedInside)
+            }
         )
     )
 }
@@ -3007,7 +3047,8 @@ func generateTaskRecordingTokens<TOKEN: TokenIteratorProtocol>(
     iterator: consuming TOKEN,
     wiredMemoryTicket: WiredMemoryTicket? = nil,
     tools: [[String: any Sendable]]? = nil,
-    toolCallPolicy: ToolCallPolicy = .init()
+    toolCallPolicy: ToolCallPolicy = .init(),
+    reasoningPrimedInside: Bool = false
 ) -> (AsyncStream<Generation>, Task<[Int], Never>) {
     generateLoopTask(
         promptTokenCount: promptTokenCount,
@@ -3021,9 +3062,38 @@ func generateTaskRecordingTokens<TOKEN: TokenIteratorProtocol>(
             stopStrings: modelConfiguration.effectiveStopStrings,
             format: modelConfiguration.toolCallFormat ?? .json,
             tools: tools,
-            toolCallPolicy: toolCallPolicy
+            toolCallPolicy: toolCallPolicy,
+            reasoning: modelConfiguration.reasoningConfig.map {
+                (config: $0, primedInside: reasoningPrimedInside)
+            }
         )
     )
+}
+
+/// Whether the rendered prompt ends inside an open reasoning block, for seeding the
+/// token loop's reasoning scanner.
+///
+/// The prompt is decoded only when the model resolves a
+/// ``ModelConfiguration/reasoningConfig``, and then only its tail: a prefilled
+/// delimiter is the last thing a generation prompt writes, so copying a long prompt
+/// out of its `MLXArray` to read the final few tokens would cost more than it saves.
+func promptPrimesReasoning(
+    input: LMInput, modelConfiguration: ModelConfiguration, tokenizer: Tokenizer
+) -> Bool {
+    guard let config = modelConfiguration.reasoningConfig else { return false }
+    // Flatten first. VLM processors emit `[1, N]`, and a range subscript slices axis 0,
+    // so slicing the unflattened array would take the batch axis, not the tokens.
+    let tokens = input.text.tokens.flattened()
+    guard tokens.size > 0 else { return false }
+    var count = min(ReasoningEventEmitter.promptTailTokenCount, tokens.size)
+    while true {
+        let primed = ReasoningEventEmitter.promptEndsInsideReasoning(
+            tailTokens: tokens[(tokens.size - count)...].asArray(Int.self),
+            isWholePrompt: count == tokens.size,
+            config: config, tokenizer: tokenizer)
+        if let primed { return primed }
+        count = min(tokens.size, count * 2)
+    }
 }
 
 /// Records the same token ledger with a composed output handler.
@@ -3187,6 +3257,9 @@ public func generate(
     wiredMemoryTicket: WiredMemoryTicket? = nil,
     tools: [[String: any Sendable]]? = nil
 ) throws -> AsyncStream<Generation> {
+    // Read the prompt before the iterator queues its prefill, which this would wait for.
+    let reasoningPrimedInside = promptPrimesReasoning(
+        input: input, modelConfiguration: context.configuration, tokenizer: context.tokenizer)
     let iterator = try MTPSpeculativeTokenIterator(
         input: input,
         mainModel: context.model,
@@ -3207,7 +3280,10 @@ public func generate(
             stopStrings: context.configuration.effectiveStopStrings,
             format: context.configuration.toolCallFormat ?? .json,
             tools: tools,
-            toolCallPolicy: parameters.toolCallPolicy
+            toolCallPolicy: parameters.toolCallPolicy,
+            reasoning: context.configuration.reasoningConfig.map {
+                (config: $0, primedInside: reasoningPrimedInside)
+            }
         )
     )
     return stream
@@ -3798,6 +3874,7 @@ public struct GenerateCompletionInfo: Sendable {
 ///
 /// This enum distinguishes between the following:
 /// - `.chunk`: A decoded string from one or more tokens generated by the language model, along with the token ID.
+/// - `.reasoning`: Thinking text the model framed as private to itself.
 /// - `.toolCall`: A tool call parsed from the generated output.
 /// - `.rejectedToolCall`: Tool-call-shaped output that was not executable.
 /// - `.info`: Metadata and performance statistics about the generation process.
@@ -3806,6 +3883,20 @@ public enum Generation: Sendable {
     /// The token ID can be used to detect special tokens (e.g. gpt-oss channel markers)
     /// without relying on text matching.
     case chunk(String, tokenId: Int)
+
+    /// Thinking text, delivered separately from the answer and with the
+    /// protocol's delimiters already removed.
+    ///
+    /// Only produced for models whose response protocol frames reasoning: a
+    /// resolved ``ModelConfiguration/reasoningConfig`` (`<think>` families,
+    /// Gemma 4's labeled channels) or a framed token protocol that carries its
+    /// own reasoning channel (GPT-OSS Harmony, Onyx).
+    ///
+    /// Reasoning is *not* part of ``chunk``, so a caller recording the assistant
+    /// turn should record ``chunk`` alone as its content. Most of these families'
+    /// chat templates drop reasoning from replayed history. ``ChatSession`` keeps a
+    /// finished thought beside the message for the templates that replay it.
+    case reasoning(String)
 
     /// Completion information summarizing token counts and performance metrics.
     case info(GenerateCompletionInfo)
@@ -3820,6 +3911,18 @@ public enum Generation: Sendable {
     public var chunk: String? {
         switch self {
         case .chunk(let string, _): string
+        case .reasoning: nil
+        case .info: nil
+        case .toolCall: nil
+        case .rejectedToolCall: nil
+        }
+    }
+
+    /// Reasoning text or nil
+    public var reasoning: String? {
+        switch self {
+        case .chunk: nil
+        case .reasoning(let string): string
         case .info: nil
         case .toolCall: nil
         case .rejectedToolCall: nil
@@ -3829,7 +3932,8 @@ public enum Generation: Sendable {
     /// Completion info or nil
     public var info: GenerateCompletionInfo? {
         switch self {
-        case .chunk(_, _): nil
+        case .chunk: nil
+        case .reasoning: nil
         case .info(let info): info
         case .toolCall: nil
         case .rejectedToolCall: nil
@@ -3840,6 +3944,7 @@ public enum Generation: Sendable {
     public var toolCall: ToolCall? {
         switch self {
         case .chunk: nil
+        case .reasoning: nil
         case .info: nil
         case .toolCall(let toolCall): toolCall
         case .rejectedToolCall: nil
@@ -3850,6 +3955,7 @@ public enum Generation: Sendable {
     public var rejectedToolCall: RejectedToolCall? {
         switch self {
         case .chunk: nil
+        case .reasoning: nil
         case .info: nil
         case .toolCall: nil
         case .rejectedToolCall(let rejection): rejection
