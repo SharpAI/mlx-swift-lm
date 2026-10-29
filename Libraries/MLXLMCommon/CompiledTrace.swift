@@ -4,20 +4,6 @@ import Foundation
 import MLX
 import MLXNN
 
-// MLX traces a compiled function once. Any MLXArray the body reads but does not
-// take as an argument becomes a constant of that trace, so weights read through
-// a captured module freeze at the values of the first call. Plain inference
-// never notices. An adapter load, fuse, or unload, or a training step, keeps
-// producing the old weights.
-//
-// MLX's stateless `compile(shapeless:_:)` overloads take a `@Sendable` body.
-// `MLXArray` and `Module` are not `Sendable`, so a body cannot capture weights.
-// Bodies that read weights use `CompiledTrace`, which declares them as compile
-// state.
-//
-// `MLX.compile(inputs:outputs:)` is untouched: declaring captured state there
-// is correct, and it remains the way to compile a training step.
-
 /// A compiled trace of a body that reads module weights.
 ///
 /// The declared modules' weights become compile `inputs:`, so every call reads
