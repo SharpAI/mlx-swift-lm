@@ -107,7 +107,9 @@ public enum SharpAIOverlayGapReference {
         let codes = stacked([lo, hi], axis: -1).reshaped(rows, cols)
         let magnitude = take(MLXArray(e2m1Magnitudes), codes & 7)
         let value = which((codes & 8) .== 8, -magnitude, magnitude)
-        let scale = pow(MLXArray(Float(2)), scales.asType(.float32) - 127)
+        // 2^(byte-127) built from the float32 exponent field: exact for 1...254 on every backend
+        // (pow/exp2 on the CI GPU was off by one ulp, 0.49999994 for 0.5).
+        let scale = (scales.asType(.uint32) << 23).view(dtype: .float32)
         return (value.reshaped(rows, cols / groupSize, groupSize) * scale.expandedDimensions(axis: -1))
             .reshaped(rows, cols)
     }
