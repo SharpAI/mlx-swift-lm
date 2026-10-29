@@ -19,7 +19,11 @@
 #
 # Output is plain ASCII. Exit 0 = nothing to act on (LANDED lines are information, not failure).
 # Exit 1 = act: a REGRESSION, a COLLISION or OVERLAP, a merge CONFLICT, or a failed build/test.
-# Exit 2 = could not run (bad arguments, fetch failed, clone refused). Last line: EXIT=<n>.
+# Exit 2 = could not run (bad arguments, a clone/dir outside the scratch roots, fetch failed, or the sentinel
+#          REFUSED / hit an environment error: sentinel exit 2 with no build/test result line). Last line: EXIT=<n>.
+# Scratch rule (same as sentinel.sh, SENTINEL_SCRATCH_ROOTS, default /private/tmp:/tmp:/private/var/folders):
+# --lm-clone and --mlx-dir must resolve under a scratch root BEFORE anything is fetched, checked out (--force)
+# or has its remote rewritten.
 set -u
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 2
 lm=$here/../../..; mlxdir=""
@@ -33,6 +37,27 @@ while [ $# -gt 0 ]; do
 done
 lm=$(cd "$lm" 2>/dev/null && pwd -P) || fatal "no such fork clone: $lm"
 [ -n "$mlxdir" ] || mlxdir=$lm/../up-mlx
+roots=${SENTINEL_SCRATCH_ROOTS:-/private/tmp:/tmp:/private/var/folders}
+in_scratch() { # in_scratch <abs path>
+    local p=$1 r IFS=:
+    for r in $roots; do
+        r=${r%/}
+        case $p in "$r"/*) return 0 ;; esac
+    done
+    return 1
+}
+# resolve a path that may not exist yet: physical path of the nearest existing ancestor + the rest
+resolve() {
+    local p=$1 rest="" base
+    case $p in /*) ;; *) p=$PWD/$p ;; esac
+    while [ ! -d "$p" ]; do base=${p##*/}; rest=/$base$rest; p=${p%/*}; [ -n "$p" ] || p=/; done
+    p=$(cd "$p" && pwd -P) || return 1
+    printf '%s%s\n' "${p%/}" "$rest"
+}
+in_scratch "$lm" || fatal "REFUSED: fork clone $lm is not under a scratch root ($roots)"
+mlxdir=$(resolve "$mlxdir") || fatal "cannot resolve --mlx-dir"
+case $mlxdir in *"/.."|*"/../"*) fatal "REFUSED: --mlx-dir has a .. component: $mlxdir" ;; esac
+in_scratch "$mlxdir" || fatal "REFUSED: --mlx-dir $mlxdir is not under a scratch root ($roots)"
 mlx_url=${RUN_PERIODIC_MLX_URL:-https://github.com/ml-explore/mlx-swift.git}
 sentinel=${RUN_PERIODIC_SENTINEL:-$here/sentinel.sh}
 work=$(mktemp -d "${TMPDIR:-/tmp}/run-periodic.XXXXXX") || fatal "mktemp failed"
@@ -70,6 +95,7 @@ landed=$(plain <"$work/sentinel.log" | grep -c -E '^ +LANDED ')
 regression=$(plain <"$work/sentinel.log" | grep -c -E '^ +REGRESSION |\[conformance\]\[REGRESSION\]')
 collision=$(plain <"$work/sentinel.log" | grep -c -E '^ +(COLLISION|UNREGISTERED_CALL) ')
 conflict=$(plain <"$work/sentinel.log" | grep -c -E '^ +CONFLICT ')
+gap_fixed=$(plain <"$work/sentinel.log" | grep -c -F '[gap][FIXED]')
 lm_sha=$(plain <"$work/sentinel.log" | sed -n 's/.*upstream @ \([0-9a-f]*\).*/\1/p' | head -1)
 
 echo "== summary"
@@ -77,8 +103,13 @@ echo "mlx_swift_sha=$mlx_sha"
 echo "lm_upstream_sha=${lm_sha:-unknown}"
 echo "mlx_swift_shadow_exit=$shadow_exit"
 echo "sentinel_exit=$sentinel_exit"
-echo "landed=$landed regression=$regression collision=$collision conflict=$conflict"
-if [ "$shadow_exit" -ne 0 ] || [ "$sentinel_exit" -ne 0 ] || [ "$regression" -gt 0 ] || [ "$collision" -gt 0 ] || [ "$conflict" -gt 0 ]; then
+echo "landed=$landed regression=$regression collision=$collision conflict=$conflict gap_fixed=$gap_fixed"
+# Sentinel exit 2 = REFUSED / environment error, unless it printed a build/test verdict (a failing swift
+# process can also exit 2; that is a failure to act on, not an environment error).
+if [ "$sentinel_exit" -eq 2 ] && ! plain <"$work/sentinel.log" | grep -q -E 'SENTINEL_RESULT=(BUILD_FAILED|FAIL|PASS|CONFLICT|COLLISION)'; then
+    echo "PERIODIC_RESULT=ERROR"; echo "EXIT=2"; exit 2
+fi
+if [ "$shadow_exit" -ne 0 ] || [ "$sentinel_exit" -ne 0 ] || [ "$regression" -gt 0 ] || [ "$collision" -gt 0 ] || [ "$conflict" -gt 0 ] || [ "$gap_fixed" -gt 0 ]; then
     echo "PERIODIC_RESULT=FAIL"; echo "EXIT=1"; exit 1
 fi
 echo "PERIODIC_RESULT=PASS"; echo "EXIT=0"; exit 0

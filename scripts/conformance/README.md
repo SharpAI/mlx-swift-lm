@@ -26,9 +26,10 @@ weights. Tracking issue and survey method: SharpAI/SwiftLM#254.
 | `offline/` (`make_bundle.py`, `MANIFEST.json`, `fixtures/`) | 169 config-only `config.json` files of the surveyed repos (no weights). Rebuild: `make_bundle.py --src DIR --csv-only`. |
 | `Tests/MLXLMTests/Conformance/ConformanceExtrapolation*.swift`, `extrapolate/README.md` | Slope extrapolation of step time from reduced-layer random-weight models (dense + MoE). Maths is unit-tested; timing outcomes are report-only. |
 | `run-test.sh`, `test-scripts.sh` | Run one named test filter and print the process `EXIT=`; self-test of these scripts. |
-| `upstream/sentinel.sh` | After an upstream sync: run shadow-check against the fetched upstream (a COLLISION stops it with `EXIT=4` before any merge), merge on a throwaway branch, regenerate expectations, run the conformance tests with `CONFORMANCE_STRICT=1`, print a report. Self-test of its refusals and the collision stop: `test-scripts.sh`. |
-| `upstream/mlx-swift-shadow.sh` (+ `mlx-swift-shadow-allowlist.txt`, `test-mlx-swift-shadow.sh`) | `--mlx-swift DIR`: fails on a public func of ours (free function or extension member) that has the same name and labels as, or can be called like, one in `ml-explore/mlx-swift` (COLLISION / OVERLAP; the `compile(shapeless:)` class of mlx-swift#28). Allow-list entries need a reason. |
-| `upstream/run-periodic.sh` (+ `test-run-periodic.sh`) | The 2-day upstream check in one command: fetch mlx-swift main into a scratch dir, run `mlx-swift-shadow.sh`, run `sentinel.sh`, print a plain ASCII report, exit 1 on REGRESSION / COLLISION / OVERLAP / CONFLICT / failed tests. Creates no scheduled task. |
+| `upstream/sentinel.sh` | After an upstream sync: run shadow-check against the fetched upstream (a COLLISION stops it with `EXIT=4` before any merge), merge on a throwaway branch, regenerate expectations, classify registry changes with `registry-diff.py`, run `ConformanceRegistryTests`, `ConformanceForwardTests` and every `ConformanceGap` suite with `CONFORMANCE_STRICT=1` (a gap that got FIXED fails the run), print a report. A refusal prints `SENTINEL_RESULT=REFUSED` and `EXIT=2`. Self-test of its refusals, collision stop, merge, registry classification and strict stages: `test-scripts.sh` (which also runs `test-mlx-swift-shadow.sh`, `test-run-periodic.sh` and `test-shadow-check.sh`). |
+| `upstream/registry-diff.py` | Compares the registry SET per `model_type` between two `ConformanceExpectations.swift` files: `REGRESSION` only when an expected registry is gone (vanished, swapped, shrunk); a registry merely gained (`llm` -> `llm, vlm`) or a new type is `LANDED`. |
+| `upstream/mlx-swift-shadow.sh` (+ `mlx-swift-shadow-allowlist.txt`, `test-mlx-swift-shadow.sh`) | `--mlx-swift DIR`: fails on a public func of ours (free function or extension member) that has the same name and labels as, or can be called like, one in `ml-explore/mlx-swift` (COLLISION / OVERLAP; the `compile(shapeless:)` class of mlx-swift#28). Allow-list entries are `KIND key  # reason` and must match the finding's kind: an allowed OVERLAP does not silence a COLLISION of the same key; a line without a kind is an error (exit 2). |
+| `upstream/run-periodic.sh` (+ `test-run-periodic.sh`) | The 2-day upstream check in one command: fetch mlx-swift main into a scratch dir, run `mlx-swift-shadow.sh`, run `sentinel.sh`, print a plain ASCII report, exit 1 on REGRESSION / COLLISION / OVERLAP / CONFLICT / a FIXED gap / failed tests, exit 2 when it could not run (a `--lm-clone` or `--mlx-dir` outside the scratch roots is refused before anything is fetched or checked out; a sentinel refusal maps to 2). Creates no scheduled task. |
 | `upstream/shadow-check.sh` (+ `shadow-allowlist.txt`, `test-shadow-check.sh`) | `--upstream DIR`: fails on a COLLISION between our `SharpAIOverlay`/sharpai-prefixed declarations and an upstream declaration, and on a direct `registerModelType(` call outside the allow-list. Self-test: `test-shadow-check.sh`. |
 | `upstream/UPSTREAM_WATCH.md` | Per overlay item: upstream symbol / `model_type` to look for, and the action when it LANDED. |
 | `Tests/MLXLMTests/Conformance/OverlayRegistrationTests.swift` | `SharpAIOverlay.registerIfAbsent` (atomic, existing registration wins) + lint of direct `registerModelType` calls in `Libraries/`. |
@@ -41,8 +42,11 @@ weights. Tracking issue and survey method: SharpAI/SwiftLM#254.
   By default this is only a printed warning (`[conformance][LANDED]`), so a correct upstream sync is
   never blocked by the safety net. Run with `CONFORMANCE_STRICT=1` (the upstream sentinel does) to make
   it fail.
-* A `withKnownIssue` test going red with "known issue not recorded" means the gap was fixed:
-  remove the wrapper in the same change. A fix always lands together with the test that proves it.
+* `[gap][OPEN] <name>` -- a known-gap test (`withKnownIssue(isIntermittent: true)`, see `GapReference/ConformanceGapSupport.swift`)
+  whose assertions still fail: the gap exists and the test is green. `[gap][FIXED] <name>` -- its assertions now pass: the
+  gap is closed, remove the wrapper (and retire the overlay) in the same change. It is a printed `[gap][WARNING]` by default so
+  a correct upstream sync is never blocked; with `CONFORMANCE_STRICT=1` (the upstream sentinel runs the `ConformanceGap` suites
+  that way) a FIXED gap fails the run. A fix always lands together with the test that proves it.
 
 ## Rules for adding ops / models (so upstream syncs stay painless)
 

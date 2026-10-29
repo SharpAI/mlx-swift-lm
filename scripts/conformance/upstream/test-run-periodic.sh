@@ -4,7 +4,7 @@
 # usage: scripts/conformance/upstream/test-run-periodic.sh   prints PASS/FAIL per check, exits non-zero on any FAIL.
 set -u
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-rp="$here/run-periodic.sh"
+rp="${RUN_PERIODIC_SCRIPT:-$here/run-periodic.sh}"
 fail=0
 check() { if [ "$2" -eq 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/run-periodic-test.XXXXXX")" && pwd -P); trap 'rm -rf "$tmp"' EXIT
@@ -22,6 +22,7 @@ stub() { # stub <exit> <extra stdout lines...>
       for l in "$@"; do printf 'printf "%%s\\n" %q\n' "$l"; done
       echo "echo EXIT=$code"; echo "exit $code"; } >"$tmp/stub.sh"; chmod +x "$tmp/stub.sh"
 }
+export SENTINEL_SCRATCH_ROOTS="$tmp"
 run() { RUN_PERIODIC_SENTINEL="$tmp/stub.sh" RUN_PERIODIC_MLX_URL="$tmp/mlxsrc" "$rp" --lm-clone "$tmp/lm" --mlx-dir "$tmp/mlxclone" 2>&1; }
 
 stub 0 '== LANDED (registry grew vs committed expectations):' '  LANDED foo -> .llm' '== REGRESSION (registry shrank vs committed expectations):' '  (none)' 'SENTINEL_RESULT=PASS'
@@ -56,6 +57,37 @@ out=$(run); s=$?
 out=$(RUN_PERIODIC_SENTINEL="$tmp/stub.sh" RUN_PERIODIC_MLX_URL="$tmp/mlxsrc" "$rp" --lm-clone "$tmp/nope" --mlx-dir "$tmp/mlxclone" 2>&1); s=$?
 [ "$s" -eq 2 ]; check "run-periodic: missing clone exits 2" $?
 
+# gap fixed under CONFORMANCE_STRICT=1 is reported and fails.
+stub 1 '     [gap][FIXED] softcap' 'SENTINEL_RESULT=FAIL'
+out=$(run); s=$?
+{ [ "$s" -eq 1 ] && echo "$out" | grep -q "gap_fixed=1"; }; check "run-periodic: [gap][FIXED] is counted and exits 1" $?
+
+# sentinel exit 2 (REFUSED / environment error) maps to run-periodic exit 2, not 1.
+stub 2 'sentinel: REFUSED: dirty tree' 'SENTINEL_RESULT=REFUSED'
+out=$(run); s=$?
+{ [ "$s" -eq 2 ] && echo "$out" | grep -q "PERIODIC_RESULT=ERROR" && [ "$(echo "$out" | tail -1)" = "EXIT=2" ]; }; check "run-periodic: sentinel exit 2 (refused) exits 2" $?
+# ... but a swift process that failed with status 2 after printing a verdict is a failure to act on (1).
+stub 2 'SENTINEL_RESULT=BUILD_FAILED'
+out=$(run); s=$?
+[ "$s" -eq 1 ]; check "run-periodic: build failure that happens to exit 2 still exits 1" $?
+
+# scratch rule: refuse non-scratch --mlx-dir / --lm-clone BEFORE any fetch, checkout --force or set-url.
+stub 0 'SENTINEL_RESULT=PASS'
+mkdir -p "$tmp/real-mlx" && git init -q -b main "$tmp/real-mlx" && echo keep >"$tmp/real-mlx/mine.txt" \
+    && git -C "$tmp/real-mlx" add -A && git -C "$tmp/real-mlx" -c user.name=t -c user.email=t@t commit -q -m mine \
+    && git -C "$tmp/real-mlx" remote add origin https://example.invalid/real.git && echo dirty >>"$tmp/real-mlx/mine.txt"
+mkdir -p "$tmp/scratch-only"
+out=$(SENTINEL_SCRATCH_ROOTS="$tmp/scratch-only" RUN_PERIODIC_SENTINEL="$tmp/stub.sh" RUN_PERIODIC_MLX_URL="$tmp/mlxsrc" "$rp" --lm-clone "$tmp/scratch-only" --mlx-dir "$tmp/real-mlx" 2>&1); s=$?
+{ [ "$s" -eq 2 ] && echo "$out" | grep -q "not under a scratch root" && [ "$(echo "$out" | tail -1)" = "EXIT=2" ]; }; check "run-periodic: refuses a non-scratch --mlx-dir (exit 2)" $?
+{ [ "$(git -C "$tmp/real-mlx" remote get-url origin)" = "https://example.invalid/real.git" ] && [ "$(tail -1 "$tmp/real-mlx/mine.txt")" = "dirty" ] \
+  && ! git -C "$tmp/real-mlx" remote get-url --push origin | grep -q DISABLED; }; check "run-periodic: refused --mlx-dir was not fetched into, forced or re-pointed" $?
+out=$(SENTINEL_SCRATCH_ROOTS="$tmp/scratch-only" RUN_PERIODIC_SENTINEL="$tmp/stub.sh" RUN_PERIODIC_MLX_URL="$tmp/mlxsrc" "$rp" --lm-clone "$tmp/lm" --mlx-dir "$tmp/scratch-only/mlx" 2>&1); s=$?
+{ [ "$s" -eq 2 ] && echo "$out" | grep -q "fork clone" && [ ! -e "$tmp/scratch-only/mlx" ]; }; check "run-periodic: refuses a non-scratch --lm-clone before touching mlx-dir" $?
+# a symlink into a non-scratch place does not smuggle a path through.
+mkdir -p "$tmp/scratch-only/ln" && ln -s "$tmp/real-mlx" "$tmp/scratch-only/ln/mlx"
+out=$(SENTINEL_SCRATCH_ROOTS="$tmp/scratch-only" RUN_PERIODIC_SENTINEL="$tmp/stub.sh" RUN_PERIODIC_MLX_URL="$tmp/mlxsrc" "$rp" --lm-clone "$tmp/scratch-only" --mlx-dir "$tmp/scratch-only/ln/mlx" 2>&1); s=$?
+[ "$s" -eq 2 ]; check "run-periodic: --mlx-dir symlinked out of scratch is refused" $?
+
 # it must not schedule anything.
-! grep -n -E 'crontab|launchctl|CronCreate|schedule_task|\bat -f' "$rp" | grep -v '^[0-9]*:#'; check "run-periodic: creates no scheduled task" $?
+! grep -n -E 'crontab|launchctl|CronCreate|schedule_task|\bat -f' "$here/run-periodic.sh" | grep -v '^[0-9]*:#'; check "run-periodic: creates no scheduled task" $?
 exit "$fail"
