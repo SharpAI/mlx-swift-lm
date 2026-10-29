@@ -582,6 +582,7 @@ private class Gemma4TextExperts: Module {
             hiddenDims: moeIntermediateSize,
             numExperts: numExperts,
             activation: geluApproximate,
+            activationProduct: compiledGeluApproximateProduct,
             bias: false
         )
         super.init()

@@ -802,7 +802,46 @@ extension MLXTestingSuite {
         #expect(tokens.count == 6)
         #expect(tokens.allSatisfy { $0 >= 0 && $0 < 100 })
     }
+
+    // MARK: - Compiled GeGLU product for MoE experts
+
+    @Test("compiledGeluApproximateProduct matches geluApproximate(gate) * up")
+    func testCompiledGeluApproximateProductMatchesUnfused() {
+        MLXRandom.seed(91)
+        for shape in [[3, 32], [5, 2, 48]] {
+            let gate = MLXRandom.normal(shape)
+            let up = MLXRandom.normal(shape)
+            let fused = compiledGeluApproximateProduct(gate, up)
+            let reference = geluApproximate(gate) * up
+            #expect(fused.shape == reference.shape)
+            #expect(allClose(fused, reference, rtol: 1e-5, atol: 1e-6).item(Bool.self))
+        }
+    }
+
+    /// Same weights, with and without the fused product: the MoE expert output must not change.
+    /// 40 tokens x top-2 = 80 routed rows takes the sorted-gather path (>= 64); 3 tokens does not.
+    @Test("SwitchGLU with a fused GeGLU product matches the unfused experts")
+    func testSwitchGLUFusedGeGLUMatchesUnfused() throws {
+        MLXRandom.seed(92)
+        let (hidden, inner, experts, topK) = (32, 48, 6, 2)
+        let fused = SwitchGLU(
+            inputDims: hidden, hiddenDims: inner, numExperts: experts,
+            activation: geluApproximate, activationProduct: compiledGeluApproximateProduct)
+        let plain = SwitchGLU(
+            inputDims: hidden, hiddenDims: inner, numExperts: experts,
+            activation: geluApproximate)
+        eval(fused, plain)
+        try plain.update(parameters: fused.parameters(), verify: [.all])
+        eval(plain)
+
+        for tokens in [3, 40] {
+            let x = MLXRandom.normal([tokens, hidden])
+            let indices = randInt(Int32(0) ..< Int32(experts), [tokens, topK])
+            let a = fused(x, indices)
+            let b = plain(x, indices)
+            #expect(a.shape == b.shape)
+            #expect(allClose(a, b, rtol: 1e-4, atol: 1e-5).item(Bool.self))
+        }
+    }
     }
 }
-
-
