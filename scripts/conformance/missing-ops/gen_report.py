@@ -4,7 +4,7 @@
 For every config-only fixture in scripts/conformance/offline/ whose `model_type` is registered in the
 LLM / VLM / embedder type registry, this script
   1. resolves the registry entry to its Configuration type (static read of the *TypeRegistry sources),
-  2. extracts the top-level JSON keys that Configuration type decodes (its `CodingKeys` enum, or the
+  2. extracts the top-level JSON keys that Configuration type decodes (its `CodingKeys` and any other `*CodingKeys: CodingKey` enums, or the
      stored property names when it has none),
   3. diffs them against the fixture's top-level keys.
 A key in the fixture that the Configuration does not decode is "silently ignored": the model builds, but
@@ -140,12 +140,18 @@ class TypeIndex:
 
 
 def coding_keys(body):
-    """-> (keys, how)  how in {'CodingKeys', 'properties', 'unresolved'}"""
-    m = re.search(r"\benum\s+CodingKeys\b[^{]*\{", body)
-    if m:
+    """-> (keys, how)  how in {'CodingKeys', 'properties', 'unresolved'}
+
+    Reads EVERY enum conforming to CodingKey declared in the Configuration body (`CodingKeys`, but also
+    e.g. BertConfiguration's `BertCodingKeys` / `DistilBertCodingKeys`, `VLMCodingKeys` ...): a key
+    decoded through any of them is consumed. This can only over-count consumed keys for enums that
+    describe nested containers, never report a decoded top-level key as ignored.
+    """
+    keys, found = set(), False
+    for m in re.finditer(r"\benum\s+\w+\s*:[^{]*\bCodingKey\b[^{]*\{|\benum\s+CodingKeys\b[^{]*\{", body):
+        found = True
         end = match_brace(body, m.end() - 1)
         enum_body = body[m.end():end]
-        keys = set()
         for line in enum_body.splitlines():
             line = re.sub(r"//.*", "", line).strip()
             if not line.startswith("case "):
@@ -157,6 +163,7 @@ def coding_keys(body):
                 am = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*\"([^\"]*)\")?", part)
                 if am:
                     keys.add(am.group(2) if am.group(2) is not None else am.group(1))
+    if found:
         return keys, "CodingKeys"
     props = set(re.findall(r"^\s{4}(?:public\s+|private\s+|fileprivate\s+)*(?:let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:=]", body, re.M))
     if props:

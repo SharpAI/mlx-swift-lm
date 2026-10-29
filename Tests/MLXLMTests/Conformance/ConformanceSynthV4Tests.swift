@@ -19,7 +19,7 @@ import Testing
 
 @testable import MLXLLM
 
-struct SynthV4Case {
+struct ConformanceSynthV4Case {
     var cfg: [String: Any]
     var model: DeepseekV4Model
     var native: [ConformanceSynth.Entry]
@@ -32,17 +32,17 @@ struct SynthV4Case {
     var nativeKeys: Set<String> { Set(native.map(\.key)) }
     var convertedKeys: Set<String> { Set(comparable.map(\.key)) }
 
-    static func make() async throws -> SynthV4Case {
-        let cfg = try SynthV4Layout.tinyConfig()
-        let model = try await SynthV4Layout.model(cfg)
+    static func make() async throws -> ConformanceSynthV4Case {
+        let cfg = try ConformanceSynthV4Layout.tinyConfig()
+        let model = try await ConformanceSynthV4Layout.model(cfg)
         eval(model)
-        let raw = SynthV4Layout.realEntries(cfg)
+        let raw = ConformanceSynthV4Layout.realEntries(cfg)
         let converted = raw.map {
-            ConformanceSynth.Entry(key: SynthV4Layout.mlxName($0.key), shape: $0.shape, dtype: $0.dtype)
+            ConformanceSynth.Entry(key: ConformanceSynthV4Layout.mlxName($0.key), shape: $0.shape, dtype: $0.dtype)
         }
-        return SynthV4Case(
+        return ConformanceSynthV4Case(
             cfg: cfg, model: model, native: ConformanceSynth.nativeEntries(model), raw: raw,
-            converted: converted, comparable: SynthV4Layout.stackExperts(converted), mainLayers: model.model.layers.count,
+            converted: converted, comparable: ConformanceSynthV4Layout.stackExperts(converted), mainLayers: model.model.layers.count,
             realMainLayers: cfg["num_hidden_layers"] as! Int)
     }
 
@@ -51,25 +51,27 @@ struct SynthV4Case {
     }
 
     /// Real keys (converted names) that OUR module has no parameter for, grouped.
-    func realOnly(_ g: SynthV4Layout.Group) -> [String] {
+    func realOnly(_ g: ConformanceSynthV4Layout.Group) -> [String] {
         convertedKeys.subtracting(nativeKeys).filter {
-            SynthV4Layout.group($0, mainLayers: mainLayers) == g
+            ConformanceSynthV4Layout.group($0, mainLayers: mainLayers) == g
         }.sorted()
     }
 
     /// Parameters OUR module has that the real layout lacks, grouped.
-    func oursOnly(_ g: SynthV4Layout.Group) -> [String] {
+    func oursOnly(_ g: ConformanceSynthV4Layout.Group) -> [String] {
         nativeKeys.subtracting(convertedKeys).filter {
-            SynthV4Layout.group($0, mainLayers: mainLayers) == g
+            ConformanceSynthV4Layout.group($0, mainLayers: mainLayers) == g
         }.sorted()
     }
 }
 
-func synthTempDir(_ name: String) throws -> URL {
-    let dir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("conformance-\(name)-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    return dir
+enum ConformanceSynthV4 {
+    static func tempDir(_ name: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("conformance-\(name)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
 }
 
 struct ConformanceSynthV4Tests {
@@ -78,7 +80,7 @@ struct ConformanceSynthV4Tests {
 
     @Test("real layout: per-layer tensor families follow the vLLM declarations")
     func layoutFollowsVllm() async throws {
-        let c = try await SynthV4Case.make()
+        let c = try await ConformanceSynthV4Case.make()
         let keys = Set(c.raw.map(\.key))
         #expect(c.realMainLayers == 3 && (c.cfg["compress_ratios"] as? [Int]) == [0, 4, 128, 0])
         // hash layer 0: tid2eid, no gate bias; layers 1, 2: gate bias, no tid2eid.
@@ -102,8 +104,8 @@ struct ConformanceSynthV4Tests {
 
     @Test("synthetic V4 checkpoint survives a safetensors round trip")
     func safetensorsRoundTrip() async throws {
-        let c = try await SynthV4Case.make()
-        let dir = try synthTempDir("v4-st")
+        let c = try await ConformanceSynthV4Case.make()
+        let dir = try ConformanceSynthV4.tempDir("v4-st")
         defer { try? FileManager.default.removeItem(at: dir) }
         let w = c.weights(c.raw)
         let url = dir.appendingPathComponent("model.safetensors")
@@ -117,7 +119,7 @@ struct ConformanceSynthV4Tests {
 
     @Test("every key present in both layouts has the same shape")
     func commonKeysShapeParity() async throws {
-        let c = try await SynthV4Case.make()
+        let c = try await ConformanceSynthV4Case.make()
         let native = Dictionary(uniqueKeysWithValues: c.native.map { ($0.key, $0.shape) })
         var bad: [String] = []
         var common = 0
@@ -132,26 +134,26 @@ struct ConformanceSynthV4Tests {
 
     @Test("accounting: real = shared + real-only, ours = shared + ours-only, each bucket classified")
     func accounting() async throws {
-        let c = try await SynthV4Case.make()
+        let c = try await ConformanceSynthV4Case.make()
         let shared = c.convertedKeys.intersection(c.nativeKeys).count
-        let realOnly = SynthV4Layout.Group.allCases.reduce(0) { $0 + c.realOnly($1).count }
-        let oursOnly = SynthV4Layout.Group.allCases.reduce(0) { $0 + c.oursOnly($1).count }
+        let realOnly = ConformanceSynthV4Layout.Group.allCases.reduce(0) { $0 + c.realOnly($1).count }
+        let oursOnly = ConformanceSynthV4Layout.Group.allCases.reduce(0) { $0 + c.oursOnly($1).count }
         #expect(c.comparable.count == shared + realOnly)
         #expect(c.native.count == shared + oursOnly)
         #expect(c.convertedKeys.count == c.comparable.count, "renames collided")
         print("[synth-v4] real=\(c.comparable.count) (\(c.raw.count) tensors before expert stacking) ours=\(c.native.count) shared=\(shared) real-only=\(realOnly) ours-only=\(oursOnly)")
-        for g in SynthV4Layout.Group.allCases {
+        for g in ConformanceSynthV4Layout.Group.allCases {
             print("[synth-v4]   real-only \(g.rawValue): \(c.realOnly(g).count)   ours-only \(g.rawValue): \(c.oursOnly(g).count)")
         }
     }
 
     @Test("our sanitize + the real loader accept the converted real checkpoint; forward is finite")
     func loadsThroughRealLoader() async throws {
-        let c = try await SynthV4Case.make()
-        let dir = try synthTempDir("v4-load")
+        let c = try await ConformanceSynthV4Case.make()
+        let dir = try ConformanceSynthV4.tempDir("v4-load")
         defer { try? FileManager.default.removeItem(at: dir) }
         try save(arrays: c.weights(c.converted), url: dir.appendingPathComponent("model.safetensors"))
-        let fresh = try await SynthV4Layout.model(c.cfg)
+        let fresh = try await ConformanceSynthV4Layout.model(c.cfg)
         try await loadWeights(modelDirectory: dir, model: fresh)
         eval(fresh)
         let out = fresh(MLXArray([1, 2, 3, 4]).reshaped(1, 4), cache: nil)
@@ -164,22 +166,31 @@ struct ConformanceSynthV4Tests {
 
     @Test("raw HF key names (embed.weight, layers.N.hc_attn_fn, ffn.experts.E.w1 ...) load through sanitize")
     func rawLayoutNeedsNoConverter() async throws {
-        let c = try await SynthV4Case.make()
+        let c = try await ConformanceSynthV4Case.make()
         let sanitized = c.model.sanitize(weights: c.weights(c.raw))
         let unexpected = Set(sanitized.keys).subtracting(c.nativeKeys).sorted()
+        // Non-vacuity (outside the wrapper): there is a raw checkpoint to sanitize, and sanitize returned tensors.
+        #expect(!c.raw.isEmpty && !sanitized.isEmpty, "nothing to sanitize: the wrapped claim below would be vacuous")
         // sanitize has no rename layer: loading a raw checkpoint needs an external converter (mlx convert).
         ConformanceGap.knownIssue("DeepseekV4.sanitize has no HF->module rename layer; raw checkpoints need a converter") {
             #expect(unexpected.isEmpty, "\(unexpected.count) unexpected, e.g. \(unexpected.prefix(4))")
         }
     }
 
-    static let missingFromOurs: [SynthV4Layout.Group] = [.compressor, .indexer, .tid2eid, .extraMainLayer]
+    static let missingFromOurs: [ConformanceSynthV4Layout.Group] = [.compressor, .indexer, .tid2eid, .extraMainLayer]
 
-    @Test("real tensors our module has no parameter for", arguments: SynthV4Layout.Group.allCases)
-    func realTensorsWithoutHome(_ g: SynthV4Layout.Group) async throws {
-        let c = try await SynthV4Case.make()
+    @Test("real tensors our module has no parameter for", arguments: ConformanceSynthV4Layout.Group.allCases)
+    func realTensorsWithoutHome(_ g: ConformanceSynthV4Layout.Group) async throws {
+        let c = try await ConformanceSynthV4Case.make()
         let keys = c.realOnly(g)
         let msg = "\(g.rawValue): \(keys.count) real tensors have no parameter, e.g. \(keys.prefix(3))"
+        // Non-vacuity (outside the wrapper): both layouts are populated, and a gap group really occurs in the
+        // real checkpoint (otherwise `keys.isEmpty` below would hold for the wrong reason).
+        #expect(!c.convertedKeys.isEmpty && !c.nativeKeys.isEmpty && !c.convertedKeys.isDisjoint(with: c.nativeKeys))
+        if Self.missingFromOurs.contains(g) {
+            let present = c.convertedKeys.filter { ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == g }
+            #expect(!present.isEmpty, "\(g.rawValue): the real layout has no such tensor; the gap pin is vacuous")
+        }
         if Self.missingFromOurs.contains(g) {
             ConformanceGap.knownIssue("DeepseekV4 lacks a parameter for real `\(g.rawValue)` tensors") {
                 #expect(keys.isEmpty, "\(msg)")
@@ -189,11 +200,16 @@ struct ConformanceSynthV4Tests {
         }
     }
 
-    @Test("parameters of our module that the real layout does not have", arguments: SynthV4Layout.Group.allCases)
-    func oursWithoutRealCounterpart(_ g: SynthV4Layout.Group) async throws {
-        let c = try await SynthV4Case.make()
+    @Test("parameters of our module that the real layout does not have", arguments: ConformanceSynthV4Layout.Group.allCases)
+    func oursWithoutRealCounterpart(_ g: ConformanceSynthV4Layout.Group) async throws {
+        let c = try await ConformanceSynthV4Case.make()
         let keys = c.oursOnly(g)
         let msg = "\(g.rawValue): \(keys.count) module parameters not in the real checkpoint, e.g. \(keys.prefix(3))"
+        #expect(!c.convertedKeys.isEmpty && !c.nativeKeys.isEmpty)
+        if g == .gateBias {
+            // Non-vacuity: our module really has gate-bias parameters (the claim is that some are surplus).
+            #expect(c.nativeKeys.contains { ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == .gateBias })
+        }
         if g == .gateBias {
             // vLLM creates e_score_correction_bias only for non-hash layers (nvidia/model.py:306-310); ours
             // creates it on every layer and tolerates its absence via updateMissing.
@@ -205,16 +221,24 @@ struct ConformanceSynthV4Tests {
         }
     }
 
-    @Test("sanitize keeps every real tensor of the layers it builds", arguments: [SynthV4Layout.Group.compressor, .indexer, .tid2eid])
-    func sanitizeDropsRealTensors(_ g: SynthV4Layout.Group) async throws {
-        let c = try await SynthV4Case.make()
+    @Test("sanitize keeps every real tensor of the layers it builds", arguments: [ConformanceSynthV4Layout.Group.compressor, .indexer, .tid2eid])
+    func sanitizeDropsRealTensors(_ g: ConformanceSynthV4Layout.Group) async throws {
+        let c = try await ConformanceSynthV4Case.make()
         let sanitized = c.model.sanitize(weights: c.weights(c.converted))
         let kept = Set(sanitized.keys)
         // only layers our model builds: the extra-layer drop is a separate gap (extraMainLayer).
         let dropped = c.converted.map(\.key).filter {
-            SynthV4Layout.group($0, mainLayers: c.mainLayers) == g && (SynthV4Layout.layerIndex($0) ?? 99) < c.mainLayers
+            ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == g && (ConformanceSynthV4Layout.layerIndex($0) ?? 99) < c.mainLayers
                 && !kept.contains($0)
         }.sorted()
+        // Non-vacuity (outside the wrapper): the group has real tensors in the layers we build, sanitize returned
+        // tensors, and it kept ordinary ones (so `dropped` is a real subset test, not an empty-input artefact).
+        let inGroup = c.converted.map(\.key).filter {
+            ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == g
+                && (ConformanceSynthV4Layout.layerIndex($0) ?? 99) < c.mainLayers
+        }
+        #expect(!inGroup.isEmpty, "\(g.rawValue): no real tensors in the built layers; nothing could be dropped")
+        #expect(!kept.isEmpty && kept.contains { ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == .other })
         ConformanceGap.knownIssue("DeepseekV4.sanitize silently drops real `\(g.rawValue)` tensors") {
             #expect(dropped.isEmpty, "\(dropped.count) dropped, e.g. \(dropped.prefix(3))")
         }

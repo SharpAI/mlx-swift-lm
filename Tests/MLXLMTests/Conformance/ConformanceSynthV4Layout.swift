@@ -1,10 +1,10 @@
 // Conformance harness, round 3 (SL-29 phase 2): shared helpers for the synthetic-checkpoint tests that
 // start from a REAL offline config fixture, plus the deepseek_v4 checkpoint key layout.
 //
-// * `SynthFixture` shrinks a fixture in scripts/conformance/offline/fixtures to tiny dimensions while
+// * `ConformanceSynthV4Fixture` shrinks a fixture in scripts/conformance/offline/fixtures to tiny dimensions while
 //   keeping its full key set (only values change), so the Configuration under test sees every key the
 //   real checkpoint's config carries.
-// * `SynthV4Layout` lists the tensors the REAL DeepSeek-V4 checkpoint contains, derived from vLLM's
+// * `ConformanceSynthV4Layout` lists the tensors the REAL DeepSeek-V4 checkpoint contains, derived from vLLM's
 //   loader (snapshot dc45a5f, vllm/models/deepseek_v4/...), NOT from our model:
 //     - parameter declarations:  nvidia/model.py:128-330 (MLP, MoE gate, hash table),
 //       :587-665 (decoder layer: attn_norm / ffn_norm / hc_attn_* / hc_ffn_*), :823-915 (hc_head_*),
@@ -27,7 +27,7 @@ import Testing
 
 @testable import MLXLLM
 
-enum SynthFixture {
+enum ConformanceSynthV4Fixture {
     /// All fixture files of a `fixtures/<dir>/` directory, sorted by name.
     static func files(_ dir: String) throws -> [URL] {
         let d = ConformanceBundle.root.appendingPathComponent("fixtures/\(dir)")
@@ -55,13 +55,13 @@ enum SynthFixture {
     static func string(_ data: Data) -> String { String(decoding: data, as: UTF8.self) }
 }
 
-enum SynthV4Layout {
+enum ConformanceSynthV4Layout {
     typealias Entry = ConformanceSynth.Entry
 
     /// Tiny V4 config: Flash's key set, shrunk. 3 main layers + 1 MTP; layer 0 = hash MoE (ratio 0),
     /// layer 1 = compress ratio 4 (compressor + indexer), layer 2 = ratio 128 (compressor only).
     static func tinyConfig() throws -> [String: Any] {
-        var o = try SynthFixture.object("deepseek_v4", file: "deepseek-ai__DeepSeek-V4-Flash.json")
+        var o = try ConformanceSynthV4Fixture.object("deepseek_v4", file: "deepseek-ai__DeepSeek-V4-Flash.json")
         o["vocab_size"] = 64; o["hidden_size"] = 32; o["moe_intermediate_size"] = 16
         o["num_hidden_layers"] = 3; o["num_nextn_predict_layers"] = 1; o["num_hash_layers"] = 1
         o["num_attention_heads"] = 4; o["head_dim"] = 16; o["qk_rope_head_dim"] = 8
