@@ -1,0 +1,71 @@
+{
+  "architectures": [
+    "PEagleDraftModel"
+  ],
+  "auto_map": {
+    "": "config.PEagleSpeculatorConfig"
+  },
+  "down_sample_ratio": 0.7,
+  "down_sample_ratio_min": 0.2,
+  "draft_vocab_size": 151936,
+  "dtype": "bfloat16",
+  "eagle_aux_hidden_state_layer_ids": [
+    2,
+    18,
+    33
+  ],
+  "embed_requires_grad": true,
+  "mask_token_id": 151669,
+  "max_seq_len": 8192,
+  "norm_before_fc": false,
+  "norm_before_residual": false,
+  "num_depths": 4,
+  "speculators_config": {
+    "algorithm": "peagle",
+    "default_proposal_method": "greedy",
+    "proposal_methods": [
+      {
+        "accept_tolerance": 0.0,
+        "proposal_type": "greedy",
+        "speculative_tokens": 4,
+        "verifier_accept_k": 1
+      }
+    ],
+    "verifier": {
+      "architectures": [],
+      "name_or_path": "Qwen/Qwen3-8B"
+    }
+  },
+  "speculators_model_type": "peagle",
+  "speculators_version": "0.5.0.dev58",
+  "target_hidden_size": null,
+  "tie_word_embeddings": false,
+  "transformer_layer_config": {
+    "attention_bias": false,
+    "attention_dropout": 0.0,
+    "bos_token_id": 1,
+    "eos_token_id": 2,
+    "head_dim": 128,
+    "hidden_act": "silu",
+    "hidden_size": 4096,
+    "initializer_range": 0.02,
+    "intermediate_size": 12288,
+    "max_position_embeddings": 40960,
+    "mlp_bias": false,
+    "model_type": "llama",
+    "num_attention_heads": 32,
+    "num_hidden_layers": 4,
+    "num_key_value_heads": 8,
+    "pad_token_id": null,
+    "pretraining_tp": 1,
+    "rms_norm_eps": 1e-06,
+    "rope_parameters": {
+      "rope_theta": 10000.0,
+      "rope_type": "default"
+    },
+    "tie_word_embeddings": false,
+    "use_cache": true,
+    "vocab_size": 151936
+  },
+  "transformers_version": "5.6.0"
+}

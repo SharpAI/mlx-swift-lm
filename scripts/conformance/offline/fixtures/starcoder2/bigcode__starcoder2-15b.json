@@ -1,0 +1,31 @@
+{
+  "_name_or_path": "/aot/checkpoints/15b/config.json",
+  "architectures": [
+    "Starcoder2ForCausalLM"
+  ],
+  "attention_dropout": 0.1,
+  "residual_dropout": 0.1,
+  "embedding_dropout": 0.1,
+  "bos_token_id": 0,
+  "eos_token_id": 0,
+  "hidden_act": "gelu_pytorch_tanh",
+  "hidden_size": 6144,
+  "initializer_range": 0.01275,
+  "intermediate_size": 24576,
+  "max_position_embeddings": 16384,
+  "mlp_type": "default",
+  "model_type": "starcoder2",
+  "norm_epsilon": 1e-05,
+  "norm_type": "layer_norm",
+  "num_attention_heads": 48,
+  "num_hidden_layers": 40,
+  "num_key_value_heads": 4,
+  "rope_theta": 100000,
+  "sliding_window": 4096,
+  "tie_word_embeddings": false,
+  "torch_dtype": "float32",
+  "transformers_version": "4.37.0.dev0",
+  "use_bias": true,
+  "use_cache": true,
+  "vocab_size": 49152
+}

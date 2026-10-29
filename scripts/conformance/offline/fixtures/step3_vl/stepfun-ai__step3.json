@@ -1,0 +1,53 @@
+{
+  "architectures": [
+    "Step3VLForConditionalGeneration"
+  ],
+  "auto_map": {
+    "AutoConfig": "configuration_step3.Step3VLConfig",
+    "AutoModelForCausalLM": "modeling_step3.Step3vForConditionalGeneration"
+  },
+  "model_type": "step3_vl",
+  "im_end_token": "<im_end>",
+  "im_patch_token": "<im_patch>",
+  "im_start_token": "<im_start>",
+  "image_token_len": 169,
+  "patch_token_len": 81,
+  "understand_projector_stride": 2,
+  "projector_bias": false,
+  "image_token_id": 128001,
+  "bos_token_id": 0,
+  "eos_token_id": 128805,
+  "text_config": {
+    "architectures": [
+      "Step3TextForCausalLM"
+    ],
+    "model_type": "step3_text",
+    "hidden_size": 7168,
+    "intermediate_size": 18432,
+    "num_hidden_layers": 61,
+    "max_seq_len": 65536,
+    "max_position_embedding": 65536,
+    "vocab_size": 128815,
+    "torch_dtype": "bfloat16",
+    "moe_layers_enum": "4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59",
+    "num_attention_heads": 64,
+    "num_attention_groups": 1,
+    "head_dim": 256,
+    "share_q_dim": 2048,
+    "moe_num_experts": 48,
+    "moe_top_k": 3,
+    "moe_intermediate_size": 5120,
+    "share_expert_dim": 5120,
+    "norm_expert_weight": false,
+    "rope_theta": 500000
+  },
+  "vision_config": {
+    "hidden_size": 1792,
+    "output_hidden_size": 4096,
+    "image_size": 728,
+    "intermediate_size": 15360,
+    "num_attention_heads": 16,
+    "num_hidden_layers": 63,
+    "patch_size": 14
+  }
+}

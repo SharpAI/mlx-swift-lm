@@ -1,0 +1,20 @@
+{
+  "architectures": [
+    "HfMoondream"
+  ],
+  "auto_map": {
+    "AutoConfig": "hf_moondream.HfConfig",
+    "AutoModelForCausalLM": "hf_moondream.HfMoondream"
+  },
+  "config": {
+    "skills": [
+      "query",
+      "caption",
+      "detect",
+      "point"
+    ]
+  },
+  "model_type": "moondream3",
+  "torch_dtype": "bfloat16",
+  "transformers_version": "4.51.1"
+}
