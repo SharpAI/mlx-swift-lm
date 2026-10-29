@@ -1,0 +1,73 @@
+{
+  "architectures": [
+    "MiDashengLMModel"
+  ],
+  "audio_encoder_config": {
+    "attn_drop_rate": 0.0,
+    "center": true,
+    "depth": 32,
+    "drop_rate": 0.0,
+    "embed_dim": 1280,
+    "f_max": 8000.0,
+    "f_min": 0.0,
+    "hop_length": 160,
+    "init_values": null,
+    "input_channels": 1,
+    "mlp_ratio": 4.0,
+    "model_type": "midashenglm_dasheng_encoder",
+    "n_fft": 512,
+    "n_mels": 64,
+    "num_heads": 16,
+    "outputdim": 527,
+    "patch_size": [
+      64,
+      4
+    ],
+    "patch_stride": [
+      64,
+      4
+    ],
+    "qkv_bias": true,
+    "sample_rate": 16000,
+    "target_length": 1008,
+    "win_length": 512
+  },
+  "audio_token_id": 151646,
+  "auto_map": {
+    "AutoConfig": "configuration_midashenglm.MiDashengLMConfig",
+    "AutoModelForCausalLM": "modeling_midashenglm.MiDashengLMModel"
+  },
+  "model_type": "midashenglm",
+  "subsample_factor": 5,
+  "text_config": {
+    "attention_dropout": 0.0,
+    "hidden_act": "silu",
+    "hidden_size": 3584,
+    "init_std": 0.02,
+    "initializer_range": 0.02,
+    "intermediate_size": 18944,
+    "max_position_embeddings": 32768,
+    "max_window_layers": 28,
+    "model_type": "qwen2_5_omni_text",
+    "num_attention_heads": 28,
+    "num_hidden_layers": 28,
+    "num_key_value_heads": 4,
+    "rms_norm_eps": 1e-06,
+    "rope_scaling": {
+      "mrope_section": [
+        16,
+        24,
+        24
+      ],
+      "rope_type": "default",
+      "type": "default"
+    },
+    "rope_theta": 1000000.0,
+    "sliding_window": 32768,
+    "use_cache": true,
+    "use_sliding_window": false,
+    "vocab_size": 152064
+  },
+  "torch_dtype": "float32",
+  "transformers_version": "4.52.4"
+}

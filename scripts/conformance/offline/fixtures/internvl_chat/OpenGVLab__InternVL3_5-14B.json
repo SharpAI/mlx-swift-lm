@@ -1,0 +1,92 @@
+{
+  "architectures": [
+    "InternVLChatModel"
+  ],
+  "auto_map": {
+    "AutoConfig": "configuration_internvl_chat.InternVLChatConfig",
+    "AutoModel": "modeling_internvl_chat.InternVLChatModel",
+    "AutoModelForCausalLM": "modeling_internvl_chat.InternVLChatModel"
+  },
+  "downsample_ratio": 0.5,
+  "dynamic_image_size": true,
+  "eos_token_id": 151645,
+  "force_image_size": 448,
+  "llm_config": {
+    "_name_or_path": "/root/codespace/checkpoints/Qwen3-14B",
+    "architectures": [
+      "Qwen3ForCausalLM"
+    ],
+    "attention_bias": false,
+    "attention_dropout": 0.0,
+    "bos_token_id": 151643,
+    "debug": false,
+    "eos_token_id": 151645,
+    "ep_size": 1,
+    "head_dim": 128,
+    "hidden_act": "silu",
+    "hidden_size": 5120,
+    "initializer_range": 0.02,
+    "intermediate_size": 17408,
+    "max_position_embeddings": 40960,
+    "max_window_layers": 40,
+    "micro_forward": false,
+    "model_type": "qwen3",
+    "num_attention_heads": 40,
+    "num_hidden_layers": 40,
+    "num_key_value_heads": 8,
+    "rms_norm_eps": 1e-06,
+    "rope_scaling": null,
+    "rope_theta": 1000000,
+    "skip_checkpoint": false,
+    "sliding_window": null,
+    "torch_dtype": "bfloat16",
+    "use_cache": false,
+    "use_deepep": false,
+    "use_sliding_window": false,
+    "vocab_size": 151936
+  },
+  "max_dynamic_patch": 12,
+  "min_dynamic_patch": 1,
+  "model_type": "internvl_chat",
+  "pad2square": false,
+  "pad_token_id": 151643,
+  "ps_version": "v2",
+  "select_layer": -1,
+  "template": "internvl2_5",
+  "tie_word_embeddings": false,
+  "torch_dtype": "bfloat16",
+  "transformers_version": null,
+  "use_backbone_lora": 0,
+  "use_llm_lora": 0,
+  "use_thumbnail": true,
+  "vision_config": {
+    "architectures": [
+      "InternVisionModel"
+    ],
+    "attention_dropout": 0.0,
+    "auto_map": {
+      "AutoConfig": "configuration_intern_vit.InternVisionConfig",
+      "AutoModel": "modeling_intern_vit.InternVisionModel"
+    },
+    "drop_path_rate": 0.0,
+    "dropout": 0.0,
+    "hidden_act": "gelu",
+    "hidden_size": 1024,
+    "image_size": 448,
+    "initializer_factor": 1.0,
+    "initializer_range": 0.02,
+    "intermediate_size": 4096,
+    "layer_norm_eps": 1e-06,
+    "model_type": "intern_vit_6b",
+    "norm_type": "layer_norm",
+    "num_attention_heads": 16,
+    "num_channels": 3,
+    "num_hidden_layers": 24,
+    "patch_size": 14,
+    "qk_normalization": false,
+    "qkv_bias": true,
+    "torch_dtype": "bfloat16",
+    "use_fa3": false,
+    "use_flash_attn": true
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "architectures": [
+    "BagelForConditionalGeneration"
+  ],
+  "model_type": "bagel",
+  "visual_gen": true,
+  "visual_und": true,
+  "llm_config": {
+    "architectures": [
+      "Qwen2ForCausalLM"
+    ],
+    "attention_dropout": 0.0,
+    "bos_token_id": 151643,
+    "eos_token_id": 151645,
+    "hidden_act": "silu",
+    "hidden_size": 3584,
+    "initializer_range": 0.02,
+    "intermediate_size": 18944,
+    "max_position_embeddings": 32768,
+    "max_window_layers": 28,
+    "model_type": "qwen2",
+    "num_attention_heads": 28,
+    "num_hidden_layers": 28,
+    "num_key_value_heads": 4,
+    "qk_norm": true,
+    "rms_norm_eps": 1e-06,
+    "rope_theta": 1000000.0,
+    "sliding_window": 131072,
+    "tie_word_embeddings": false,
+    "torch_dtype": "bfloat16",
+    "transformers_version": "4.43.1",
+    "use_cache": true,
+    "use_sliding_window": false,
+    "vocab_size": 152064
+  },
+  "vit_config": {
+    "hidden_size": 1152,
+    "image_size": 980,
+    "intermediate_size": 4304,
+    "model_type": "siglip_vision_model",
+    "num_attention_heads": 16,
+    "num_hidden_layers": 27,
+    "patch_size": 14,
+    "num_channels": 3
+  },
+  "vae_config": {
+    "z_channels": 16,
+    "downsample": 8
+  },
+  "latent_patch_size": 2,
+  "max_latent_size": 32,
+  "vit_max_num_patch_per_side": 70,
+  "connector_act": "gelu_pytorch_tanh",
+  "interpolate_pos": false,
+  "timestep_shift": 1.0,
+  "torch_dtype": "bfloat16",
+  "transformers_version": "4.49.0"
+}

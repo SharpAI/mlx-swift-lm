@@ -1,0 +1,27 @@
+{
+  "architectures": [
+    "StableLMAlphaForCausalLM"
+  ],
+  "auto_map": {
+    "AutoConfig": "configuration_stablelm_alpha.StableLMAlphaConfig",
+    "AutoModelForCausalLM": "modeling_stablelm_alpha.StableLMAlphaForCausalLM"
+  },
+  "bos_token_id": 0,
+  "eos_token_id": 0,
+  "hidden_act": "silu",
+  "hidden_size": 4096,
+  "initializer_range": 0.02,
+  "max_position_embeddings": 4096,
+  "model_type": "stablelm_alpha",
+  "norm_eps": 1e-05,
+  "num_heads": 32,
+  "num_hidden_layers": 32,
+  "rotary_emb_base": 10000,
+  "rotary_pct": 0.25,
+  "rotary_scaling_factor": 1.0,
+  "tie_word_embeddings": false,
+  "torch_dtype": "float32",
+  "transformers_version": "4.30.2",
+  "use_cache": true,
+  "vocab_size": 50432
+}
