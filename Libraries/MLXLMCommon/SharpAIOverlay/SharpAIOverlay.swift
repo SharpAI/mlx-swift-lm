@@ -16,9 +16,11 @@ public enum SharpAIOverlay {
     /// `model_type`; a lint test (`SharpAIOverlayTests`) rejects other direct
     /// `registerModelType` calls in `Libraries/`.
     ///
-    /// The check and the registration are two actor hops, not one atomic step. Overlay
-    /// registration runs once at startup, so this is not a concern in practice; do not call it
-    /// concurrently for the same `type` from several tasks.
+    /// The check and the registration run inside one actor-isolated method
+    /// (`ModelTypeRegistry.sharpAIRegisterIfAbsent`) with no suspension point between them, so
+    /// the pair is atomic: concurrent callers for the same `type` get exactly one `true`.
+    /// (An earlier draft did `await contains` then `await registerModelType`, two actor hops;
+    /// `OverlayRegistrationTests.concurrentRegistrationIsAtomic` pins the fix.)
     ///
     /// - Returns: `true` if this call registered the creator, `false` if `type` was already present.
     @discardableResult
@@ -27,8 +29,22 @@ public enum SharpAIOverlay {
         type: String,
         creator: sending @escaping (Data) throws -> T
     ) async -> Bool {
-        if await registry.contains(type) { return false }
-        await registry.registerModelType(type, creator: creator)
+        await registry.sharpAIRegisterIfAbsent(type, creator: creator)
+    }
+}
+
+extension ModelTypeRegistry {
+    /// Atomic check-then-register. Actor-isolated and synchronous, so no other task can register
+    /// `type` between the `contains` check and the insertion. Use through
+    /// ``SharpAIOverlay/registerIfAbsent(registry:type:creator:)``.
+    ///
+    /// upstream-watch: if upstream adds a member with this exact name to `ModelTypeRegistry`,
+    /// the build breaks; rename ours (see scripts/conformance/upstream/UPSTREAM_WATCH.md).
+    func sharpAIRegisterIfAbsent(
+        _ type: String, creator: @escaping (Data) throws -> T
+    ) -> Bool {
+        if contains(type) { return false }
+        registerModelType(type, creator: creator)
         return true
     }
 }

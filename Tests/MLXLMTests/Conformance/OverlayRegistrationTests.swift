@@ -52,6 +52,34 @@ struct SharpAIOverlayTests {
         #expect(model.tag == "first")
     }
 
+    @Test("concurrent registerIfAbsent for one type: exactly one winner, and it is the one stored")
+    func concurrentRegistrationIsAtomic() async throws {
+        // Regression test for the check-then-register race (two actor hops). With a non-atomic
+        // helper several tasks all see "absent" and all report `true`.
+        for round in 0..<200 {
+            let registry = ModelTypeRegistry<Marker>()
+            let type = "race_\(round)"
+            let results = await withTaskGroup(of: (Int, Bool).self) { group in
+                for i in 0..<64 {
+                    group.addTask(priority: .userInitiated) {
+                        let won = await SharpAIOverlay.registerIfAbsent(
+                            registry: registry, type: type, creator: Self.make("c\(i)"))
+                        return (i, won)
+                    }
+                }
+                var all: [(Int, Bool)] = []
+                for await r in group { all.append(r) }
+                return all
+            }
+            let winners = results.filter { $0.1 }.map { $0.0 }
+            #expect(winners.count == 1, "round \(round): \(winners.count) tasks reported registering")
+            if let w = winners.first, winners.count == 1 {
+                let model = try await registry.createModel(configuration: Data(), modelType: type)
+                #expect(model.tag == "c\(w)")
+            }
+        }
+    }
+
     // MARK: - Lint: direct registerModelType calls in Libraries/
 
     /// Existing direct call sites (file path relative to the repo root -> expected call count, why).
@@ -73,7 +101,7 @@ struct SharpAIOverlayTests {
     static let helperDirectory = "Libraries/MLXLMCommon/SharpAIOverlay/"
 
     static var repoRoot: URL {
-        // <root>/Tests/MLXLMTests/Conformance/SharpAIOverlayTests.swift
+        // <root>/Tests/MLXLMTests/Conformance/OverlayRegistrationTests.swift
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
