@@ -2,9 +2,9 @@
 // forward pass. No checkpoint, no network. Tier 1 = the model builds and produces finite
 // logits of the right shape. Tier 2 = a numeric property that shape checks cannot see.
 //
-// Known gaps are expressed with `withKnownIssue`: the test is green while the gap exists
-// and goes RED when the gap is fixed (or upstream fixes it), which is the cue to delete the
-// `withKnownIssue` wrapper -- so a fix is always paired with the test that proves it.
+// Known gaps are expressed with `withKnownIssue(isIntermittent: true)`: the test is green while the
+// gap exists AND once it is fixed (so a correct upstream sync is never blocked); delete the wrapper
+// in the change that fixes the gap, so the fix is paired with the test that proves it.
 
 import Foundation
 import MLX
@@ -70,8 +70,9 @@ struct ConformanceForwardTests {
         let logits = try ConformanceBuild.logits(model, tokens: [1, 2, 3, 4]).asType(.float32)
         let maxAbs = abs(logits).max().item(Float.self)
 
-        // KNOWN GAP: remove this wrapper in the PR that adds softcapping.
-        withKnownIssue("Gemma3TextConfiguration ignores final_logit_softcapping") {
+        // KNOWN GAP: remove this wrapper in the PR that adds softcapping. `isIntermittent` keeps the
+        // test green on BOTH sides, so an upstream sync that fixes softcapping is never blocked by it.
+        withKnownIssue("Gemma3TextConfiguration ignores final_logit_softcapping", isIntermittent: true) {
             #expect(maxAbs <= Float(cap) + 1e-3, "max |logit| = \(maxAbs), cap = \(cap)")
         }
     }

@@ -11,6 +11,11 @@ weights. Tracking issue and survey method: SharpAI/SwiftLM#254.
 | `gen_expectations.py` | Greps the three type registries and writes `Tests/MLXLMTests/Conformance/ConformanceExpectations.swift`. |
 | `Tests/MLXLMTests/Conformance/ConformanceRegistryTests.swift` | Tier 0: committed expectations == real registries (no GPU, no weights). |
 | `Tests/MLXLMTests/Conformance/ConformanceForwardTests.swift` | Tiers 1-2: build from config JSON with random weights, forward, check numeric properties. |
+| `Tests/MLXLMTests/Conformance/ConformanceSynthWeightsTests.swift` | Synthetic checkpoint (random weights saved/loaded as safetensors) + `sanitize` key parity for llama / qwen3_moe / gemma3_text. |
+| `Tests/MLXLMTests/Conformance/ConformanceOfflineBundleTests.swift` | Loads `offline/` config fixtures (manifest consistency + one decode through the registry). |
+| `offline/` (`make_bundle.py`, `MANIFEST.json`, `fixtures/`) | 169 config-only `config.json` files of the surveyed repos (no weights). Rebuild: `make_bundle.py --src DIR --csv-only`. |
+| `run-test.sh`, `test-scripts.sh` | Run one named test filter and print the process `EXIT=`; self-test of these scripts. |
+| `upstream/sentinel.sh` | After an upstream sync: regenerate expectations, run the conformance tests with `CONFORMANCE_STRICT=1`, print a report. |
 
 ## Reading a failure
 

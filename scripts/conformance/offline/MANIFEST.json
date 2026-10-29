@@ -1,40 +1,7 @@
 {
  "conflicts": [],
- "count": 510,
+ "count": 169,
  "fixtures": [
-  {
-   "architectures": [
-    "BeeForConditionalGeneration"
-   ],
-   "model_type": "Bee",
-   "path": "fixtures/Bee/Open-Bee__Bee-8B-RL.json",
-   "repo": "Open-Bee/Bee-8B-RL",
-   "repo_source": "filename",
-   "sha256": "6c70e8d87c786349ea107a8b95058e71758032e890c6f6239b85105d315127ac",
-   "size": 3282
-  },
-  {
-   "architectures": [
-    "BeeForConditionalGeneration"
-   ],
-   "model_type": "Bee",
-   "path": "fixtures/Bee/Open-Bee__Bee-8B-SFT.json",
-   "repo": "Open-Bee/Bee-8B-SFT",
-   "repo_source": "filename",
-   "sha256": "6c70e8d87c786349ea107a8b95058e71758032e890c6f6239b85105d315127ac",
-   "size": 3282
-  },
-  {
-   "architectures": [
-    "NVLM_D"
-   ],
-   "model_type": "NVLM_D",
-   "path": "fixtures/NVLM_D/nvidia__NVLM-D-72B.json",
-   "repo": "nvidia/NVLM-D-72B",
-   "repo_source": "filename",
-   "sha256": "7eb625e75ca517532397fc87408d9141d8c659c6cf8cb1e29af03b4e41ca0661",
-   "size": 3715
-  },
   {
    "architectures": [
     "NemotronH_Nano_Omni_Reasoning_V3"
@@ -45,28 +12,6 @@
    "repo_source": "csv",
    "sha256": "bf8859c106ef73d65fd194cbd336584d24dceaf724a408c762db7945e3925957",
    "size": 9842
-  },
-  {
-   "architectures": [
-    "NemotronH_Nano_Omni_Reasoning_V3"
-   ],
-   "model_type": "NemotronH_Nano_Omni_Reasoning_V3",
-   "path": "fixtures/NemotronH_Nano_Omni_Reasoning_V3/nvidia__Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8.json",
-   "repo": "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8",
-   "repo_source": "filename",
-   "sha256": "ba51d79fe0db8aef1e1c6c1515b18e9e5697f99c004fbe26dc16ae8b6f2dc544",
-   "size": 11903
-  },
-  {
-   "architectures": [
-    "NemotronH_Nano_VL_V2"
-   ],
-   "model_type": "NemotronH_Nano_VL_V2",
-   "path": "fixtures/NemotronH_Nano_VL_V2/nvidia__NVIDIA-Nemotron-Nano-12B-v2-VL-BF16.json",
-   "repo": "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
-   "repo_source": "filename",
-   "sha256": "6bc9bf778ad3bc8b91adb05eb2ed9ed2671748e4645b28dfac680faddde36142",
-   "size": 8692
   },
   {
    "architectures": [
@@ -92,52 +37,6 @@
   },
   {
    "architectures": [
-    "RForConditionalGeneration"
-   ],
-   "model_type": "R",
-   "path": "fixtures/R/YannQi__R-4B.json",
-   "repo": "YannQi/R-4B",
-   "repo_source": "filename",
-   "sha256": "04e38adcfbe6aa24943383228953c4a06a3f351b450d32596a191e8eb61b76b9",
-   "size": 2190
-  },
-  {
-   "architectures": [
-    "TeleFLMModel",
-    "TeleFLMForCausalLM"
-   ],
-   "model_type": "TeleFLM",
-   "path": "fixtures/TeleFLM/CofeAI__FLM-2-52B-Instruct-2407.json",
-   "repo": "CofeAI/FLM-2-52B-Instruct-2407",
-   "repo_source": "filename",
-   "sha256": "6f0b29efda111765ed4ccc15644d4c1561f6382b40d8ec64f9d8266acca7eadd",
-   "size": 940
-  },
-  {
-   "architectures": [
-    "TeleFLMModel",
-    "TeleFLMForCausalLM"
-   ],
-   "model_type": "TeleFLM",
-   "path": "fixtures/TeleFLM/CofeAI__Tele-FLM.json",
-   "repo": "CofeAI/Tele-FLM",
-   "repo_source": "filename",
-   "sha256": "4a1446a5716d85e6018b1b0f2d7eb17279489d8c3b0b384cedc5fe4d34a0be32",
-   "size": 940
-  },
-  {
-   "architectures": [
-    "Terratorch"
-   ],
-   "model_type": null,
-   "path": "fixtures/_none/ibm-nasa-geospatial__Prithvi-EO-2.0-300M-TL-Sen1Floods11.json",
-   "repo": "ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11",
-   "repo_source": "filename",
-   "sha256": "f03dee42a0cb6433d0e2b8dd109f852948142b221582ce06db97dc5e932afd62",
-   "size": 3365
-  },
-  {
-   "architectures": [
     "PEagleDraftModel"
    ],
    "model_type": null,
@@ -157,28 +56,6 @@
    "repo_source": "csv",
    "sha256": "be60be0e1395e40b2726212570fced67b599b41abb8ad27194fe1bbfc36f6029",
    "size": 1577
-  },
-  {
-   "architectures": [
-    "XLMRobertaModel"
-   ],
-   "model_type": null,
-   "path": "fixtures/_none/jinaai__jina-embeddings-v3.json",
-   "repo": "jinaai/jina-embeddings-v3",
-   "repo_source": "filename",
-   "sha256": "556941599709401b3dc94acf775526f1c4670abe5e123cb53cca8eb5250b0cb5",
-   "size": 1799
-  },
-  {
-   "architectures": [
-    "LongcatFlashForCausalLM"
-   ],
-   "model_type": null,
-   "path": "fixtures/_none/meituan-longcat__LongCat-Flash-Chat.json",
-   "repo": "meituan-longcat/LongCat-Flash-Chat",
-   "repo_source": "filename",
-   "sha256": "c83aea493384d33853b38e4c547356aff8bd02a538efd1fc0a748f309b8ce0f7",
-   "size": 1002
   },
   {
    "architectures": [
@@ -215,39 +92,6 @@
   },
   {
    "architectures": [
-    "MiniCPMForCausalLM"
-   ],
-   "model_type": null,
-   "path": "fixtures/_none/openbmb__MiniCPM-2B-dpo-bf16.json",
-   "repo": "openbmb/MiniCPM-2B-dpo-bf16",
-   "repo_source": "filename",
-   "sha256": "41cf26cfdca93f49209a6c0c26c00b281d6408e010ddc8cca9531c825cc17fc4",
-   "size": 1010
-  },
-  {
-   "architectures": [
-    "MiniCPMForCausalLM"
-   ],
-   "model_type": null,
-   "path": "fixtures/_none/openbmb__MiniCPM-2B-sft-bf16.json",
-   "repo": "openbmb/MiniCPM-2B-sft-bf16",
-   "repo_source": "filename",
-   "sha256": "41cf26cfdca93f49209a6c0c26c00b281d6408e010ddc8cca9531c825cc17fc4",
-   "size": 1010
-  },
-  {
-   "architectures": [
-    "MiniCPMForCausalLM"
-   ],
-   "model_type": null,
-   "path": "fixtures/_none/openbmb__MiniCPM-S-1B-sft.json",
-   "repo": "openbmb/MiniCPM-S-1B-sft",
-   "repo_source": "filename",
-   "sha256": "f9569b79714c3ba485dced3a3e49107b867cc2fdfd3d2fba8b9e08f84460437e",
-   "size": 1060
-  },
-  {
-   "architectures": [
     "AfmoeForCausalLM"
    ],
    "model_type": "afmoe",
@@ -281,61 +125,6 @@
   },
   {
    "architectures": [
-    "ApertusForCausalLM"
-   ],
-   "model_type": "apertus",
-   "path": "fixtures/apertus/swiss-ai__Apertus-70B-Instruct-2509.json",
-   "repo": "swiss-ai/Apertus-70B-Instruct-2509",
-   "repo_source": "filename",
-   "sha256": "38d8511c8ef326097ce8c1bb6875556011191caa223d6ff3a924271ae915ab6f",
-   "size": 901
-  },
-  {
-   "architectures": [
-    "ApertusForCausalLM"
-   ],
-   "model_type": "apertus",
-   "path": "fixtures/apertus/swiss-ai__Apertus-8B-2509.json",
-   "repo": "swiss-ai/Apertus-8B-2509",
-   "repo_source": "filename",
-   "sha256": "f79459e890a07d6880e3d54c047da7c079f472ec427c30fefeb98f2b9601c563",
-   "size": 899
-  },
-  {
-   "architectures": [
-    "ApertusForCausalLM"
-   ],
-   "model_type": "apertus",
-   "path": "fixtures/apertus/swiss-ai__Apertus-8B-Instruct-2509.json",
-   "repo": "swiss-ai/Apertus-8B-Instruct-2509",
-   "repo_source": "filename",
-   "sha256": "9a2f0f01aa684c30097fbf0469ed002b5af2797231a6e3288622de16d2055d25",
-   "size": 901
-  },
-  {
-   "architectures": [
-    "ArceeForCausalLM"
-   ],
-   "model_type": "arcee",
-   "path": "fixtures/arcee/arcee-ai__AFM-4.5B-Base.json",
-   "repo": "arcee-ai/AFM-4.5B-Base",
-   "repo_source": "filename",
-   "sha256": "18f84d052b292bcad97bf30bbd3dcc37b6a856a29863f7d0788b97ccef1addf5",
-   "size": 843
-  },
-  {
-   "architectures": [
-    "AriaForConditionalGeneration"
-   ],
-   "model_type": "aria",
-   "path": "fixtures/aria/rhymes-ai__Aria.json",
-   "repo": "rhymes-ai/Aria",
-   "repo_source": "filename",
-   "sha256": "8b327ecd7c2c33ed9d81a00dfb5c89ed7ee4747a0a7e1b1fbb790806a45660dc",
-   "size": 1082
-  },
-  {
-   "architectures": [
     "AudioFlamingo3ForConditionalGeneration"
    ],
    "model_type": "audioflamingo3",
@@ -344,17 +133,6 @@
    "repo_source": "csv",
    "sha256": "547254e919aad4846ddd90340f30a9a935c3c4d033fead9cc1121ecdd3b13ef7",
    "size": 2093
-  },
-  {
-   "architectures": [
-    "AudioFlamingo3ForConditionalGeneration"
-   ],
-   "model_type": "audioflamingo3",
-   "path": "fixtures/audioflamingo3/nvidia__music-flamingo-hf.json",
-   "repo": "nvidia/music-flamingo-hf",
-   "repo_source": "filename",
-   "sha256": "a9689be4d4c9c7d0c9d14820e4f87746d333308fcd556d6a7eb4ec262dd70152",
-   "size": 2124
   },
   {
    "architectures": [
@@ -413,39 +191,6 @@
   },
   {
    "architectures": [
-    "BailingMoeForCausalLM"
-   ],
-   "model_type": "bailing_moe",
-   "path": "fixtures/bailing_moe/inclusionAI__Ling-lite-1.5.json",
-   "repo": "inclusionAI/Ling-lite-1.5",
-   "repo_source": "filename",
-   "sha256": "abbbede12997c529b2c07a6ec0bf3225b411a8aaf7f750613d911238493746c1",
-   "size": 1282
-  },
-  {
-   "architectures": [
-    "BailingMoeV2ForCausalLM"
-   ],
-   "model_type": "bailing_moe",
-   "path": "fixtures/bailing_moe/inclusionAI__Ling-mini-2.0.json",
-   "repo": "inclusionAI/Ling-mini-2.0",
-   "repo_source": "filename",
-   "sha256": "88388c4e5040292a19b40da6fa89a3d6a0bb6d6878f389b0bba55ac51c239aa3",
-   "size": 1522
-  },
-  {
-   "architectures": [
-    "BailingMoeForCausalLM"
-   ],
-   "model_type": "bailing_moe",
-   "path": "fixtures/bailing_moe/inclusionAI__Ling-plus.json",
-   "repo": "inclusionAI/Ling-plus",
-   "repo_source": "filename",
-   "sha256": "36f74feb80c40571d95042f99217d488dc4ba26dffa8f1a197ada80456d85b5b",
-   "size": 1303
-  },
-  {
-   "architectures": [
     "BailingMoeV3VLForConditionalGeneration"
    ],
    "model_type": "bailing_moe_v3_vl",
@@ -460,66 +205,11 @@
     "BeamForCausalLM"
    ],
    "model_type": "beam",
-   "path": "fixtures/beam/reflection__Beam-1.0-501B-A23B-NVFP4.json",
-   "repo": "reflection/Beam-1.0-501B-A23B-NVFP4",
-   "repo_source": "filename",
-   "sha256": "e3d672f8869420a6dd52cd6e2d1dd71aaa5190f1d45882c7a3e74b0bb40cbc88",
-   "size": 7221
-  },
-  {
-   "architectures": [
-    "BeamForCausalLM"
-   ],
-   "model_type": "beam",
    "path": "fixtures/beam/reflection__Beam-1.0-501B-A23B.json",
    "repo": "reflection/Beam-1.0-501B-A23B",
    "repo_source": "csv",
    "sha256": "c5dcc35e5f0135faaf50f91cedde15f66a50859663b4f669b077b3bc75bb65fd",
    "size": 3015
-  },
-  {
-   "architectures": [
-    "BertModel"
-   ],
-   "model_type": "bert",
-   "path": "fixtures/bert/BAAI__bge-base-en-v1.5.json",
-   "repo": "BAAI/bge-base-en-v1.5",
-   "repo_source": "filename",
-   "sha256": "bc00af31a4a31b74040d73370aa83b62da34c90b75eb77bfa7db039d90abd591",
-   "size": 777
-  },
-  {
-   "architectures": [
-    "BertModel"
-   ],
-   "model_type": "bert",
-   "path": "fixtures/bert/Snowflake__snowflake-arctic-embed-xs.json",
-   "repo": "Snowflake/snowflake-arctic-embed-xs",
-   "repo_source": "filename",
-   "sha256": "d7d071046ab952af96b7abad788db7ab3fc997b465e1b9914ff39707092254ec",
-   "size": 737
-  },
-  {
-   "architectures": [
-    "HF_ColBERT"
-   ],
-   "model_type": "bert",
-   "path": "fixtures/bert/answerdotai__answerai-colbert-small-v1.json",
-   "repo": "answerdotai/answerai-colbert-small-v1",
-   "repo_source": "filename",
-   "sha256": "8a7ef3067ec44d7909d28daaf0cd52a6739a25e689252789b0927c593e17b121",
-   "size": 702
-  },
-  {
-   "architectures": [
-    "BertForTokenClassification"
-   ],
-   "model_type": "bert",
-   "path": "fixtures/bert/boltuix__NeuroBERT-NER.json",
-   "repo": "boltuix/NeuroBERT-NER",
-   "repo_source": "filename",
-   "sha256": "33fdb643d6779e1a0f1d8238d128217cadd33e326d69ec89c8b5ff82d67973fb",
-   "size": 1837
   },
   {
    "architectures": [
@@ -534,17 +224,6 @@
   },
   {
    "architectures": [
-    "BertForSequenceClassification"
-   ],
-   "model_type": "bert",
-   "path": "fixtures/bert/cross-encoder__ms-marco-MiniLM-L-6-v2.json",
-   "repo": "cross-encoder/ms-marco-MiniLM-L-6-v2",
-   "repo_source": "filename",
-   "sha256": "380e02c93f431831be65d99a4e7e5f67c133985bf2e77d9d4eba46847190bacc",
-   "size": 794
-  },
-  {
-   "architectures": [
     "BertForMaskedLM"
    ],
    "model_type": "bert",
@@ -556,138 +235,6 @@
   },
   {
    "architectures": [
-    "BertModel"
-   ],
-   "model_type": "bert",
-   "path": "fixtures/bert/intfloat__multilingual-e5-small.json",
-   "repo": "intfloat/multilingual-e5-small",
-   "repo_source": "filename",
-   "sha256": "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959",
-   "size": 655
-  },
-  {
-   "architectures": [
-    "Blip2ForConditionalGeneration"
-   ],
-   "model_type": "blip-2",
-   "path": "fixtures/blip-2/Salesforce__blip2-opt-2.7b.json",
-   "repo": "Salesforce/blip2-opt-2.7b",
-   "repo_source": "filename",
-   "sha256": "7faf83ff4e7c25e282dcc614d018205ebcb6e832164018339b40bfe70beffa6b",
-   "size": 1029
-  },
-  {
-   "architectures": [
-    "Blip2ForConditionalGeneration"
-   ],
-   "model_type": "blip-2",
-   "path": "fixtures/blip-2/Salesforce__blip2-opt-6.7b.json",
-   "repo": "Salesforce/blip2-opt-6.7b",
-   "repo_source": "filename",
-   "sha256": "544312669659de443d694e68ef35735a9d4aaa7e4c2527566ebf19d182724a40",
-   "size": 987
-  },
-  {
-   "architectures": [
-    "BloomForCausalLM"
-   ],
-   "model_type": "bloom",
-   "path": "fixtures/bloom/bigscience__bloom-560m.json",
-   "repo": "bigscience/bloom-560m",
-   "repo_source": "filename",
-   "sha256": "5a255f97efaea3c0dabef5e743d2dd969cf1f733a9c5fd6ef41a42c1aae822e9",
-   "size": 693
-  },
-  {
-   "architectures": [
-    "BloomForCausalLM"
-   ],
-   "model_type": "bloom",
-   "path": "fixtures/bloom/bigscience__bloom.json",
-   "repo": "bigscience/bloom",
-   "repo_source": "filename",
-   "sha256": "b0c54c09da89d139538b4bcf92e3b99dc5abcfaf28d5c09eb92665e9f75639ac",
-   "size": 573
-  },
-  {
-   "architectures": [
-    "BloomForCausalLM"
-   ],
-   "model_type": "bloom",
-   "path": "fixtures/bloom/bigscience__bloomz-1b1.json",
-   "repo": "bigscience/bloomz-1b1",
-   "repo_source": "filename",
-   "sha256": "c783cfa80c5eae4b9457f5c17b8e7bddd978acd391fc8d1ec09ee20646001a70",
-   "size": 715
-  },
-  {
-   "architectures": [
-    "BloomForCausalLM"
-   ],
-   "model_type": "bloom",
-   "path": "fixtures/bloom/bigscience__bloomz.json",
-   "repo": "bigscience/bloomz",
-   "repo_source": "filename",
-   "sha256": "73f1d21307198fe21618b18d1524ad3fc96603dbac70571a160e11d5c529e724",
-   "size": 595
-  },
-  {
-   "architectures": [
-    "ChatGLMForConditionalGeneration"
-   ],
-   "model_type": "chatglm",
-   "path": "fixtures/chatglm/thu-coai__ShieldLM-6B-chatglm3.json",
-   "repo": "thu-coai/ShieldLM-6B-chatglm3",
-   "repo_source": "filename",
-   "sha256": "1e976b0029a20bcaa6d4cdd85c775d95bf7135f6dea0ecc630b347e7a881e190",
-   "size": 1510
-  },
-  {
-   "architectures": [
-    "ChatGLMModel"
-   ],
-   "model_type": "chatglm",
-   "path": "fixtures/chatglm/zai-org__chatglm3-6b.json",
-   "repo": "zai-org/chatglm3-6b",
-   "repo_source": "filename",
-   "sha256": "415b51f6043ef388860b093fad9c52f4898c426af733871f45e2e0c8b6e1d61e",
-   "size": 1317
-  },
-  {
-   "architectures": [
-    "ChatGLMModel"
-   ],
-   "model_type": "chatglm",
-   "path": "fixtures/chatglm/zai-org__glm-4v-9b.json",
-   "repo": "zai-org/glm-4v-9b",
-   "repo_source": "filename",
-   "sha256": "7c80de82168f1fac04cd97c7c200fb618ce16a90ccd87cc8c662f429a3b2550e",
-   "size": 1771
-  },
-  {
-   "architectures": [
-    "CLIPModel"
-   ],
-   "model_type": "clip",
-   "path": "fixtures/clip/openai__clip-vit-base-patch32.json",
-   "repo": "openai/clip-vit-base-patch32",
-   "repo_source": "filename",
-   "sha256": "b575ef3c36f2a057fa19e221650105052d61cc9c1a972ec15019c6261ec98770",
-   "size": 4186
-  },
-  {
-   "architectures": [
-    "CLIPModel"
-   ],
-   "model_type": "clip",
-   "path": "fixtures/clip/openai__clip-vit-large-patch14.json",
-   "repo": "openai/clip-vit-large-patch14",
-   "repo_source": "filename",
-   "sha256": "8a09b467700c58138c29d53c605b34ebc69beaadd13274a8a2af8ad2c2f4032a",
-   "size": 4519
-  },
-  {
-   "architectures": [
     "Cohere2MoeForCausalLM"
    ],
    "model_type": "cohere2_moe",
@@ -696,28 +243,6 @@
    "repo_source": "csv",
    "sha256": "0c987a88193e90c89a88a9dbeaba6844f5f24d00b728683338e2ace1476509a7",
    "size": 2342
-  },
-  {
-   "architectures": [
-    "Cohere2VisionForConditionalGeneration"
-   ],
-   "model_type": "cohere2_vision",
-   "path": "fixtures/cohere2_vision/CohereLabs__command-a-plus-05-2026-bf16.json",
-   "repo": "CohereLabs/command-a-plus-05-2026-bf16",
-   "repo_source": "filename",
-   "sha256": "7457a9c78b75ff1fca486e3f756fa06eec730517168168b6a1f2539845d62ef2",
-   "size": 4251
-  },
-  {
-   "architectures": [
-    "Cohere2VisionForConditionalGeneration"
-   ],
-   "model_type": "cohere2_vision",
-   "path": "fixtures/cohere2_vision/CohereLabs__command-a-plus-05-2026.json",
-   "repo": "CohereLabs/command-a-plus-05-2026",
-   "repo_source": "filename",
-   "sha256": "7457a9c78b75ff1fca486e3f756fa06eec730517168168b6a1f2539845d62ef2",
-   "size": 4251
   },
   {
    "architectures": [
@@ -754,17 +279,6 @@
   },
   {
    "architectures": [
-    "ColQwen3"
-   ],
-   "model_type": "colqwen3",
-   "path": "fixtures/colqwen3/TomoroAI__tomoro-colqwen3-embed-8b.json",
-   "repo": "TomoroAI/tomoro-colqwen3-embed-8b",
-   "repo_source": "filename",
-   "sha256": "7669fbe8b58df5fba9dcf80a06cc92f77cae7e6d934eef267e1aeb0bec5c68b7",
-   "size": 1726
-  },
-  {
-   "architectures": [
     "Cosmos3EdgeForConditionalGeneration"
    ],
    "model_type": "cosmos3_edge",
@@ -779,165 +293,11 @@
     "Cosmos3ForConditionalGeneration"
    ],
    "model_type": "cosmos3_omni",
-   "path": "fixtures/cosmos3_omni/nvidia__Cosmos3-Nano.json",
-   "repo": "nvidia/Cosmos3-Nano",
-   "repo_source": "filename",
-   "sha256": "c32f2468a54542c21946bc8eab6172b911dcec9a7193a94c023ea2d4073bcda6",
-   "size": 8166
-  },
-  {
-   "architectures": [
-    "Cosmos3ForConditionalGeneration"
-   ],
-   "model_type": "cosmos3_omni",
    "path": "fixtures/cosmos3_omni/nvidia__Cosmos3-Super.json",
    "repo": "nvidia/Cosmos3-Super",
    "repo_source": "csv",
    "sha256": "90510e6522fa44b79413076f0cf49b3c1b78241c53cfaf70ea0095bb7ed611a0",
    "size": 8168
-  },
-  {
-   "architectures": [
-    "DeepseekForCausalLM"
-   ],
-   "model_type": "deepseek",
-   "path": "fixtures/deepseek/deepseek-ai__deepseek-moe-16b-base.json",
-   "repo": "deepseek-ai/deepseek-moe-16b-base",
-   "repo_source": "filename",
-   "sha256": "96acbeee8968ee87c96a6faf36b1a9f754aaa6f7a1c000d0d2f7b8078f1913b3",
-   "size": 1074
-  },
-  {
-   "architectures": [
-    "DeepseekV2ForCausalLM"
-   ],
-   "model_type": "deepseek_v2",
-   "path": "fixtures/deepseek_v2/deepseek-ai__DeepSeek-V2-Chat.json",
-   "repo": "deepseek-ai/DeepSeek-V2-Chat",
-   "repo_source": "filename",
-   "sha256": "36f572d2909bd108d73a814c585fd61afd56266960a13eb67c713e229d3435d1",
-   "size": 1540
-  },
-  {
-   "architectures": [
-    "DeepseekV2ForCausalLM"
-   ],
-   "model_type": "deepseek_v2",
-   "path": "fixtures/deepseek_v2/deepseek-ai__DeepSeek-V2-Lite-Chat.json",
-   "repo": "deepseek-ai/DeepSeek-V2-Lite-Chat",
-   "repo_source": "filename",
-   "sha256": "f346286b0f1c8b044252fd54cb4fa78b9fab6472a6e8bebb9edfe03d414ea03d",
-   "size": 1522
-  },
-  {
-   "architectures": [
-    "DeepseekV2ForCausalLM"
-   ],
-   "model_type": "deepseek_v2",
-   "path": "fixtures/deepseek_v2/deepseek-ai__DeepSeek-V2.json",
-   "repo": "deepseek-ai/DeepSeek-V2",
-   "repo_source": "filename",
-   "sha256": "36f572d2909bd108d73a814c585fd61afd56266960a13eb67c713e229d3435d1",
-   "size": 1540
-  },
-  {
-   "architectures": [
-    "DeepseekV3ForCausalLM"
-   ],
-   "model_type": "deepseek_v3",
-   "path": "fixtures/deepseek_v3/deepseek-ai__DeepSeek-R1.json",
-   "repo": "deepseek-ai/DeepSeek-R1",
-   "repo_source": "filename",
-   "sha256": "79ddea672a62e95d3f0be27be434375538e1988975971cffcf87c96c1de84a65",
-   "size": 1660
-  },
-  {
-   "architectures": [
-    "DeepseekV3ForCausalLM"
-   ],
-   "model_type": "deepseek_v3",
-   "path": "fixtures/deepseek_v3/deepseek-ai__DeepSeek-V3.1.json",
-   "repo": "deepseek-ai/DeepSeek-V3.1",
-   "repo_source": "filename",
-   "sha256": "3e5d192d745758862b0a3e6338ee181991db49933dbbd3185e1bde34944e7bad",
-   "size": 1686
-  },
-  {
-   "architectures": [
-    "DeepseekV3ForCausalLM"
-   ],
-   "model_type": "deepseek_v3",
-   "path": "fixtures/deepseek_v3/deepseek-ai__DeepSeek-V3.json",
-   "repo": "deepseek-ai/DeepSeek-V3",
-   "repo_source": "filename",
-   "sha256": "cbf0b95dc614de208a109bb5fd4e7eed11385e9c68411d2c17db5319443035d9",
-   "size": 1660
-  },
-  {
-   "architectures": [
-    "DeepseekV3ForCausalLM"
-   ],
-   "model_type": "deepseek_v3",
-   "path": "fixtures/deepseek_v3/eagle618__deepseek-v3-random.json",
-   "repo": "eagle618/deepseek-v3-random",
-   "repo_source": "filename",
-   "sha256": "6eebb2c66a2e353f60e876f64730835a56d579f137cd6f9f21d9c297c2979f8e",
-   "size": 1952
-  },
-  {
-   "architectures": [
-    "DeepseekV3ForCausalLM"
-   ],
-   "model_type": "deepseek_v3",
-   "path": "fixtures/deepseek_v3/eagle618__eagle-deepseek-v3-random.json",
-   "repo": "eagle618/eagle-deepseek-v3-random",
-   "repo_source": "filename",
-   "sha256": "4372a3272b302158f4aaa52969872343b3a3a497d9ae09f41639dac693ce7777",
-   "size": 1789
-  },
-  {
-   "architectures": [
-    "DeepseekV3ForCausalLM"
-   ],
-   "model_type": "deepseek_v3",
-   "path": "fixtures/deepseek_v3/luccafong__deepseek_mtp_draft_random.json",
-   "repo": "luccafong/deepseek_mtp_draft_random",
-   "repo_source": "filename",
-   "sha256": "87aacccadf61cfb078b76572e75de46109785428212708855f712f36e350c5fd",
-   "size": 1953
-  },
-  {
-   "architectures": [
-    "DeepseekV3ForCausalLM"
-   ],
-   "model_type": "deepseek_v3",
-   "path": "fixtures/deepseek_v3/luccafong__deepseek_mtp_main_random.json",
-   "repo": "luccafong/deepseek_mtp_main_random",
-   "repo_source": "filename",
-   "sha256": "6eebb2c66a2e353f60e876f64730835a56d579f137cd6f9f21d9c297c2979f8e",
-   "size": 1952
-  },
-  {
-   "architectures": [
-    "DeepseekV32ForCausalLM"
-   ],
-   "model_type": "deepseek_v32",
-   "path": "fixtures/deepseek_v32/deepseek-ai__DeepSeek-V3.2-Exp.json",
-   "repo": "deepseek-ai/DeepSeek-V3.2-Exp",
-   "repo_source": "filename",
-   "sha256": "c7fa8b191e9936d8e6a57d864baab82b792fae16a116416cdd3a75ba76bc5af1",
-   "size": 1552
-  },
-  {
-   "architectures": [
-    "DeepseekV32ForCausalLM"
-   ],
-   "model_type": "deepseek_v32",
-   "path": "fixtures/deepseek_v32/deepseek-ai__DeepSeek-V3.2.json",
-   "repo": "deepseek-ai/DeepSeek-V3.2",
-   "repo_source": "filename",
-   "sha256": "c7fa8b191e9936d8e6a57d864baab82b792fae16a116416cdd3a75ba76bc5af1",
-   "size": 1552
   },
   {
    "architectures": [
@@ -1018,17 +378,6 @@
   },
   {
    "architectures": [
-    "DeepseekVLV2ForCausalLM"
-   ],
-   "model_type": "deepseek_vl_v2",
-   "path": "fixtures/deepseek_vl_v2/Isotr0py__deepseek-vl2-tiny.json",
-   "repo": "Isotr0py/deepseek-vl2-tiny",
-   "repo_source": "filename",
-   "sha256": "8b02491ad17e648eced3a7c05d05ed5b49fff7721254f97c6f6d275ad1c44f26",
-   "size": 2498
-  },
-  {
-   "architectures": [
     "DeepseekOCR2ForCausalLM"
    ],
    "model_type": "deepseek_vl_v2",
@@ -1037,55 +386,6 @@
    "repo_source": "csv",
    "sha256": "e2bb23b49b445f0bfd6eeb978bac9f19a2df82cb38472754e4ae83662d18f845",
    "size": 2588
-  },
-  {
-   "architectures": [
-    "DeepseekOCRForCausalLM"
-   ],
-   "model_type": "deepseek_vl_v2",
-   "path": "fixtures/deepseek_vl_v2/deepseek-ai__DeepSeek-OCR.json",
-   "repo": "deepseek-ai/DeepSeek-OCR",
-   "repo_source": "filename",
-   "sha256": "ac358c28898de6a71e84e0cb959fcc97fcb9c674edae13cd24286c17b90032d8",
-   "size": 2666
-  },
-  {
-   "architectures": null,
-   "model_type": "deepseek_vl_v2",
-   "path": "fixtures/deepseek_vl_v2/deepseek-ai__deepseek-vl2-small.json",
-   "repo": "deepseek-ai/deepseek-vl2-small",
-   "repo_source": "filename",
-   "sha256": "a2fe19266bdc5409d80e01d721c842280d4936e5da5b6210ae11163845ce5ba1",
-   "size": 2073
-  },
-  {
-   "architectures": null,
-   "model_type": "deepseek_vl_v2",
-   "path": "fixtures/deepseek_vl_v2/deepseek-ai__deepseek-vl2-tiny.json",
-   "repo": "deepseek-ai/deepseek-vl2-tiny",
-   "repo_source": "filename",
-   "sha256": "377e10dceb803d9a843d9825d1aa7cba8121c2b825888c632ecf807d0834ce97",
-   "size": 2287
-  },
-  {
-   "architectures": null,
-   "model_type": "deepseek_vl_v2",
-   "path": "fixtures/deepseek_vl_v2/deepseek-ai__deepseek-vl2.json",
-   "repo": "deepseek-ai/deepseek-vl2",
-   "repo_source": "filename",
-   "sha256": "d5dadaf4d41af00d569ac376bf09de4e28324c853b3ae0c7f6fed66f19fdcf8c",
-   "size": 2171
-  },
-  {
-   "architectures": [
-    "DiffusionGemmaForBlockDiffusion"
-   ],
-   "model_type": "diffusion_gemma",
-   "path": "fixtures/diffusion_gemma/RedHatAI__diffusiongemma-26B-A4B-it-FP8-dynamic.json",
-   "repo": "RedHatAI/diffusiongemma-26B-A4B-it-FP8-dynamic",
-   "repo_source": "filename",
-   "sha256": "1e6e043609573eaffd9a5e0c487505cfd8acb99ab52d08f3469a8fe8c3ab756b",
-   "size": 22565
   },
   {
    "architectures": [
@@ -1106,17 +406,6 @@
    "path": "fixtures/domynedge/domyn__Domyn-Edge-Base.json",
    "repo": "domyn/Domyn-Edge-Base",
    "repo_source": "csv",
-   "sha256": "12a4a1dd9939d78c50512dd996e130b62297aba78927c304685ae5d2e8dd377c",
-   "size": 3744
-  },
-  {
-   "architectures": [
-    "DomynEdgeForCausalLM"
-   ],
-   "model_type": "domynedge",
-   "path": "fixtures/domynedge/domyn__Domyn-Edge-SFT.json",
-   "repo": "domyn/Domyn-Edge-SFT",
-   "repo_source": "filename",
    "sha256": "12a4a1dd9939d78c50512dd996e130b62297aba78927c304685ae5d2e8dd377c",
    "size": 3744
   },
@@ -1144,17 +433,6 @@
   },
   {
    "architectures": [
-    "DotsOCRForCausalLM"
-   ],
-   "model_type": "dots_ocr",
-   "path": "fixtures/dots_ocr/rednote-hilab__dots.ocr.json",
-   "repo": "rednote-hilab/dots.ocr",
-   "repo_source": "filename",
-   "sha256": "41d5c9aad72c730bb97062cab7a59cdb1d427eeec0b7a6e2f95e1ee72ad3b498",
-   "size": 1474
-  },
-  {
-   "architectures": [
     "EmbeddingGemma2Model"
    ],
    "model_type": "embedding_gemma2",
@@ -1163,72 +441,6 @@
    "repo_source": "csv",
    "sha256": "b8f1e9931b57fbc054acdb445c41765d55b0074c58d145fa82839941ad1b5bb3",
    "size": 4455
-  },
-  {
-   "architectures": [
-    "Ernie4_5ForCausalLM"
-   ],
-   "model_type": "ernie4_5",
-   "path": "fixtures/ernie4_5/baidu__ERNIE-4.5-0.3B-PT.json",
-   "repo": "baidu/ERNIE-4.5-0.3B-PT",
-   "repo_source": "filename",
-   "sha256": "5918624eab9c56ba3552672a97481bd2743abf2567611caca758df1939935a56",
-   "size": 633
-  },
-  {
-   "architectures": [
-    "Ernie4_5_MoeForCausalLM"
-   ],
-   "model_type": "ernie4_5_moe",
-   "path": "fixtures/ernie4_5_moe/baidu__ERNIE-4.5-21B-A3B-PT.json",
-   "repo": "baidu/ERNIE-4.5-21B-A3B-PT",
-   "repo_source": "filename",
-   "sha256": "7383c7387390746c1fa0327f8cab3d5c6b078a60bbf0841d4f42277eece5a5f6",
-   "size": 936
-  },
-  {
-   "architectures": [
-    "Ernie4_5_MoeForCausalLM"
-   ],
-   "model_type": "ernie4_5_moe",
-   "path": "fixtures/ernie4_5_moe/baidu__ERNIE-4.5-300B-A47B-PT.json",
-   "repo": "baidu/ERNIE-4.5-300B-A47B-PT",
-   "repo_source": "filename",
-   "sha256": "607db524c1233d2687e10df8cb049bcc781a5ba232ee3476553450cf9f5bba75",
-   "size": 935
-  },
-  {
-   "architectures": [
-    "Ernie4_5_VLMoeForConditionalGeneration"
-   ],
-   "model_type": "ernie4_5_moe_vl",
-   "path": "fixtures/ernie4_5_moe_vl/baidu__ERNIE-4.5-VL-28B-A3B-PT.json",
-   "repo": "baidu/ERNIE-4.5-VL-28B-A3B-PT",
-   "repo_source": "filename",
-   "sha256": "16bc6e8c32957a78360dda7dde9b4b63b6641455a0d68090a5e19c9a5ef79a30",
-   "size": 1931
-  },
-  {
-   "architectures": [
-    "Ernie4_5_VLMoeForConditionalGeneration"
-   ],
-   "model_type": "ernie4_5_moe_vl",
-   "path": "fixtures/ernie4_5_moe_vl/baidu__ERNIE-4.5-VL-424B-A47B-PT.json",
-   "repo": "baidu/ERNIE-4.5-VL-424B-A47B-PT",
-   "repo_source": "filename",
-   "sha256": "7c0e1d13fc67022e0b5cdefd3485321f05375c38d7b4c032998e30c9de84e836",
-   "size": 1903
-  },
-  {
-   "architectures": [
-    "Exaone4ForCausalLM"
-   ],
-   "model_type": "exaone4",
-   "path": "fixtures/exaone4/LGAI-EXAONE__EXAONE-4.0-32B.json",
-   "repo": "LGAI-EXAONE/EXAONE-4.0-32B",
-   "repo_source": "filename",
-   "sha256": "8fcfd6fe7e687098d208507575c66b7d51248153bea1c4b74011189ad5a184ba",
-   "size": 2423
   },
   {
    "architectures": [
@@ -1265,127 +477,6 @@
   },
   {
    "architectures": [
-    "FalconForCausalLM"
-   ],
-   "model_type": "falcon",
-   "path": "fixtures/falcon/tiiuae__falcon-40b.json",
-   "repo": "tiiuae/falcon-40b",
-   "repo_source": "filename",
-   "sha256": "0976177b24951f9b0294cf9c79e5fa907530d6e7da4e1def3b187b0714f0f03b",
-   "size": 1046
-  },
-  {
-   "architectures": [
-    "FalconForCausalLM"
-   ],
-   "model_type": "falcon",
-   "path": "fixtures/falcon/tiiuae__falcon-7b.json",
-   "repo": "tiiuae/falcon-7b",
-   "repo_source": "filename",
-   "sha256": "ef0b96fb53bf7627eb115138bdfd36edb5661891816546f41ed91fb80f19ab31",
-   "size": 1048
-  },
-  {
-   "architectures": [
-    "FalconForCausalLM"
-   ],
-   "model_type": "falcon",
-   "path": "fixtures/falcon/tiiuae__falcon-rw-7b.json",
-   "repo": "tiiuae/falcon-rw-7b",
-   "repo_source": "filename",
-   "sha256": "a0c7fc7aed9d2dd598d1369edc05bd8f68d8dcca82e3c73cd4422fd88613f456",
-   "size": 1046
-  },
-  {
-   "architectures": [
-    "FalconH1ForCausalLM"
-   ],
-   "model_type": "falcon_h1",
-   "path": "fixtures/falcon_h1/tiiuae__Falcon-H1-0.5B-Base.json",
-   "repo": "tiiuae/Falcon-H1-0.5B-Base",
-   "repo_source": "filename",
-   "sha256": "73d036cc5e36429ba554c9e6d553571c0042af137e070380818980a7ef02b1ff",
-   "size": 1584
-  },
-  {
-   "architectures": [
-    "FalconH1ForCausalLM"
-   ],
-   "model_type": "falcon_h1",
-   "path": "fixtures/falcon_h1/tiiuae__Falcon-H1-34B-Base.json",
-   "repo": "tiiuae/Falcon-H1-34B-Base",
-   "repo_source": "filename",
-   "sha256": "156d23cf8c31a19d1951fb530ce703441b8dba7002af7f6185d26a9d191b1a2f",
-   "size": 1601
-  },
-  {
-   "architectures": [
-    "FalconH1ForCausalLM"
-   ],
-   "model_type": "falcon_h1",
-   "path": "fixtures/falcon_h1/tiiuae__Falcon-H1-34B-Instruct.json",
-   "repo": "tiiuae/Falcon-H1-34B-Instruct",
-   "repo_source": "filename",
-   "sha256": "156d23cf8c31a19d1951fb530ce703441b8dba7002af7f6185d26a9d191b1a2f",
-   "size": 1601
-  },
-  {
-   "architectures": [
-    "FalconMambaForCausalLM"
-   ],
-   "model_type": "falcon_mamba",
-   "path": "fixtures/falcon_mamba/tiiuae__falcon-mamba-7b-instruct.json",
-   "repo": "tiiuae/falcon-mamba-7b-instruct",
-   "repo_source": "filename",
-   "sha256": "b588a09876a43945bbfb56aacfeadb23985def98925efa1a0d072ccdd0bc54c1",
-   "size": 870
-  },
-  {
-   "architectures": [
-    "FalconMambaForCausalLM"
-   ],
-   "model_type": "falcon_mamba",
-   "path": "fixtures/falcon_mamba/tiiuae__falcon-mamba-7b.json",
-   "repo": "tiiuae/falcon-mamba-7b",
-   "repo_source": "filename",
-   "sha256": "08ec4cda33510a27a3a8cd760d27086bbab0c27a3773583f17f9b61bb8016298",
-   "size": 822
-  },
-  {
-   "architectures": [
-    "FlexOlmoForCausalLM"
-   ],
-   "model_type": "flex_olmo",
-   "path": "fixtures/flex_olmo/allenai__Flex-reddit-2x7B-1T.json",
-   "repo": "allenai/Flex-reddit-2x7B-1T",
-   "repo_source": "filename",
-   "sha256": "5747a66a3277d6b7c76bd0df7cab03c656640246d62aa846c5f39b024e1e48dd",
-   "size": 796
-  },
-  {
-   "architectures": [
-    "FlexOlmoForCausalLM"
-   ],
-   "model_type": "flex_olmo",
-   "path": "fixtures/flex_olmo/allenai__FlexOlmo-7x7B-1T-RT.json",
-   "repo": "allenai/FlexOlmo-7x7B-1T-RT",
-   "repo_source": "filename",
-   "sha256": "2906312a8d9aa0388c7ed8afed941bca64962bf834ae8f8f2fa0d6ed4a7f5238",
-   "size": 765
-  },
-  {
-   "architectures": [
-    "FlexOlmoForCausalLM"
-   ],
-   "model_type": "flex_olmo",
-   "path": "fixtures/flex_olmo/allenai__FlexOlmo-7x7B-1T.json",
-   "repo": "allenai/FlexOlmo-7x7B-1T",
-   "repo_source": "filename",
-   "sha256": "ea66b747b6022cc865bc1f4d1356ddc579ffe9b3b24c91b7d9304e4d8785dcb3",
-   "size": 791
-  },
-  {
-   "architectures": [
     "FlintForCausalLM"
    ],
    "model_type": "flint",
@@ -1394,28 +485,6 @@
    "repo_source": "csv",
    "sha256": "a57c33d11f725099105b657043c113149763066d204fd472d0b2ee399abc2ba7",
    "size": 2451
-  },
-  {
-   "architectures": [
-    "GemmaForCausalLM"
-   ],
-   "model_type": "gemma",
-   "path": "fixtures/gemma/BAAI__bge-reranker-v2-gemma.json",
-   "repo": "BAAI/bge-reranker-v2-gemma",
-   "repo_source": "filename",
-   "sha256": "15a1d64fb1c3b7f89de903384fba1318dd83ce8a20928577eddacb859c5ee1b2",
-   "size": 659
-  },
-  {
-   "architectures": [
-    "Gemma2Model"
-   ],
-   "model_type": "gemma2",
-   "path": "fixtures/gemma2/BAAI__bge-multilingual-gemma2.json",
-   "repo": "BAAI/bge-multilingual-gemma2",
-   "repo_source": "filename",
-   "sha256": "d9170a7dc5ac43b82c8e4f321f182e844d510a867fcc782bc0c1351304c959c7",
-   "size": 897
   },
   {
    "architectures": [
@@ -1463,17 +532,6 @@
   },
   {
    "architectures": [
-    "Gemma4AssistantForCausalLM"
-   ],
-   "model_type": "gemma4_assistant",
-   "path": "fixtures/gemma4_assistant/google__gemma-4-E4B-it-assistant.json",
-   "repo": "google/gemma-4-E4B-it-assistant",
-   "repo_source": "filename",
-   "sha256": "13cdf5418e5a89cf951717a953cd11cef4e5c2743c4767e9e5dd72802954f822",
-   "size": 2315
-  },
-  {
-   "architectures": [
     "Gemma4DSparkModel"
    ],
    "model_type": "gemma4_text",
@@ -1496,39 +554,6 @@
   },
   {
    "architectures": [
-    "GlmForCausalLM"
-   ],
-   "model_type": "glm",
-   "path": "fixtures/glm/zai-org__glm-4-9b-chat-hf.json",
-   "repo": "zai-org/glm-4-9b-chat-hf",
-   "repo_source": "filename",
-   "sha256": "8ec64bc0dff4835a800b9eceb059e2b8263f783c898812175aa1ccdda074f596",
-   "size": 661
-  },
-  {
-   "architectures": [
-    "Glm4ForCausalLM"
-   ],
-   "model_type": "glm4",
-   "path": "fixtures/glm4/zai-org__GLM-4-32B-0414.json",
-   "repo": "zai-org/GLM-4-32B-0414",
-   "repo_source": "filename",
-   "sha256": "d39fa377eb7e712d0ba5934d54a30dc6ab7c25b44a515d4a435f3956dcad07e2",
-   "size": 690
-  },
-  {
-   "architectures": [
-    "Glm4ForCausalLM"
-   ],
-   "model_type": "glm4",
-   "path": "fixtures/glm4/zai-org__GLM-4-9B-0414.json",
-   "repo": "zai-org/GLM-4-9B-0414",
-   "repo_source": "filename",
-   "sha256": "98794d8150da03ca7baec63208584810d01caf43427e376071c00e770f4b4fa7",
-   "size": 689
-  },
-  {
-   "architectures": [
     "Glm4MoeForCausalLM"
    ],
    "model_type": "glm4_moe",
@@ -1548,39 +573,6 @@
    "repo_source": "csv",
    "sha256": "dc9b97c7c9bed726a2e6939da4234d5c43abb3edec8812068c9a1af1dbc13acb",
    "size": 1070
-  },
-  {
-   "architectures": [
-    "Glm4vForConditionalGeneration"
-   ],
-   "model_type": "glm4v",
-   "path": "fixtures/glm4v/zai-org__GLM-4.1V-9B-Thinking.json",
-   "repo": "zai-org/GLM-4.1V-9B-Thinking",
-   "repo_source": "filename",
-   "sha256": "141e15cb74afaca3d870970ed405c4bab0f93a3fa46cfab70782b91f5dd526f4",
-   "size": 1530
-  },
-  {
-   "architectures": [
-    "Glm4vForConditionalGeneration"
-   ],
-   "model_type": "glm4v",
-   "path": "fixtures/glm4v/zai-org__GLM-4.6V-Flash.json",
-   "repo": "zai-org/GLM-4.6V-Flash",
-   "repo_source": "filename",
-   "sha256": "ef88f66ef623085cd86f5fd14bd6647a0b7175b9a25773049b82611d4ac82181",
-   "size": 1580
-  },
-  {
-   "architectures": [
-    "Glm4vMoeForConditionalGeneration"
-   ],
-   "model_type": "glm4v_moe",
-   "path": "fixtures/glm4v_moe/zai-org__GLM-4.5V.json",
-   "repo": "zai-org/GLM-4.5V",
-   "repo_source": "filename",
-   "sha256": "fb303ae2ac9227984e4eb098cd82df32140f59853ef4a787364e7cb6496417ff",
-   "size": 1848
   },
   {
    "architectures": [
@@ -1628,226 +620,6 @@
   },
   {
    "architectures": [
-    "GPT2ForSequenceClassification"
-   ],
-   "model_type": "gpt2",
-   "path": "fixtures/gpt2/nie3e__sentiment-polish-gpt2-small.json",
-   "repo": "nie3e/sentiment-polish-gpt2-small",
-   "repo_source": "filename",
-   "sha256": "83370b3788f8b3fbb2b1cf3191f850607e7d54a040c17a6a896ac2d52eb582cb",
-   "size": 1110
-  },
-  {
-   "architectures": [
-    "GPT2LMHeadModel"
-   ],
-   "model_type": "gpt2",
-   "path": "fixtures/gpt2/openai-community__gpt2-xl.json",
-   "repo": "openai-community/gpt2-xl",
-   "repo_source": "filename",
-   "sha256": "be48115d52314bc27327e160bf10197760db02ea689d10adb24db4102edf7a8a",
-   "size": 689
-  },
-  {
-   "architectures": [
-    "GPT2LMHeadModel"
-   ],
-   "model_type": "gpt2",
-   "path": "fixtures/gpt2/openai-community__gpt2.json",
-   "repo": "openai-community/gpt2",
-   "repo_source": "filename",
-   "sha256": "0daed7749b4f02b8f76240d5444551d7b08712dab4d0adb8239c56ba823bb7b4",
-   "size": 665
-  },
-  {
-   "architectures": [
-    "GPTBigCodeForCausalLM"
-   ],
-   "model_type": "gpt_bigcode",
-   "path": "fixtures/gpt_bigcode/WizardLM__WizardCoder-15B-V1.0.json",
-   "repo": "WizardLM/WizardCoder-15B-V1.0",
-   "repo_source": "filename",
-   "sha256": "88bc9c070284da5cee4e2cdd2e7bee87f2326f9660ebad06949a96f173d73fd7",
-   "size": 997
-  },
-  {
-   "architectures": [
-    "GPTBigCodeForCausalLM"
-   ],
-   "model_type": "gpt_bigcode",
-   "path": "fixtures/gpt_bigcode/bigcode__gpt_bigcode-santacoder.json",
-   "repo": "bigcode/gpt_bigcode-santacoder",
-   "repo_source": "filename",
-   "sha256": "567c4837dd779a2e313a09de2304156516e8d19213b1f227f06045eafcae4136",
-   "size": 812
-  },
-  {
-   "architectures": [
-    "GPTBigCodeForCausalLM"
-   ],
-   "model_type": "gpt_bigcode",
-   "path": "fixtures/gpt_bigcode/bigcode__tiny_starcoder_py.json",
-   "repo": "bigcode/tiny_starcoder_py",
-   "repo_source": "filename",
-   "sha256": "5961dd4e9a1f649c509cee1a4936cda489b165dc38b33127d39623a8f13490a5",
-   "size": 1030
-  },
-  {
-   "architectures": [
-    "GPTNeoXForCausalLM"
-   ],
-   "model_type": "gpt_neox",
-   "path": "fixtures/gpt_neox/EleutherAI__gpt-neox-20b.json",
-   "repo": "EleutherAI/gpt-neox-20b",
-   "repo_source": "filename",
-   "sha256": "0c13687d6cfccbe23d0cc980a31605c180e3e93145bfc0192468f0e37cc418be",
-   "size": 613
-  },
-  {
-   "architectures": [
-    "GPTNeoXForCausalLM"
-   ],
-   "model_type": "gpt_neox",
-   "path": "fixtures/gpt_neox/EleutherAI__pythia-1.4b.json",
-   "repo": "EleutherAI/pythia-1.4b",
-   "repo_source": "filename",
-   "sha256": "6ea552aa42b7437f019ccdd30b7c9b83a32dccb5170ce31b9ddbe94d00f4671c",
-   "size": 570
-  },
-  {
-   "architectures": [
-    "GPTNeoXForCausalLM"
-   ],
-   "model_type": "gpt_neox",
-   "path": "fixtures/gpt_neox/EleutherAI__pythia-12b.json",
-   "repo": "EleutherAI/pythia-12b",
-   "repo_source": "filename",
-   "sha256": "0209f3579c4f3fadb715aa63d6e40f4a2dd17ee0369aea7833298582bfc97e3c",
-   "size": 571
-  },
-  {
-   "architectures": [
-    "GPTNeoXForCausalLM"
-   ],
-   "model_type": "gpt_neox",
-   "path": "fixtures/gpt_neox/EleutherAI__pythia-70m.json",
-   "repo": "EleutherAI/pythia-70m",
-   "repo_source": "filename",
-   "sha256": "002050231a9b1ec3ac77aa6b9b3bbdc4d923f4068a7dd33b8da72a9bd6ad9a43",
-   "size": 567
-  },
-  {
-   "architectures": [
-    "GPTNeoXForCausalLM"
-   ],
-   "model_type": "gpt_neox",
-   "path": "fixtures/gpt_neox/OpenAssistant__oasst-sft-4-pythia-12b-epoch-3.5.json",
-   "repo": "OpenAssistant/oasst-sft-4-pythia-12b-epoch-3.5",
-   "repo_source": "filename",
-   "sha256": "c9e0a500381e196880096d2da4d515b6a9273125a93f27c3460f964250495596",
-   "size": 661
-  },
-  {
-   "architectures": [
-    "GptOssForCausalLM"
-   ],
-   "model_type": "gpt_oss",
-   "path": "fixtures/gpt_oss/lmsys__gpt-oss-20b-bf16.json",
-   "repo": "lmsys/gpt-oss-20b-bf16",
-   "repo_source": "filename",
-   "sha256": "3fc19f9305de1ee30663f36d934ecd528107c54bfa5e9bb89435fe5981ad6d05",
-   "size": 1592
-  },
-  {
-   "architectures": [
-    "GptOssForCausalLM"
-   ],
-   "model_type": "gpt_oss",
-   "path": "fixtures/gpt_oss/openai__gpt-oss-120b.json",
-   "repo": "openai/gpt-oss-120b",
-   "repo_source": "filename",
-   "sha256": "933aeb666a3fd851133ddd7686414f369bc564c4185fb5704416550879f10566",
-   "size": 2089
-  },
-  {
-   "architectures": [
-    "GptOssForCausalLM"
-   ],
-   "model_type": "gpt_oss",
-   "path": "fixtures/gpt_oss/openai__gpt-oss-20b.json",
-   "repo": "openai/gpt-oss-20b",
-   "repo_source": "filename",
-   "sha256": "3a2a26ded679375b7928ddeca59764df7cea83220c1961035f6d6e232659e9ce",
-   "size": 1806
-  },
-  {
-   "architectures": [
-    "GPTJForCausalLM"
-   ],
-   "model_type": "gptj",
-   "path": "fixtures/gptj/EleutherAI__gpt-j-6b.json",
-   "repo": "EleutherAI/gpt-j-6b",
-   "repo_source": "filename",
-   "sha256": "9328fc6e157f344fbbcd8c605a876c1fe2f7441a40a00c3046f4e8f99ab619e6",
-   "size": 930
-  },
-  {
-   "architectures": [
-    "GPTJForCausalLM"
-   ],
-   "model_type": "gptj",
-   "path": "fixtures/gptj/Milos__slovak-gpt-j-405M.json",
-   "repo": "Milos/slovak-gpt-j-405M",
-   "repo_source": "filename",
-   "sha256": "6b1744f72acc44395524135b339e0a51fd0ea2f1522141b9021fc7f7095cad4f",
-   "size": 836
-  },
-  {
-   "architectures": [
-    "GPTJForCausalLM"
-   ],
-   "model_type": "gptj",
-   "path": "fixtures/gptj/nomic-ai__gpt4all-j.json",
-   "repo": "nomic-ai/gpt4all-j",
-   "repo_source": "filename",
-   "sha256": "1a7977ca2297f73521b70b2d4ced77aec25b8ab874173dfeffac408518387314",
-   "size": 1002
-  },
-  {
-   "architectures": [
-    "GraniteForCausalLM"
-   ],
-   "model_type": "granite",
-   "path": "fixtures/granite/ibm-granite__granite-3.0-2b-base.json",
-   "repo": "ibm-granite/granite-3.0-2b-base",
-   "repo_source": "filename",
-   "sha256": "9b361105866d40d79220e663fa303719af7ec4780e07fb3876d2f5fae408b89f",
-   "size": 756
-  },
-  {
-   "architectures": [
-    "GraniteForCausalLM"
-   ],
-   "model_type": "granite",
-   "path": "fixtures/granite/ibm-granite__granite-3.1-8b-instruct.json",
-   "repo": "ibm-granite/granite-3.1-8b-instruct",
-   "repo_source": "filename",
-   "sha256": "03c19685d37a17a541641fb17fa40ba371d1d892e87334d3068d90e8f296a365",
-   "size": 790
-  },
-  {
-   "architectures": [
-    "GraniteForCausalLM"
-   ],
-   "model_type": "granite",
-   "path": "fixtures/granite/ibm__PowerLM-3b.json",
-   "repo": "ibm/PowerLM-3b",
-   "repo_source": "filename",
-   "sha256": "7a46cefc1ce42466242bdbe466c9af52c42ae32761501602c607e5e11227e879",
-   "size": 755
-  },
-  {
-   "architectures": [
     "Granite4VisionForConditionalGeneration"
    ],
    "model_type": "granite4_vision",
@@ -1856,39 +628,6 @@
    "repo_source": "csv",
    "sha256": "dcff6e9ba19e2b718fcc2a218a008939e5d96e6fdd4f4ca67828b892db43ceaa",
    "size": 3339
-  },
-  {
-   "architectures": [
-    "GraniteSpeechForConditionalGeneration"
-   ],
-   "model_type": "granite_speech",
-   "path": "fixtures/granite_speech/ibm-granite__granite-4.0-1b-speech.json",
-   "repo": "ibm-granite/granite-4.0-1b-speech",
-   "repo_source": "filename",
-   "sha256": "28f340731fbd08cec8f89586682f73d9df4c23e6a7cfd7edc02ba12ae913261e",
-   "size": 2324
-  },
-  {
-   "architectures": [
-    "GraniteSpeechForConditionalGeneration"
-   ],
-   "model_type": "granite_speech",
-   "path": "fixtures/granite_speech/ibm-granite__granite-speech-3.3-2b.json",
-   "repo": "ibm-granite/granite-speech-3.3-2b",
-   "repo_source": "filename",
-   "sha256": "3153bb499e57b9ebaba10dd87da29b6f64c4e4f381e59cf88b6b774916e6af3a",
-   "size": 2413
-  },
-  {
-   "architectures": [
-    "GraniteSpeechForConditionalGeneration"
-   ],
-   "model_type": "granite_speech",
-   "path": "fixtures/granite_speech/ibm-granite__granite-speech-3.3-8b.json",
-   "repo": "ibm-granite/granite-speech-3.3-8b",
-   "repo_source": "filename",
-   "sha256": "fccc1015adec31c417950f95ba37f479a42dfc39452a5f53b440fd7261c6aefc",
-   "size": 2438
   },
   {
    "architectures": [
@@ -1914,39 +653,6 @@
   },
   {
    "architectures": [
-    "GraniteMoeForCausalLM"
-   ],
-   "model_type": "granitemoe",
-   "path": "fixtures/granitemoe/ibm-granite__granite-3.0-1b-a400m-base.json",
-   "repo": "ibm-granite/granite-3.0-1b-a400m-base",
-   "repo_source": "filename",
-   "sha256": "d281b6413c613a618863dc613f50a17fc4460a2a9882cf9c8e77c8329280c062",
-   "size": 861
-  },
-  {
-   "architectures": [
-    "GraniteMoeForCausalLM"
-   ],
-   "model_type": "granitemoe",
-   "path": "fixtures/granitemoe/ibm-granite__granite-3.0-3b-a800m-instruct.json",
-   "repo": "ibm-granite/granite-3.0-3b-a800m-instruct",
-   "repo_source": "filename",
-   "sha256": "bb3e856a8761c4e6a6cbaacd7674f99f848f83069c326abec8481d0a6700d929",
-   "size": 890
-  },
-  {
-   "architectures": [
-    "GraniteMoeForCausalLM"
-   ],
-   "model_type": "granitemoe",
-   "path": "fixtures/granitemoe/ibm__PowerMoE-3b.json",
-   "repo": "ibm/PowerMoE-3b",
-   "repo_source": "filename",
-   "sha256": "c1ab33e5e331b17da2f9e226f8e8ff499bd8e9fcf41ce7a0da5bca519745d65f",
-   "size": 928
-  },
-  {
-   "architectures": [
     "GraniteMoeSWAForCausalLM"
    ],
    "model_type": "granitemoe_swa",
@@ -1955,61 +661,6 @@
    "repo_source": "csv",
    "sha256": "4fe1db27b5f72553fa0ee8e257e47ce27da78cae2b2c775e15bb1c3a9ffdbd99",
    "size": 1714
-  },
-  {
-   "architectures": [
-    "GraniteMoeHybridForCausalLM"
-   ],
-   "model_type": "granitemoehybrid",
-   "path": "fixtures/granitemoehybrid/ibm-granite__granite-4.0-tiny-preview.json",
-   "repo": "ibm-granite/granite-4.0-tiny-preview",
-   "repo_source": "filename",
-   "sha256": "5f2b5b449c7425041f2988d111e6baf2815f4cfca06ce12bc0f8ac951d775e9e",
-   "size": 1803
-  },
-  {
-   "architectures": [
-    "GraniteMoeSharedForCausalLM"
-   ],
-   "model_type": "granitemoeshared",
-   "path": "fixtures/granitemoeshared/ibm-research__moe-7b-1b-active-shared-experts.json",
-   "repo": "ibm-research/moe-7b-1b-active-shared-experts",
-   "repo_source": "filename",
-   "sha256": "77f66fdadc36f5b40dcdda7aac6015ea7559af175b08c54a83476e9c9b47168e",
-   "size": 901
-  },
-  {
-   "architectures": [
-    "GteModel"
-   ],
-   "model_type": "gte",
-   "path": "fixtures/gte/Snowflake__snowflake-arctic-embed-m-v2.0.json",
-   "repo": "Snowflake/snowflake-arctic-embed-m-v2.0",
-   "repo_source": "filename",
-   "sha256": "2e0b386e7a826903b06c301f8d4dde2ac6279f7ccd3ea11f3911019a1ee0bc05",
-   "size": 971
-  },
-  {
-   "architectures": [
-    "H2OVLChatModel"
-   ],
-   "model_type": "h2ovl_chat",
-   "path": "fixtures/h2ovl_chat/h2oai__h2ovl-mississippi-2b.json",
-   "repo": "h2oai/h2ovl-mississippi-2b",
-   "repo_source": "filename",
-   "sha256": "dce743407b4813187b835b92338ec68b1017174c741e166a680409ca17818373",
-   "size": 3611
-  },
-  {
-   "architectures": [
-    "H2OVLChatModel"
-   ],
-   "model_type": "h2ovl_chat",
-   "path": "fixtures/h2ovl_chat/h2oai__h2ovl-mississippi-800m.json",
-   "repo": "h2oai/h2ovl-mississippi-800m",
-   "repo_source": "filename",
-   "sha256": "d8d28ba0f126065475355f9df5d376e8f8e9b90665a1a603fd24c2a72b2cc137",
-   "size": 4088
   },
   {
    "architectures": [
@@ -2024,50 +675,6 @@
   },
   {
    "architectures": [
-    "HunYuanMoEV1ForCausalLM"
-   ],
-   "model_type": "hunyuan",
-   "path": "fixtures/hunyuan/tencent__Hunyuan-A13B-Instruct-FP8.json",
-   "repo": "tencent/Hunyuan-A13B-Instruct-FP8",
-   "repo_source": "filename",
-   "sha256": "cb348c8d7ad42c34a07bfeb581802c2b49138a868773b242a0cc07f077b726c1",
-   "size": 3490
-  },
-  {
-   "architectures": [
-    "HunYuanMoEV1ForCausalLM"
-   ],
-   "model_type": "hunyuan",
-   "path": "fixtures/hunyuan/tencent__Hunyuan-A13B-Pretrain.json",
-   "repo": "tencent/Hunyuan-A13B-Pretrain",
-   "repo_source": "filename",
-   "sha256": "b62b8a8bd7a45afad1561350953b133b510126ea1a85b95656d0371209484b33",
-   "size": 3350
-  },
-  {
-   "architectures": [
-    "HunYuanDenseV1ForCausalLM"
-   ],
-   "model_type": "hunyuan_v1_dense",
-   "path": "fixtures/hunyuan_v1_dense/tencent__Hunyuan-7B-Instruct.json",
-   "repo": "tencent/Hunyuan-7B-Instruct",
-   "repo_source": "filename",
-   "sha256": "8c8192aca763cc6246aa4cb196cc1d27a79f6403fe6093b31c77abc3ff753ee8",
-   "size": 1369
-  },
-  {
-   "architectures": [
-    "HunYuanMoEV1ForCausalLM"
-   ],
-   "model_type": "hunyuan_v1_moe",
-   "path": "fixtures/hunyuan_v1_moe/tencent__Hunyuan-A13B-Instruct.json",
-   "repo": "tencent/Hunyuan-A13B-Instruct",
-   "repo_source": "filename",
-   "sha256": "5fb4af8fa99a28c0bfd1ae009b9488acb2c4365956ffab472c38ae2c1a3d378e",
-   "size": 3376
-  },
-  {
-   "architectures": [
     "HunYuanVLForConditionalGeneration"
    ],
    "model_type": "hunyuan_vl",
@@ -2076,28 +683,6 @@
    "repo_source": "csv",
    "sha256": "14aeb192e94fbe9c3ec71fb7ed003955397be08eb4b345dd7b923549798b60ba",
    "size": 2233
-  },
-  {
-   "architectures": [
-    "HYV3ForCausalLM"
-   ],
-   "model_type": "hy_v3",
-   "path": "fixtures/hy_v3/tencent__Hy3-FP8.json",
-   "repo": "tencent/Hy3-FP8",
-   "repo_source": "filename",
-   "sha256": "e5985b845821d03b1d5199303b32d8682f60fdee9b612037c71e8e6119a96fa8",
-   "size": 1419
-  },
-  {
-   "architectures": [
-    "HYV3ForCausalLM"
-   ],
-   "model_type": "hy_v3",
-   "path": "fixtures/hy_v3/tencent__Hy3-preview-Base.json",
-   "repo": "tencent/Hy3-preview-Base",
-   "repo_source": "filename",
-   "sha256": "66b99ed5f2872d5fe0499be915d36db0bf45453f720267a521f691d291e06432",
-   "size": 1064
   },
   {
    "architectures": [
@@ -2120,17 +705,6 @@
    "repo_source": "csv",
    "sha256": "0c9daab42bff9cce1b6f058b10d7b730f76d583e583e28ad56e92b36373246f0",
    "size": 1218
-  },
-  {
-   "architectures": [
-    "HYV4ForCausalLM"
-   ],
-   "model_type": "hy_v4",
-   "path": "fixtures/hy_v4/tencent__Hy4-preview-FP8.json",
-   "repo": "tencent/Hy4-preview-FP8",
-   "repo_source": "filename",
-   "sha256": "8f08e75af6c46578a6fc93883b4446189c67cc8b6ff47f20a51c43cd3dd9d6d4",
-   "size": 22895
   },
   {
    "architectures": [
@@ -2167,39 +741,6 @@
   },
   {
    "architectures": [
-    "Idefics3ForConditionalGeneration"
-   ],
-   "model_type": "idefics3",
-   "path": "fixtures/idefics3/HuggingFaceM4__Idefics3-8B-Llama3.json",
-   "repo": "HuggingFaceM4/Idefics3-8B-Llama3",
-   "repo_source": "filename",
-   "sha256": "943fff826c989b00d8646dc4d46b1ed5a1342bc4369760fa31fc82531a45c52f",
-   "size": 7185
-  },
-  {
-   "architectures": [
-    "Idefics3ForConditionalGeneration"
-   ],
-   "model_type": "idefics3",
-   "path": "fixtures/idefics3/HuggingFaceTB__SmolVLM-256M-Instruct.json",
-   "repo": "HuggingFaceTB/SmolVLM-256M-Instruct",
-   "repo_source": "filename",
-   "sha256": "b70fb4bfde88df9eeebc9d8ff523733b8bf70d6c9b06c610325960e06ae9db52",
-   "size": 7353
-  },
-  {
-   "architectures": [
-    "IlamaForCausalLM"
-   ],
-   "model_type": "ilama",
-   "path": "fixtures/ilama/hmellor__Ilama-3.2-1B.json",
-   "repo": "hmellor/Ilama-3.2-1B",
-   "repo_source": "filename",
-   "sha256": "5ec48a2d018b6312f3d968b90f6a7dd2d95bc5a60e8274dac3fde5dfe7610b5b",
-   "size": 1019
-  },
-  {
-   "architectures": [
     "InklingForConditionalGeneration"
    ],
    "model_type": "inkling_mm_model",
@@ -2233,83 +774,6 @@
   },
   {
    "architectures": [
-    "InternLM2ForRewardModel"
-   ],
-   "model_type": "internlm2",
-   "path": "fixtures/internlm2/internlm__internlm2-1_8b-reward.json",
-   "repo": "internlm/internlm2-1_8b-reward",
-   "repo_source": "filename",
-   "sha256": "a50c39e11d22fb4250c2fa82724dbd59c8b2b1885fa85ca4565b4f710dc0c957",
-   "size": 813
-  },
-  {
-   "architectures": [
-    "InternLM2ForRewardModel"
-   ],
-   "model_type": "internlm2",
-   "path": "fixtures/internlm2/internlm__internlm2-7b-reward.json",
-   "repo": "internlm/internlm2-7b-reward",
-   "repo_source": "filename",
-   "sha256": "995bd81a2ab0a9f0377b713eac979119ccf22e2775fc37cdaae3ed322bea09c4",
-   "size": 814
-  },
-  {
-   "architectures": [
-    "InternLM2ForCausalLM"
-   ],
-   "model_type": "internlm2",
-   "path": "fixtures/internlm2/internlm__internlm2-7b.json",
-   "repo": "internlm/internlm2-7b",
-   "repo_source": "filename",
-   "sha256": "4370f2f011a54dac704297093b8501f0f59917e61f45461f9bdc2839211e9359",
-   "size": 840
-  },
-  {
-   "architectures": [
-    "InternLM2ForCausalLM"
-   ],
-   "model_type": "internlm2",
-   "path": "fixtures/internlm2/internlm__internlm2-chat-7b.json",
-   "repo": "internlm/internlm2-chat-7b",
-   "repo_source": "filename",
-   "sha256": "3797dfe1ee8e1b7060f8cb70f32ab9445774c8fc7f352a910e160304304ce153",
-   "size": 916
-  },
-  {
-   "architectures": [
-    "InternLM3ForCausalLM"
-   ],
-   "model_type": "internlm3",
-   "path": "fixtures/internlm3/internlm__internlm3-8b-instruct.json",
-   "repo": "internlm/internlm3-8b-instruct",
-   "repo_source": "filename",
-   "sha256": "e1d88b33517b569d39ccb6730548f6eea9adb5dac892d5db74b78f670c0a7471",
-   "size": 1010
-  },
-  {
-   "architectures": [
-    "InternS1ForConditionalGeneration"
-   ],
-   "model_type": "interns1",
-   "path": "fixtures/interns1/internlm__Intern-S1-mini.json",
-   "repo": "internlm/Intern-S1-mini",
-   "repo_source": "filename",
-   "sha256": "0408f0dad7f003be4eeb60625a4ec0d157f5fd5ee2d51c94b16d27af37734cb1",
-   "size": 2398
-  },
-  {
-   "architectures": [
-    "InternS1ForConditionalGeneration"
-   ],
-   "model_type": "interns1",
-   "path": "fixtures/interns1/internlm__Intern-S1.json",
-   "repo": "internlm/Intern-S1",
-   "repo_source": "filename",
-   "sha256": "c2fb087ac35473abb3e95ee41292b2612886c5489da05fc7dfa5da00066584dd",
-   "size": 2621
-  },
-  {
-   "architectures": [
     "InternS1ProForConditionalGeneration"
    ],
    "model_type": "interns1_pro",
@@ -2329,94 +793,6 @@
    "repo_source": "csv",
    "sha256": "c7ad0c527f10af163042bfa272b315458912807eb3492f24a5e6b34e768e7e68",
    "size": 3705
-  },
-  {
-   "architectures": [
-    "InternVLForConditionalGeneration"
-   ],
-   "model_type": "internvl",
-   "path": "fixtures/internvl/OpenGVLab__InternVL3-1B-hf.json",
-   "repo": "OpenGVLab/InternVL3-1B-hf",
-   "repo_source": "filename",
-   "sha256": "7dd610d98f11ea7d37f5086a990eca7df22f0b5d7a36c5dbf41d060b97bdf901",
-   "size": 1958
-  },
-  {
-   "architectures": [
-    "InternVLChatModel"
-   ],
-   "model_type": "internvl_chat",
-   "path": "fixtures/internvl_chat/OpenGVLab__InternVL2-1B.json",
-   "repo": "OpenGVLab/InternVL2-1B",
-   "repo_source": "filename",
-   "sha256": "2e85a81acfc8cbea3dc3cee831e6c4b171d456f30938aef14cf37d5eb2ac00ed",
-   "size": 3732
-  },
-  {
-   "architectures": [
-    "InternVLChatModel"
-   ],
-   "model_type": "internvl_chat",
-   "path": "fixtures/internvl_chat/OpenGVLab__InternVL2-2B.json",
-   "repo": "OpenGVLab/InternVL2-2B",
-   "repo_source": "filename",
-   "sha256": "fbb50f9f529a3360b204370f7243ec1147862043bb0e2cf76d6ae3e8025d82f1",
-   "size": 3928
-  },
-  {
-   "architectures": [
-    "InternVLChatModel"
-   ],
-   "model_type": "internvl_chat",
-   "path": "fixtures/internvl_chat/OpenGVLab__InternVL2_5-4B.json",
-   "repo": "OpenGVLab/InternVL2_5-4B",
-   "repo_source": "filename",
-   "sha256": "625422351ea507e22f25173cd894cb4c578c9c9b6edc52323aed39fb9ed9bfb7",
-   "size": 3737
-  },
-  {
-   "architectures": [
-    "InternVLChatModel"
-   ],
-   "model_type": "internvl_chat",
-   "path": "fixtures/internvl_chat/OpenGVLab__InternVL3-1B.json",
-   "repo": "OpenGVLab/InternVL3-1B",
-   "repo_source": "filename",
-   "sha256": "8a252be385dbef3abf1c58d028ea5116849a33dc7a1601c350c3ee28f202524c",
-   "size": 6326
-  },
-  {
-   "architectures": [
-    "InternVLChatModel"
-   ],
-   "model_type": "internvl_chat",
-   "path": "fixtures/internvl_chat/OpenGVLab__InternVL3-9B.json",
-   "repo": "OpenGVLab/InternVL3-9B",
-   "repo_source": "filename",
-   "sha256": "be2b8b74a06c946c91ebf86ee5688376be6395d1780db6f594d10d607d8b9c3c",
-   "size": 6566
-  },
-  {
-   "architectures": [
-    "InternVLChatModel"
-   ],
-   "model_type": "internvl_chat",
-   "path": "fixtures/internvl_chat/OpenGVLab__InternVL3_5-14B.json",
-   "repo": "OpenGVLab/InternVL3_5-14B",
-   "repo_source": "filename",
-   "sha256": "48ef521cc52788b8d1f15bd66c0ed11c26ee489524bbb8d19dbace3a0ec18d0b",
-   "size": 2482
-  },
-  {
-   "architectures": [
-    "InternVLChatModel"
-   ],
-   "model_type": "internvl_chat",
-   "path": "fixtures/internvl_chat/OpenGVLab__InternVideo2_5_Chat_8B.json",
-   "repo": "OpenGVLab/InternVideo2_5_Chat_8B",
-   "repo_source": "filename",
-   "sha256": "e2be1c6e312b409d1c04e8413d291ba03efe5f7bcf053db26528f62030ee67d6",
-   "size": 5585
   },
   {
    "architectures": [
@@ -2445,66 +821,11 @@
     "IsaacForConditionalGeneration"
    ],
    "model_type": "isaac",
-   "path": "fixtures/isaac/PerceptronAI__Isaac-0.1.json",
-   "repo": "PerceptronAI/Isaac-0.1",
-   "repo_source": "filename",
-   "sha256": "618144bb78d90d88187b0ec2348b0fb887fe72a9fdab7cb2a1a67c32ae3290db",
-   "size": 4230
-  },
-  {
-   "architectures": [
-    "IsaacForConditionalGeneration"
-   ],
-   "model_type": "isaac",
    "path": "fixtures/isaac/PerceptronAI__Isaac-0.2-2B-Preview.json",
    "repo": "PerceptronAI/Isaac-0.2-2B-Preview",
    "repo_source": "csv",
    "sha256": "af9471d874f698b35415f162833005a1b5167af7dc0ee41c709a50bd220987f6",
    "size": 4109
-  },
-  {
-   "architectures": [
-    "JambaForCausalLM"
-   ],
-   "model_type": "jamba",
-   "path": "fixtures/jamba/ai21labs__Jamba-tiny-dev.json",
-   "repo": "ai21labs/Jamba-tiny-dev",
-   "repo_source": "filename",
-   "sha256": "f3d24892949d6e19a4de72d4c0afd7498c47c0ee655cf67f8f651e833297fb51",
-   "size": 1005
-  },
-  {
-   "architectures": [
-    "JambaForCausalLM"
-   ],
-   "model_type": "jamba",
-   "path": "fixtures/jamba/ai21labs__Jamba-tiny-random.json",
-   "repo": "ai21labs/Jamba-tiny-random",
-   "repo_source": "filename",
-   "sha256": "9d9b93aa1c435e89edd159640e1298331b98d28500e4eda902596072f4391ba8",
-   "size": 1050
-  },
-  {
-   "architectures": [
-    "JambaForSequenceClassification"
-   ],
-   "model_type": "jamba",
-   "path": "fixtures/jamba/ai21labs__Jamba-tiny-reward-dev.json",
-   "repo": "ai21labs/Jamba-tiny-reward-dev",
-   "repo_source": "filename",
-   "sha256": "c330028f303f2596268aab227b882f5b6a023056e3e6cf11487c106d60fe0add",
-   "size": 1143
-  },
-  {
-   "architectures": [
-    "JambaForCausalLM"
-   ],
-   "model_type": "jamba",
-   "path": "fixtures/jamba/ai21labs__Jamba-v0.1.json",
-   "repo": "ai21labs/Jamba-v0.1",
-   "repo_source": "filename",
-   "sha256": "98d005b3bdb7b4d3104ed3f8e6e8e45fa484846703012a11010d43aad768e984",
-   "size": 1274
   },
   {
    "architectures": [
@@ -2516,28 +837,6 @@
    "repo_source": "csv",
    "sha256": "1af1e1269488c83d8b2332e42099f0d2201d687fbe074d1ed096c6201f283546",
    "size": 991
-  },
-  {
-   "architectures": [
-    "K2HorizonForCausalLM"
-   ],
-   "model_type": "k2_horizon",
-   "path": "fixtures/k2_horizon/IFM__K2-Horizon-36B.json",
-   "repo": "IFM/K2-Horizon-36B",
-   "repo_source": "filename",
-   "sha256": "1d8fe85082f5ff707c9e53ddd3c229b9c0fd12ec0066fa672baa1c13a274fc0d",
-   "size": 1509
-  },
-  {
-   "architectures": [
-    "K2HorizonForCausalLM"
-   ],
-   "model_type": "k2_horizon",
-   "path": "fixtures/k2_horizon/IFM__K2-Horizon-375B.json",
-   "repo": "IFM/K2-Horizon-375B",
-   "repo_source": "filename",
-   "sha256": "0daf184082ec39c3b24c5da6fcd5739f3176f0ad2c9e21fddaaea24b7400a583",
-   "size": 1503
   },
   {
    "architectures": [
@@ -2599,55 +898,11 @@
     "KimiLinearForCausalLM"
    ],
    "model_type": "kimi_linear",
-   "path": "fixtures/kimi_linear/moonshotai__Kimi-Linear-48B-A3B-Base.json",
-   "repo": "moonshotai/Kimi-Linear-48B-A3B-Base",
-   "repo_source": "filename",
-   "sha256": "732c453928a14df15ad7b7bf8c626a02236d10eee80ce63a36aa05df73bc17eb",
-   "size": 1751
-  },
-  {
-   "architectures": [
-    "KimiLinearForCausalLM"
-   ],
-   "model_type": "kimi_linear",
    "path": "fixtures/kimi_linear/moonshotai__Kimi-Linear-48B-A3B-Instruct.json",
    "repo": "moonshotai/Kimi-Linear-48B-A3B-Instruct",
    "repo_source": "csv",
    "sha256": "a6ac3c2c4b5aa72370f9727f49ffa4432715d20061889acdb37c688be853096e",
    "size": 1751
-  },
-  {
-   "architectures": [
-    "KimiVLForConditionalGeneration"
-   ],
-   "model_type": "kimi_vl",
-   "path": "fixtures/kimi_vl/moonshotai__Kimi-VL-A3B-Instruct.json",
-   "repo": "moonshotai/Kimi-VL-A3B-Instruct",
-   "repo_source": "filename",
-   "sha256": "af3810295de6b08232776b74110ed482fa0183f4aeaec586ff4f7593910951cb",
-   "size": 2005
-  },
-  {
-   "architectures": [
-    "KimiVLForConditionalGeneration"
-   ],
-   "model_type": "kimi_vl",
-   "path": "fixtures/kimi_vl/moonshotai__Kimi-VL-A3B-Thinking.json",
-   "repo": "moonshotai/Kimi-VL-A3B-Thinking",
-   "repo_source": "filename",
-   "sha256": "af3810295de6b08232776b74110ed482fa0183f4aeaec586ff4f7593910951cb",
-   "size": 2005
-  },
-  {
-   "architectures": [
-    "Kolibri1ForCausalLM"
-   ],
-   "model_type": "kolibri1",
-   "path": "fixtures/kolibri1/Aleph-Alpha__Kolibri-1-BF16.json",
-   "repo": "Aleph-Alpha/Kolibri-1-BF16",
-   "repo_source": "filename",
-   "sha256": "94fbf9e94af02e28d5e11ac65e111f556dba8e308395194923b18287818583a8",
-   "size": 2063
   },
   {
    "architectures": [
@@ -2676,66 +931,11 @@
     "LagunaForCausalLM"
    ],
    "model_type": "laguna",
-   "path": "fixtures/laguna/poolside__Laguna-XS-2.1-NVFP4.json",
-   "repo": "poolside/Laguna-XS-2.1-NVFP4",
-   "repo_source": "filename",
-   "sha256": "8bba8588c6197aa04be89a405a0af640e1914c6323934f7e0860f7cedc528f4e",
-   "size": 6365
-  },
-  {
-   "architectures": [
-    "LagunaForCausalLM"
-   ],
-   "model_type": "laguna",
-   "path": "fixtures/laguna/poolside__Laguna-XS.2-FP8.json",
-   "repo": "poolside/Laguna-XS.2-FP8",
-   "repo_source": "filename",
-   "sha256": "458e520a128d16f50d05fb9a5ab962cb9fce754ecb66813a4e50be25b476db64",
-   "size": 6270
-  },
-  {
-   "architectures": [
-    "LagunaForCausalLM"
-   ],
-   "model_type": "laguna",
    "path": "fixtures/laguna/poolside__Laguna-XS.2.json",
    "repo": "poolside/Laguna-XS.2",
    "repo_source": "csv",
    "sha256": "ea98d58d56f27126ffaf70df77cac7de1c09af448c09a2734cecf5854fc6d86b",
    "size": 3372
-  },
-  {
-   "architectures": [
-    "Lfm2ForCausalLM"
-   ],
-   "model_type": "lfm2",
-   "path": "fixtures/lfm2/LiquidAI__LFM2-1.2B.json",
-   "repo": "LiquidAI/LFM2-1.2B",
-   "repo_source": "filename",
-   "sha256": "55e397257c10a5bb10d4b5bf6013b3cab6d7fb978e7f9533278a9720de6e4556",
-   "size": 1000
-  },
-  {
-   "architectures": [
-    "Lfm2ForCausalLM"
-   ],
-   "model_type": "lfm2",
-   "path": "fixtures/lfm2/LiquidAI__LFM2-350M.json",
-   "repo": "LiquidAI/LFM2-350M",
-   "repo_source": "filename",
-   "sha256": "fd3b3fba4e50e7b9a22bd41cbab59e9b28e319b2de19668d7fd9777c8d1a9ba1",
-   "size": 999
-  },
-  {
-   "architectures": [
-    "Lfm2ForCausalLM"
-   ],
-   "model_type": "lfm2",
-   "path": "fixtures/lfm2/LiquidAI__LFM2-700M.json",
-   "repo": "LiquidAI/LFM2-700M",
-   "repo_source": "filename",
-   "sha256": "2e12f44e97f35b0362ea4f3583db141e8e8cd4adaf4be6614d22682d58693d29",
-   "size": 1000
   },
   {
    "architectures": [
@@ -2761,17 +961,6 @@
   },
   {
    "architectures": [
-    "Lfm2MoeForCausalLM"
-   ],
-   "model_type": "lfm2_moe",
-   "path": "fixtures/lfm2_moe/LiquidAI__LFM2-8B-A1B.json",
-   "repo": "LiquidAI/LFM2-8B-A1B",
-   "repo_source": "filename",
-   "sha256": "3a63e1ee647926ef3c5eabb7d3a4b5feb38ccece9c624679fa34289692464fa4",
-   "size": 1080
-  },
-  {
-   "architectures": [
     "Lfm2VlForConditionalGeneration"
    ],
    "model_type": "lfm2_vl",
@@ -2780,149 +969,6 @@
    "repo_source": "csv",
    "sha256": "7ab5ba7e926eae0365bb0527166bd5bbd73231a9d02f5f78b7e3eef144068f9d",
    "size": 2633
-  },
-  {
-   "architectures": [
-    "Lfm2VlForConditionalGeneration"
-   ],
-   "model_type": "lfm2_vl",
-   "path": "fixtures/lfm2_vl/LiquidAI__LFM2-VL-450M.json",
-   "repo": "LiquidAI/LFM2-VL-450M",
-   "repo_source": "filename",
-   "sha256": "c36da4a990be51f4ea659a66a6d352fe21be55e0def2aadb9f56c6d90f217085",
-   "size": 2326
-  },
-  {
-   "architectures": [
-    "Lfm2VlForConditionalGeneration"
-   ],
-   "model_type": "lfm2_vl",
-   "path": "fixtures/lfm2_vl/LiquidAI__d1-3B.json",
-   "repo": "LiquidAI/d1-3B",
-   "repo_source": "filename",
-   "sha256": "0cbac0f580bd8036ef94ac83aa632a57a170e66d20f381ef47c3f6486c9a3e8c",
-   "size": 2773
-  },
-  {
-   "architectures": [
-    "LlamaForCausalLMEagle3"
-   ],
-   "model_type": "llama",
-   "path": "fixtures/llama/AQ-MedAI__Kimi-K25-eagle3.json",
-   "repo": "AQ-MedAI/Kimi-K25-eagle3",
-   "repo_source": "filename",
-   "sha256": "cdb2636bcd525a9030601fbdfdebe77b6373eefa87da89ab41f31437963434c9",
-   "size": 940
-  },
-  {
-   "architectures": [
-    "LlamaForCausalLMEagle3"
-   ],
-   "model_type": "llama",
-   "path": "fixtures/llama/AngelSlim__Qwen3-8B_eagle3.json",
-   "repo": "AngelSlim/Qwen3-8B_eagle3",
-   "repo_source": "filename",
-   "sha256": "360aa6861f74205c9b07dede8325b4638464d077c895f438e4ee20f0b2512dd7",
-   "size": 763
-  },
-  {
-   "architectures": [
-    "LlamaForCausalLM"
-   ],
-   "model_type": "llama",
-   "path": "fixtures/llama/NousResearch__Hermes-3-Llama-3.1-8B.json",
-   "repo": "NousResearch/Hermes-3-Llama-3.1-8B",
-   "repo_source": "filename",
-   "sha256": "7e189a0da074da6a878d5a276336caf3d62c57138f461bc6239402639f1bc6f5",
-   "size": 883
-  },
-  {
-   "architectures": [
-    "LlamaForCausalLMEagle3"
-   ],
-   "model_type": "llama",
-   "path": "fixtures/llama/Rayzl__qwen2.5-vl-7b-eagle3-sgl.json",
-   "repo": "Rayzl/qwen2.5-vl-7b-eagle3-sgl",
-   "repo_source": "filename",
-   "sha256": "cf01ce53a3dff052ee0d3630f43bccbf95e2848057bc673e128af07c4311f076",
-   "size": 950
-  },
-  {
-   "architectures": [
-    "LlamaForSequenceClassification"
-   ],
-   "model_type": "llama",
-   "path": "fixtures/llama/Skywork__Skywork-Reward-V2-Llama-3.2-1B.json",
-   "repo": "Skywork/Skywork-Reward-V2-Llama-3.2-1B",
-   "repo_source": "filename",
-   "sha256": "6997e43a2ab07baf0bea6c8cb6bdc2f406d5deb3051cfb7ed0c32d65603fba46",
-   "size": 991
-  },
-  {
-   "architectures": [
-    "LlamaForCausalLM"
-   ],
-   "model_type": "llama",
-   "path": "fixtures/llama/deepseek-ai__deepseek-llm-67b-base.json",
-   "repo": "deepseek-ai/deepseek-llm-67b-base",
-   "repo_source": "filename",
-   "sha256": "0b902f4620101d223508977572e64eb2be7d86c8b7823c8461447a2f557253a0",
-   "size": 583
-  },
-  {
-   "architectures": [
-    "LlamaForCausalLM"
-   ],
-   "model_type": "llama",
-   "path": "fixtures/llama/deepseek-ai__deepseek-llm-7b-chat.json",
-   "repo": "deepseek-ai/deepseek-llm-7b-chat",
-   "repo_source": "filename",
-   "sha256": "e659937a8435b099bf0778c1cf14e4bf4e01dc3a26b5213a3463c0fc3ec65c4c",
-   "size": 594
-  },
-  {
-   "architectures": [
-    "LlamaForCausalLMEagle3"
-   ],
-   "model_type": "llama",
-   "path": "fixtures/llama/taobao-mnn__Qwen3-VL-8B-Instruct-Eagle3.json",
-   "repo": "taobao-mnn/Qwen3-VL-8B-Instruct-Eagle3",
-   "repo_source": "filename",
-   "sha256": "84be1940608d9d4f29c02f6854f444eed7c57b5a036af29fb8f5e56041786274",
-   "size": 902
-  },
-  {
-   "architectures": [
-    "LlamaForCausalLM"
-   ],
-   "model_type": "llama",
-   "path": "fixtures/llama/yuhuili__EAGLE-LLaMA3-Instruct-8B.json",
-   "repo": "yuhuili/EAGLE-LLaMA3-Instruct-8B",
-   "repo_source": "filename",
-   "sha256": "0403c27c6848cb3aa4a51151f284e2f0fbf790e4c94e08babf1972060f5db4ee",
-   "size": 606
-  },
-  {
-   "architectures": [
-    "LlamaForCausalLM"
-   ],
-   "model_type": "llama",
-   "path": "fixtures/llama/yuhuili__EAGLE3-LLaMA3.1-Instruct-8B.json",
-   "repo": "yuhuili/EAGLE3-LLaMA3.1-Instruct-8B",
-   "repo_source": "filename",
-   "sha256": "5d7879bc4b6abc55169b2fef99b20d36dbaebc30465a45353d98efc5f3e92d8f",
-   "size": 591
-  },
-  {
-   "architectures": [
-    "Llama4ForCausalLM"
-   ],
-   "model_type": "llama4_text",
-   "path": "fixtures/llama4_text/morgendave__EAGLE-Llama-4-Scout-17B-16E-Instruct.json",
-   "repo": "morgendave/EAGLE-Llama-4-Scout-17B-16E-Instruct",
-   "repo_source": "filename",
-   "sha256": "3390b0810e99fe443da51263cabd211894aa5c64664d1a737122026efecb3cef",
-   "size": 1506
   },
   {
    "architectures": [
@@ -2970,105 +1016,6 @@
   },
   {
    "architectures": [
-    "LlavaForConditionalGeneration"
-   ],
-   "model_type": "llava",
-   "path": "fixtures/llava/llava-hf__llava-1.5-7b-hf.json",
-   "repo": "llava-hf/llava-1.5-7b-hf",
-   "repo_source": "filename",
-   "sha256": "0bde54495c54bcc346064a0d314b010d1c4d3ca7f7e583b6f711949a35352c0f",
-   "size": 950
-  },
-  {
-   "architectures": [
-    "LlavaForConditionalGeneration"
-   ],
-   "model_type": "llava",
-   "path": "fixtures/llava/mistral-community__pixtral-12b.json",
-   "repo": "mistral-community/pixtral-12b",
-   "repo_source": "filename",
-   "sha256": "da97ae391681b319832fe8121f77bee3df837fdefdffd2223c772040b7d7b5cc",
-   "size": 997
-  },
-  {
-   "architectures": [
-    "LlavaForConditionalGeneration"
-   ],
-   "model_type": "llava",
-   "path": "fixtures/llava/nm-testing__pixtral-12b-FP8-dynamic.json",
-   "repo": "nm-testing/pixtral-12b-FP8-dynamic",
-   "repo_source": "filename",
-   "sha256": "18449a23071c95b222ab5e5edb2d01b52b0d52d7caf5cfeeec2dfe75c3865bea",
-   "size": 12752
-  },
-  {
-   "architectures": [
-    "LlavaNextForConditionalGeneration"
-   ],
-   "model_type": "llava_next",
-   "path": "fixtures/llava_next/ibm-granite__granite-vision-3.3-2b.json",
-   "repo": "ibm-granite/granite-vision-3.3-2b",
-   "repo_source": "filename",
-   "sha256": "10695bcbf5ac72daffa2fcaf2d0bf82917ceb8e02819c81df08327516bd75456",
-   "size": 2829
-  },
-  {
-   "architectures": [
-    "LlavaNextForConditionalGeneration"
-   ],
-   "model_type": "llava_next",
-   "path": "fixtures/llava_next/llava-hf__llava-v1.6-mistral-7b-hf.json",
-   "repo": "llava-hf/llava-v1.6-mistral-7b-hf",
-   "repo_source": "filename",
-   "sha256": "ddf45e24cea7da06747d67a2f377b8fe65e672f61180c50adae7fd9c0392ab6e",
-   "size": 1253
-  },
-  {
-   "architectures": [
-    "LlavaNextForConditionalGeneration"
-   ],
-   "model_type": "llava_next",
-   "path": "fixtures/llava_next/llava-hf__llava-v1.6-vicuna-7b-hf.json",
-   "repo": "llava-hf/llava-v1.6-vicuna-7b-hf",
-   "repo_source": "filename",
-   "sha256": "3ea1ed765b0b79834892d8060cb46162121ef01596e56ca6e168a48a8da08336",
-   "size": 1168
-  },
-  {
-   "architectures": [
-    "LlavaNextVideoForConditionalGeneration"
-   ],
-   "model_type": "llava_next_video",
-   "path": "fixtures/llava_next_video/llava-hf__LLaVA-NeXT-Video-7B-hf.json",
-   "repo": "llava-hf/LLaVA-NeXT-Video-7B-hf",
-   "repo_source": "filename",
-   "sha256": "b0b2648174f64a3a0464f09532b52d0aaa03860227ee8eacfc92d2f213c821f3",
-   "size": 1414
-  },
-  {
-   "architectures": [
-    "LlavaOnevisionForConditionalGeneration"
-   ],
-   "model_type": "llava_onevision",
-   "path": "fixtures/llava_onevision/llava-hf__llava-onevision-qwen2-0.5b-ov-hf.json",
-   "repo": "llava-hf/llava-onevision-qwen2-0.5b-ov-hf",
-   "repo_source": "filename",
-   "sha256": "839a4fba0bd6949f0db22d4f840935cb0318f6ac28b29c9ce1a5b15735a4a740",
-   "size": 2591
-  },
-  {
-   "architectures": [
-    "LlavaOnevisionForConditionalGeneration"
-   ],
-   "model_type": "llava_onevision",
-   "path": "fixtures/llava_onevision/llava-hf__llava-onevision-qwen2-7b-ov-hf.json",
-   "repo": "llava-hf/llava-onevision-qwen2-7b-ov-hf",
-   "repo_source": "filename",
-   "sha256": "69277c2c9ba8a4f61d2e72f79fbe02e043b8c3af670858a606818527f971a0c2",
-   "size": 2528
-  },
-  {
-   "architectures": [
     "LlavaOnevision2ForConditionalGeneration"
    ],
    "model_type": "llava_onevision2",
@@ -3080,61 +1027,6 @@
   },
   {
    "architectures": [
-    "MambaForCausalLM"
-   ],
-   "model_type": "mamba",
-   "path": "fixtures/mamba/state-spaces__mamba-130m-hf.json",
-   "repo": "state-spaces/mamba-130m-hf",
-   "repo_source": "filename",
-   "sha256": "784825b6b6cdde47a1602278db0e66d6764169af4a8e662404701bc636a2686a",
-   "size": 895
-  },
-  {
-   "architectures": [
-    "MambaForCausalLM"
-   ],
-   "model_type": "mamba",
-   "path": "fixtures/mamba/state-spaces__mamba-2.8b-hf.json",
-   "repo": "state-spaces/mamba-2.8b-hf",
-   "repo_source": "filename",
-   "sha256": "ec7f74c5f322716a5a3470632ff03572182e7a5027cdcb452520818c5276c356",
-   "size": 843
-  },
-  {
-   "architectures": [
-    "MambaForCausalLM"
-   ],
-   "model_type": "mamba",
-   "path": "fixtures/mamba/state-spaces__mamba-790m-hf.json",
-   "repo": "state-spaces/mamba-790m-hf",
-   "repo_source": "filename",
-   "sha256": "f55bce4f993e4eeba025d57977eb48c4815416a352742c74e412e2c1e8136ea1",
-   "size": 878
-  },
-  {
-   "architectures": [
-    "Mamba2ForCausalLM"
-   ],
-   "model_type": "mamba2",
-   "path": "fixtures/mamba2/mistralai__Mamba-Codestral-7B-v0.1.json",
-   "repo": "mistralai/Mamba-Codestral-7B-v0.1",
-   "repo_source": "filename",
-   "sha256": "a94d3844139645f0e22ff98f1696329e811655421fd0a81076e2efee9fa828a7",
-   "size": 1011
-  },
-  {
-   "architectures": [
-    "Mamba2ForCausalLM"
-   ],
-   "model_type": "mamba2",
-   "path": "fixtures/mamba2/yujiepan__mamba2-codestral-v0.1-tiny-random.json",
-   "repo": "yujiepan/mamba2-codestral-v0.1-tiny-random",
-   "repo_source": "filename",
-   "sha256": "c394a3ab82869cac486786b82f482a0b947440f1eb9f0e66bdb5c79950a01336",
-   "size": 995
-  },
-  {
-   "architectures": [
     "MellumForCausalLM"
    ],
    "model_type": "mellum",
@@ -3143,28 +1035,6 @@
    "repo_source": "csv",
    "sha256": "28953bc64472a20efd1a41e83ba9b4ee076d319fc89bcec1277862b7fd9fc49c",
    "size": 2319
-  },
-  {
-   "architectures": [
-    "MiDashengLMModel"
-   ],
-   "model_type": "midashenglm",
-   "path": "fixtures/midashenglm/mispeech__midashenglm-7b.json",
-   "repo": "mispeech/midashenglm-7b",
-   "repo_source": "filename",
-   "sha256": "3118c29b5a80f04f16a3877f2239bc55de6ea8e5b6c4df40ff7607954f1afa50",
-   "size": 1651
-  },
-  {
-   "architectures": [
-    "MiMoForCausalLM"
-   ],
-   "model_type": "mimo",
-   "path": "fixtures/mimo/XiaomiMiMo__MiMo-7B-RL.json",
-   "repo": "XiaomiMiMo/MiMo-7B-RL",
-   "repo_source": "filename",
-   "sha256": "f4a571bdc52a5aaba9023673994c6b5d0ceb31118b6f7ea5beb8a22cee705a8e",
-   "size": 1044
   },
   {
    "architectures": [
@@ -3201,28 +1071,6 @@
   },
   {
    "architectures": [
-    "MiniCPMForCausalLM"
-   ],
-   "model_type": "minicpm",
-   "path": "fixtures/minicpm/openbmb__MiniCPM4.1-8B.json",
-   "repo": "openbmb/MiniCPM4.1-8B",
-   "repo_source": "filename",
-   "sha256": "2e6184e20da805d284b0ebba0bf5cf55bb561c6f333b66119fd2cc3f45a7ba15",
-   "size": 3677
-  },
-  {
-   "architectures": [
-    "MiniCPM3ForCausalLM"
-   ],
-   "model_type": "minicpm3",
-   "path": "fixtures/minicpm3/openbmb__MiniCPM3-4B.json",
-   "repo": "openbmb/MiniCPM3-4B",
-   "repo_source": "filename",
-   "sha256": "cf1d08cb7c1815c676e685bd6ce94eb8b85a57d53871e6e159ee8c650717d98a",
-   "size": 1929
-  },
-  {
-   "architectures": [
     "MiniCPMOcrForConditionalGeneration"
    ],
    "model_type": "minicpm_ocr",
@@ -3231,50 +1079,6 @@
    "repo_source": "csv",
    "sha256": "762025491b206967a3c29c3e36ff2cccd8af6a8c750360b61dc91882b573f759",
    "size": 2275
-  },
-  {
-   "architectures": [
-    "MiniCPMO"
-   ],
-   "model_type": "minicpmo",
-   "path": "fixtures/minicpmo/openbmb__MiniCPM-o-2_6.json",
-   "repo": "openbmb/MiniCPM-o-2_6",
-   "repo_source": "filename",
-   "sha256": "917813ee571faf0447669b6b3549c8357c583141b5e4a8be1bcf9cc800a7c8cf",
-   "size": 3442
-  },
-  {
-   "architectures": [
-    "MiniCPMV"
-   ],
-   "model_type": "minicpmv",
-   "path": "fixtures/minicpmv/openbmb__MiniCPM-Llama3-V-2_5.json",
-   "repo": "openbmb/MiniCPM-Llama3-V-2_5",
-   "repo_source": "filename",
-   "sha256": "f1504a766a8fa69553d5d19e8ebd1d3c3c855221c776f3b3fb869ce403c157ed",
-   "size": 1393
-  },
-  {
-   "architectures": [
-    "MiniCPMV"
-   ],
-   "model_type": "minicpmv",
-   "path": "fixtures/minicpmv/openbmb__MiniCPM-V-2.json",
-   "repo": "openbmb/MiniCPM-V-2",
-   "repo_source": "filename",
-   "sha256": "f5c70c71574501d3ec82506a83a92d0afe61fe5d62ddabcedb26e14b096edcc7",
-   "size": 1179
-  },
-  {
-   "architectures": [
-    "MiniCPMV"
-   ],
-   "model_type": "minicpmv",
-   "path": "fixtures/minicpmv/openbmb__MiniCPM-V-4.json",
-   "repo": "openbmb/MiniCPM-V-4",
-   "repo_source": "filename",
-   "sha256": "a83a83259378c2684a96ce3a6cb96d418a1d97f46118af3aff2ac1222fc783b8",
-   "size": 5057
   },
   {
    "architectures": [
@@ -3303,77 +1107,11 @@
     "MiniMaxM3SparseForConditionalGeneration"
    ],
    "model_type": "minimax_m3_vl",
-   "path": "fixtures/minimax_m3_vl/MiniMaxAI__MiniMax-M3-MXFP8.json",
-   "repo": "MiniMaxAI/MiniMax-M3-MXFP8",
-   "repo_source": "filename",
-   "sha256": "a3698fff231a6cd92f632dcbe50f0b1dbda716994f29ccde9f0fa9d2a87698bf",
-   "size": 9071
-  },
-  {
-   "architectures": [
-    "MiniMaxM3SparseForConditionalGeneration"
-   ],
-   "model_type": "minimax_m3_vl",
-   "path": "fixtures/minimax_m3_vl/MiniMaxAI__MiniMax-M3.1-Flash.json",
-   "repo": "MiniMaxAI/MiniMax-M3.1-Flash",
-   "repo_source": "filename",
-   "sha256": "df6a3668e2de5b8dc0e883e3767495ad17af7e4d69fabe9683088be015fda9ab",
-   "size": 9122
-  },
-  {
-   "architectures": [
-    "MiniMaxM3SparseForConditionalGeneration"
-   ],
-   "model_type": "minimax_m3_vl",
    "path": "fixtures/minimax_m3_vl/MiniMaxAI__MiniMax-M3.json",
    "repo": "MiniMaxAI/MiniMax-M3",
    "repo_source": "csv",
    "sha256": "c9c97ce1e4eece60012d5a10ea87717458bfb1f19c2c7a615a3dbff83d090c6b",
    "size": 5254
-  },
-  {
-   "architectures": [
-    "MistralModel"
-   ],
-   "model_type": "mistral",
-   "path": "fixtures/mistral/intfloat__e5-mistral-7b-instruct.json",
-   "repo": "intfloat/e5-mistral-7b-instruct",
-   "repo_source": "filename",
-   "sha256": "bfa2364116ee2abb1a9706e8702f09a48d013eed3c321ec4a905497a50dcee00",
-   "size": 629
-  },
-  {
-   "architectures": [
-    "MistralForCausalLM"
-   ],
-   "model_type": "mistral",
-   "path": "fixtures/mistral/mistralai__Mistral-7B-Instruct-v0.1.json",
-   "repo": "mistralai/Mistral-7B-Instruct-v0.1",
-   "repo_source": "filename",
-   "sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
-   "size": 571
-  },
-  {
-   "architectures": [
-    "MistralForCausalLM"
-   ],
-   "model_type": "mistral",
-   "path": "fixtures/mistral/mistralai__Mistral-7B-v0.1.json",
-   "repo": "mistralai/Mistral-7B-v0.1",
-   "repo_source": "filename",
-   "sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
-   "size": 571
-  },
-  {
-   "architectures": [
-    "LightOnOCRForConditionalGeneration"
-   ],
-   "model_type": "mistral3",
-   "path": "fixtures/mistral3/lightonai__LightOnOCR-1B-1025.json",
-   "repo": "lightonai/LightOnOCR-1B-1025",
-   "repo_source": "filename",
-   "sha256": "df8fda046413cb42e186aa7fc72d7cf0d697ff17678aed9e32ed8a5a863d6ab8",
-   "size": 2087
   },
   {
    "architectures": [
@@ -3399,28 +1137,6 @@
   },
   {
    "architectures": [
-    "Mistral3ForConditionalGeneration"
-   ],
-   "model_type": "mistral3",
-   "path": "fixtures/mistral3/mistralai__Mistral-Small-3.1-24B-Instruct-2503.json",
-   "repo": "mistralai/Mistral-Small-3.1-24B-Instruct-2503",
-   "repo_source": "filename",
-   "sha256": "ce3ec410cac74da358f786c574b73b6624c50c8bb876bcb628f06500fe07adcc",
-   "size": 1177
-  },
-  {
-   "architectures": [
-    "Mistral3ForConditionalGeneration"
-   ],
-   "model_type": "mistral3",
-   "path": "fixtures/mistral3/nm-testing__Mistral-Small-3.1-24B-Instruct-2503-FP8-dynamic.json",
-   "repo": "nm-testing/Mistral-Small-3.1-24B-Instruct-2503-FP8-dynamic",
-   "repo_source": "filename",
-   "sha256": "16bc92b62b6e411f811d9e07d3a2c01bd7faa75498c1887773c6c775bf7cde9d",
-   "size": 12965
-  },
-  {
-   "architectures": [
     "MistralLarge4ForConditionalGeneration"
    ],
    "model_type": "mistral_large4",
@@ -3429,94 +1145,6 @@
    "repo_source": "csv",
    "sha256": "3081fb94f5001f34a21e08437df710bb0b6423beada9184b566a8f5b1ee46277",
    "size": 8220
-  },
-  {
-   "architectures": [
-    "MixtralForCausalLM"
-   ],
-   "model_type": "mixtral",
-   "path": "fixtures/mixtral/TitanML__tiny-mixtral.json",
-   "repo": "TitanML/tiny-mixtral",
-   "repo_source": "filename",
-   "sha256": "76cc097abb8139c7bc4ef480f824b0a3412b14f1261f0086c81599c06e67c37b",
-   "size": 714
-  },
-  {
-   "architectures": [
-    "MixtralForCausalLM"
-   ],
-   "model_type": "mixtral",
-   "path": "fixtures/mixtral/axolotl-ai-co__tiny-mixtral-30m.json",
-   "repo": "axolotl-ai-co/tiny-mixtral-30m",
-   "repo_source": "filename",
-   "sha256": "7bed08905232fc2bb53bc4c2ca590fcee62b2630d6fbe7933566f333d99e5efc",
-   "size": 831
-  },
-  {
-   "architectures": [
-    "MixtralForCausalLM"
-   ],
-   "model_type": "mixtral",
-   "path": "fixtures/mixtral/mistral-community__Mixtral-8x22B-v0.1.json",
-   "repo": "mistral-community/Mixtral-8x22B-v0.1",
-   "repo_source": "filename",
-   "sha256": "685b8be34830740b4dab4c4789ee0a47ffac714e736c3dafde3aa512e819ef77",
-   "size": 749
-  },
-  {
-   "architectures": [
-    "MixtralForCausalLM"
-   ],
-   "model_type": "mixtral",
-   "path": "fixtures/mixtral/mistralai__Mixtral-8x7B-Instruct-v0.1.json",
-   "repo": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-   "repo_source": "filename",
-   "sha256": "9d56d04b36d0fd12ff54ae4c5bac769cc176e254e64ff71144614b6318b40793",
-   "size": 720
-  },
-  {
-   "architectures": [
-    "MixtralForCausalLM"
-   ],
-   "model_type": "mixtral",
-   "path": "fixtures/mixtral/mistralai__Mixtral-8x7B-v0.1.json",
-   "repo": "mistralai/Mixtral-8x7B-v0.1",
-   "repo_source": "filename",
-   "sha256": "9d56d04b36d0fd12ff54ae4c5bac769cc176e254e64ff71144614b6318b40793",
-   "size": 720
-  },
-  {
-   "architectures": [
-    "ModernBertModel"
-   ],
-   "model_type": "modernbert",
-   "path": "fixtures/modernbert/Alibaba-NLP__gte-modernbert-base.json",
-   "repo": "Alibaba-NLP/gte-modernbert-base",
-   "repo_source": "filename",
-   "sha256": "8ba54dc3d35d7194f5178a4194b649f146753e02dabd22bdca5c5cbac15069ed",
-   "size": 1184
-  },
-  {
-   "architectures": [
-    "ModernBertForSequenceClassification"
-   ],
-   "model_type": "modernbert",
-   "path": "fixtures/modernbert/Alibaba-NLP__gte-reranker-modernbert-base.json",
-   "repo": "Alibaba-NLP/gte-reranker-modernbert-base",
-   "repo_source": "filename",
-   "sha256": "c9316ff715158502dad782f35454eee18de984160618dc30afe7508feb46b7ce",
-   "size": 1333
-  },
-  {
-   "architectures": [
-    "ModernBertForTokenClassification"
-   ],
-   "model_type": "modernbert",
-   "path": "fixtures/modernbert/disham993__electrical-ner-ModernBERT-base.json",
-   "repo": "disham993/electrical-ner-ModernBERT-base",
-   "repo_source": "filename",
-   "sha256": "d040b8e595783d8bc90aa26d1892e3fe4ed365ebdbb1a37c961d23b2415dda88",
-   "size": 1955
   },
   {
    "architectures": [
@@ -3540,50 +1168,6 @@
   },
   {
    "architectures": [
-    "MolmoForCausalLM"
-   ],
-   "model_type": "molmo",
-   "path": "fixtures/molmo/allenai__Molmo-7B-D-0924.json",
-   "repo": "allenai/Molmo-7B-D-0924",
-   "repo_source": "filename",
-   "sha256": "64096f1bc5157d87db253862b161556cb09f2ccab93f6b228dc629616fb5a7a8",
-   "size": 806
-  },
-  {
-   "architectures": [
-    "MolmoForCausalLM"
-   ],
-   "model_type": "molmo",
-   "path": "fixtures/molmo/allenai__Molmo-7B-O-0924.json",
-   "repo": "allenai/Molmo-7B-O-0924",
-   "repo_source": "filename",
-   "sha256": "ca079a4832aa6669e95cfb0cb1325f0a88d4f4731ae45c8c4f0b7af923508141",
-   "size": 807
-  },
-  {
-   "architectures": [
-    "Molmo2ForConditionalGeneration"
-   ],
-   "model_type": "molmo2",
-   "path": "fixtures/molmo2/allenai__Molmo2-4B.json",
-   "repo": "allenai/Molmo2-4B",
-   "repo_source": "filename",
-   "sha256": "17e072e3c3b29d9be7a348c74b88658e67ccce094c31b21f87646f6cecd2a76f",
-   "size": 2538
-  },
-  {
-   "architectures": [
-    "Molmo2ForConditionalGeneration"
-   ],
-   "model_type": "molmo2",
-   "path": "fixtures/molmo2/allenai__Molmo2-8B.json",
-   "repo": "allenai/Molmo2-8B",
-   "repo_source": "filename",
-   "sha256": "67c8c10f5c1e2b83497d2a27cb5c386546c62b09ef28b1e0232f3749c97fc416",
-   "size": 2541
-  },
-  {
-   "architectures": [
     "Molmo2ForConditionalGeneration"
    ],
    "model_type": "molmo2",
@@ -3592,17 +1176,6 @@
    "repo_source": "csv",
    "sha256": "918491a079e7c26062393a95b3eb5ee25e4b0ab7d4dbd262edc7b1c6b613a159",
    "size": 2966
-  },
-  {
-   "architectures": [
-    "Molmo2ForConditionalGeneration"
-   ],
-   "model_type": "molmo2",
-   "path": "fixtures/molmo2/allenai__MolmoWeb-4B.json",
-   "repo": "allenai/MolmoWeb-4B",
-   "repo_source": "filename",
-   "sha256": "8ad9735b46133fab8e6f7f9e7e1e42735ec3eb4a4130bad4c3277488b0101fab",
-   "size": 2538
   },
   {
    "architectures": [
@@ -3625,39 +1198,6 @@
    "repo_source": "csv",
    "sha256": "e528a941446f4443f1b9fede12ea484e58a79d494c28d21ef1e73b5148abfbfa",
    "size": 2714
-  },
-  {
-   "architectures": [
-    "MossAudioModel"
-   ],
-   "model_type": "moss_audio",
-   "path": "fixtures/moss_audio/OpenMOSS-Team__MOSS-Audio-4B-Thinking.json",
-   "repo": "OpenMOSS-Team/MOSS-Audio-4B-Thinking",
-   "repo_source": "filename",
-   "sha256": "e528a941446f4443f1b9fede12ea484e58a79d494c28d21ef1e73b5148abfbfa",
-   "size": 2714
-  },
-  {
-   "architectures": [
-    "MossAudioModel"
-   ],
-   "model_type": "moss_audio",
-   "path": "fixtures/moss_audio/OpenMOSS-Team__MOSS-Audio-8B-Instruct.json",
-   "repo": "OpenMOSS-Team/MOSS-Audio-8B-Instruct",
-   "repo_source": "filename",
-   "sha256": "535154c2a5bcbd0e18e2f92bcf370ac74b530eec97ad4fd9317993ba0a316536",
-   "size": 2715
-  },
-  {
-   "architectures": [
-    "MossAudioModel"
-   ],
-   "model_type": "moss_audio",
-   "path": "fixtures/moss_audio/OpenMOSS-Team__MOSS-Audio-8B-Thinking.json",
-   "repo": "OpenMOSS-Team/MOSS-Audio-8B-Thinking",
-   "repo_source": "filename",
-   "sha256": "535154c2a5bcbd0e18e2f92bcf370ac74b530eec97ad4fd9317993ba0a316536",
-   "size": 2715
   },
   {
    "architectures": [
@@ -3716,39 +1256,6 @@
   },
   {
    "architectures": [
-    "DeciLMForCausalLM"
-   ],
-   "model_type": "nemotron-nas",
-   "path": "fixtures/nemotron-nas/nvidia__Llama-3_3-Nemotron-Super-49B-v1.json",
-   "repo": "nvidia/Llama-3_3-Nemotron-Super-49B-v1",
-   "repo_source": "filename",
-   "sha256": "4a39c404332d8117886499d9427dfd9754ed9c911c567b3e4b0f5b89701a0efd",
-   "size": 37070
-  },
-  {
-   "architectures": [
-    "NemotronForCausalLM"
-   ],
-   "model_type": "nemotron",
-   "path": "fixtures/nemotron/mgoin__Nemotron-4-340B-Base-hf-FP8.json",
-   "repo": "mgoin/Nemotron-4-340B-Base-hf-FP8",
-   "repo_source": "filename",
-   "sha256": "4c64ca47bcec3dc2d6823adcd77338a42f59d801872f41e05a1517a40d714c52",
-   "size": 899
-  },
-  {
-   "architectures": [
-    "NemotronForCausalLM"
-   ],
-   "model_type": "nemotron",
-   "path": "fixtures/nemotron/nvidia__Minitron-8B-Base.json",
-   "repo": "nvidia/Minitron-8B-Base",
-   "repo_source": "filename",
-   "sha256": "7a5a0a1842b2582f4b397e920c5a2fbb76969f81bdd49f79d28e7aaaf02e750b",
-   "size": 635
-  },
-  {
-   "architectures": [
     "NemotronHForCausalLM"
    ],
    "model_type": "nemotron_h",
@@ -3760,83 +1267,6 @@
   },
   {
    "architectures": [
-    "NemotronHForCausalLM"
-   ],
-   "model_type": "nemotron_h",
-   "path": "fixtures/nemotron_h/nvidia__NVIDIA-Nemotron-3-Nano-30B-A3B-FP8.json",
-   "repo": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8",
-   "repo_source": "filename",
-   "sha256": "f4fcbaaaed3ee215f86205a7600636cd930bde069f2b603d7ff908c046a0cd96",
-   "size": 1817
-  },
-  {
-   "architectures": [
-    "NemotronHForCausalLM"
-   ],
-   "model_type": "nemotron_h",
-   "path": "fixtures/nemotron_h/nvidia__NVIDIA-Nemotron-3-Super-120B-A12B-BF16.json",
-   "repo": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
-   "repo_source": "filename",
-   "sha256": "699f34f0fc645d29ebffa5767fb59e6ae6ec98e3a4605485eb9913256d0df7e6",
-   "size": 1924
-  },
-  {
-   "architectures": [
-    "NemotronHForCausalLM"
-   ],
-   "model_type": "nemotron_h",
-   "path": "fixtures/nemotron_h/nvidia__NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16.json",
-   "repo": "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
-   "repo_source": "filename",
-   "sha256": "8f92735a43afae0d94b73fb9e658910ed548818a188eb2fc51513e88c9e689cd",
-   "size": 3031
-  },
-  {
-   "architectures": [
-    "NemotronHForCausalLM"
-   ],
-   "model_type": "nemotron_h",
-   "path": "fixtures/nemotron_h/nvidia__NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16.json",
-   "repo": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
-   "repo_source": "filename",
-   "sha256": "a3827a0f5e311547b40943dc081e3ff2f8a277466e8c1a3df2291e8db8a7617c",
-   "size": 2352
-  },
-  {
-   "architectures": [
-    "NemotronHForCausalLM"
-   ],
-   "model_type": "nemotron_h",
-   "path": "fixtures/nemotron_h/nvidia__Nemotron-H-47B-Base-8K.json",
-   "repo": "nvidia/Nemotron-H-47B-Base-8K",
-   "repo_source": "filename",
-   "sha256": "56cbc440d80b266961d37c8d4d8e75fabbe79bc1ea832ad589bef93eb208ec9b",
-   "size": 1550
-  },
-  {
-   "architectures": [
-    "NemotronHForCausalLM"
-   ],
-   "model_type": "nemotron_h",
-   "path": "fixtures/nemotron_h/nvidia__Nemotron-H-56B-Base-8K.json",
-   "repo": "nvidia/Nemotron-H-56B-Base-8K",
-   "repo_source": "filename",
-   "sha256": "4ab8604ec7a09b264cd6a4c9cd42569509456a42fb5bc528a90e1e9d2aceb679",
-   "size": 1571
-  },
-  {
-   "architectures": [
-    "NemotronHForCausalLM"
-   ],
-   "model_type": "nemotron_h",
-   "path": "fixtures/nemotron_h/nvidia__Nemotron-H-8B-Base-8K.json",
-   "repo": "nvidia/Nemotron-H-8B-Base-8K",
-   "repo_source": "filename",
-   "sha256": "81e822f85d6471312bcc0ccd34cc62789075376ecedca7fde0e451584943368b",
-   "size": 1504
-  },
-  {
-   "architectures": [
     "NemotronH_Omni_Reasoning_V3"
    ],
    "model_type": "nemotron_h_omni",
@@ -3845,17 +1275,6 @@
    "repo_source": "csv",
    "sha256": "be121eafe4c174c8bc7204da2cd063baa0392c0adfd41dd82fc9e0bba5b0f9a0",
    "size": 5723
-  },
-  {
-   "architectures": [
-    "NemotronParseForConditionalGeneration"
-   ],
-   "model_type": "nemotron_parse",
-   "path": "fixtures/nemotron_parse/nvidia__NVIDIA-Nemotron-Parse-2.0.json",
-   "repo": "nvidia/NVIDIA-Nemotron-Parse-2.0",
-   "repo_source": "filename",
-   "sha256": "568e28a61bc734468141d469bdbcb62a6dcb443c7448fe762fb95eaa7990d749",
-   "size": 10927
   },
   {
    "architectures": [
@@ -3881,128 +1300,6 @@
   },
   {
    "architectures": [
-    "NewModel"
-   ],
-   "model_type": "new",
-   "path": "fixtures/new/Alibaba-NLP__gte-base-en-v1.5.json",
-   "repo": "Alibaba-NLP/gte-base-en-v1.5",
-   "repo_source": "filename",
-   "sha256": "238854682d429ce12c49ed3d1a31b6d1b9622d2afbcf50a17243da18926cbcab",
-   "size": 1348
-  },
-  {
-   "architectures": [
-    "NewModel",
-    "NewForTokenClassification"
-   ],
-   "model_type": "new",
-   "path": "fixtures/new/Alibaba-NLP__gte-multilingual-base.json",
-   "repo": "Alibaba-NLP/gte-multilingual-base",
-   "repo_source": "filename",
-   "sha256": "711bdc81365fc25d30533cf05b9fdf588e5ba01f18540fbbb1307d787597a313",
-   "size": 1429
-  },
-  {
-   "architectures": [
-    "NewForSequenceClassification"
-   ],
-   "model_type": "new",
-   "path": "fixtures/new/Alibaba-NLP__gte-multilingual-reranker-base.json",
-   "repo": "Alibaba-NLP/gte-multilingual-reranker-base",
-   "repo_source": "filename",
-   "sha256": "995730781d157e147c13ccdfe0eb20a0875c486b6c4de8c97f0bbd845549dbc0",
-   "size": 1494
-  },
-  {
-   "architectures": [
-    "NomicBertModel"
-   ],
-   "model_type": "nomic_bert",
-   "path": "fixtures/nomic_bert/Snowflake__snowflake-arctic-embed-m-long.json",
-   "repo": "Snowflake/snowflake-arctic-embed-m-long",
-   "repo_source": "filename",
-   "sha256": "794b375bbe628183be1594e2e180e8fa4df98dcc9eaf833232e9afd4f515304b",
-   "size": 1599
-  },
-  {
-   "architectures": [
-    "NomicBertModel"
-   ],
-   "model_type": "nomic_bert",
-   "path": "fixtures/nomic_bert/nomic-ai__nomic-embed-text-v1.json",
-   "repo": "nomic-ai/nomic-embed-text-v1",
-   "repo_source": "filename",
-   "sha256": "913351bb022df8c2b332dc955145dea342380b162d532af756b3bdba3b3a1cfb",
-   "size": 2029
-  },
-  {
-   "architectures": [
-    "NomicBertModel"
-   ],
-   "model_type": "nomic_bert",
-   "path": "fixtures/nomic_bert/nomic-ai__nomic-embed-text-v2-moe.json",
-   "repo": "nomic-ai/nomic-embed-text-v2-moe",
-   "repo_source": "filename",
-   "sha256": "4f076b4798fc2ba916f1900e0d10177714ee1aa94e0ef809102e723078d3efd3",
-   "size": 2482
-  },
-  {
-   "architectures": [
-    "OlmoForCausalLM"
-   ],
-   "model_type": "olmo",
-   "path": "fixtures/olmo/allenai__OLMo-1B-hf.json",
-   "repo": "allenai/OLMo-1B-hf",
-   "repo_source": "filename",
-   "sha256": "6f7e503641d4064e95ab9f84a5ef39da92d232f4a364985f9df7dade8f3d3e65",
-   "size": 632
-  },
-  {
-   "architectures": [
-    "OlmoForCausalLM"
-   ],
-   "model_type": "olmo",
-   "path": "fixtures/olmo/allenai__OLMo-7B-hf.json",
-   "repo": "allenai/OLMo-7B-hf",
-   "repo_source": "filename",
-   "sha256": "c90e34d2e6ae40079868090fa5d04ec7d1f9953e1691cdfcd6d4b794bbf77665",
-   "size": 639
-  },
-  {
-   "architectures": [
-    "Olmo2ForCausalLM"
-   ],
-   "model_type": "olmo2",
-   "path": "fixtures/olmo2/allenai__OLMo-2-0425-1B.json",
-   "repo": "allenai/OLMo-2-0425-1B",
-   "repo_source": "filename",
-   "sha256": "3dc581384d61b3366fc34a95d12c20e595014ea62352469c17c3e3a77f32882a",
-   "size": 623
-  },
-  {
-   "architectures": [
-    "Olmo3ForCausalLM"
-   ],
-   "model_type": "olmo3",
-   "path": "fixtures/olmo3/allenai__Olmo-3-32B-Think.json",
-   "repo": "allenai/Olmo-3-32B-Think",
-   "repo_source": "filename",
-   "sha256": "d47a120cb2669cd46482d5c2da9488903b67759ca167cd85c1127b2e05755f95",
-   "size": 2396
-  },
-  {
-   "architectures": [
-    "Olmo3ForCausalLM"
-   ],
-   "model_type": "olmo3",
-   "path": "fixtures/olmo3/allenai__Olmo-3-7B-Instruct.json",
-   "repo": "allenai/Olmo-3-7B-Instruct",
-   "repo_source": "filename",
-   "sha256": "6282ae812f9e494bd212e9a3233d68dc4d5f1e2569642423d2b79a3e80373ef8",
-   "size": 1625
-  },
-  {
-   "architectures": [
     "OlmoHybridForCausalLM"
    ],
    "model_type": "olmo_hybrid",
@@ -4011,28 +1308,6 @@
    "repo_source": "csv",
    "sha256": "00bdf5c713c1be5c10498de8e248b6a47e132e0c3636b1c7015b4dc55ebe568e",
    "size": 1597
-  },
-  {
-   "architectures": [
-    "OlmoeForCausalLM"
-   ],
-   "model_type": "olmoe",
-   "path": "fixtures/olmoe/allenai__OLMoE-1B-7B-0924-Instruct.json",
-   "repo": "allenai/OLMoE-1B-7B-0924-Instruct",
-   "repo_source": "filename",
-   "sha256": "42ea6f5fe31e9243290ba3c348a4ad615b88a6fbc6e10544e21a87b6dff5da6c",
-   "size": 759
-  },
-  {
-   "architectures": [
-    "OlmoeForCausalLM"
-   ],
-   "model_type": "olmoe",
-   "path": "fixtures/olmoe/allenai__OLMoE-1B-7B-0924.json",
-   "repo": "allenai/OLMoE-1B-7B-0924",
-   "repo_source": "filename",
-   "sha256": "3643aa880d2f1c9b418156269ae791c73e5612d6b6b6fde0724d927cf89b6335",
-   "size": 759
   },
   {
    "architectures": [
@@ -4091,138 +1366,6 @@
   },
   {
    "architectures": [
-    "OPTForCausalLM"
-   ],
-   "model_type": "opt",
-   "path": "fixtures/opt/facebook__opt-125m.json",
-   "repo": "facebook/opt-125m",
-   "repo_source": "filename",
-   "sha256": "54162c9cd0377110df1859dfabebb106fc0988c8aadb88207ce1ee0d34985df6",
-   "size": 651
-  },
-  {
-   "architectures": [
-    "OPTForCausalLM"
-   ],
-   "model_type": "opt",
-   "path": "fixtures/opt/facebook__opt-350m.json",
-   "repo": "facebook/opt-350m",
-   "repo_source": "filename",
-   "sha256": "3ec75df0e166476e342cf95226ba775d8155449a7b1e430728b3ca26b425e4ab",
-   "size": 644
-  },
-  {
-   "architectures": [
-    "OPTForCausalLM"
-   ],
-   "model_type": "opt",
-   "path": "fixtures/opt/facebook__opt-66b.json",
-   "repo": "facebook/opt-66b",
-   "repo_source": "filename",
-   "sha256": "d759b638611af8e08c3895fcef5669f0b575caad0252e96e6f724547a06dfa71",
-   "size": 676
-  },
-  {
-   "architectures": [
-    "OPTForCausalLM"
-   ],
-   "model_type": "opt",
-   "path": "fixtures/opt/facebook__opt-iml-max-1.3b.json",
-   "repo": "facebook/opt-iml-max-1.3b",
-   "repo_source": "filename",
-   "sha256": "bf839a68c9dc091e47fc946cf7a12b295c4497c1cbcff38019df0c15f5c35b1b",
-   "size": 596
-  },
-  {
-   "architectures": [
-    "OPTForCausalLM"
-   ],
-   "model_type": "opt",
-   "path": "fixtures/opt/facebook__opt-iml-max-30b.json",
-   "repo": "facebook/opt-iml-max-30b",
-   "repo_source": "filename",
-   "sha256": "8daf1159386117601d4358e458c3f9864f196fcaef549c46b0fb806f193c42ba",
-   "size": 597
-  },
-  {
-   "architectures": [
-    "OrionForCausalLM"
-   ],
-   "model_type": "orion",
-   "path": "fixtures/orion/OrionStarAI__Orion-14B-Base.json",
-   "repo": "OrionStarAI/Orion-14B-Base",
-   "repo_source": "filename",
-   "sha256": "6a8598a808955c38f8c02cbfdb6ca3fee3b02a1c7f347341b776ada7f9bbcea8",
-   "size": 771
-  },
-  {
-   "architectures": [
-    "OrionForCausalLM"
-   ],
-   "model_type": "orion",
-   "path": "fixtures/orion/OrionStarAI__Orion-14B-Chat.json",
-   "repo": "OrionStarAI/Orion-14B-Chat",
-   "repo_source": "filename",
-   "sha256": "6a8598a808955c38f8c02cbfdb6ca3fee3b02a1c7f347341b776ada7f9bbcea8",
-   "size": 771
-  },
-  {
-   "architectures": [
-    "Ovis"
-   ],
-   "model_type": "ovis",
-   "path": "fixtures/ovis/AIDC-AI__Ovis1.6-Gemma2-9B.json",
-   "repo": "AIDC-AI/Ovis1.6-Gemma2-9B",
-   "repo_source": "filename",
-   "sha256": "c00dbed6c813c35a29bc673bda3b21a491111fe4239020b72ca7dcd4178b4949",
-   "size": 6938
-  },
-  {
-   "architectures": [
-    "Ovis"
-   ],
-   "model_type": "ovis",
-   "path": "fixtures/ovis/AIDC-AI__Ovis1.6-Llama3.2-3B.json",
-   "repo": "AIDC-AI/Ovis1.6-Llama3.2-3B",
-   "repo_source": "filename",
-   "sha256": "e8f8efbdeb04452686ce1ceb94f38834a74fcd20d3fbb91fc158a1d6dbcd23cc",
-   "size": 7048
-  },
-  {
-   "architectures": [
-    "Ovis"
-   ],
-   "model_type": "ovis",
-   "path": "fixtures/ovis/AIDC-AI__Ovis2-1B.json",
-   "repo": "AIDC-AI/Ovis2-1B",
-   "repo_source": "filename",
-   "sha256": "21614b40d1afc9eb8cc0c4f32c05bdb83b46f6c3e90cf9ee8bf8254f3798e4cf",
-   "size": 7176
-  },
-  {
-   "architectures": [
-    "Ovis2_5"
-   ],
-   "model_type": "ovis2_5",
-   "path": "fixtures/ovis2_5/AIDC-AI__Ovis2.5-2B.json",
-   "repo": "AIDC-AI/Ovis2.5-2B",
-   "repo_source": "filename",
-   "sha256": "dfa83f6cc4e9a2bc434676d7310472746ce5e51926b6b312866e5a203e81efd6",
-   "size": 2002
-  },
-  {
-   "architectures": [
-    "Ovis2_5"
-   ],
-   "model_type": "ovis2_5",
-   "path": "fixtures/ovis2_5/AIDC-AI__Ovis2.5-9B.json",
-   "repo": "AIDC-AI/Ovis2.5-9B",
-   "repo_source": "filename",
-   "sha256": "d495d8004929648201106241b43dd67b96243762d22fbf90f2f43366992e033e",
-   "size": 2071
-  },
-  {
-   "architectures": [
     "Ovis2_6_MoeForCausalLM"
    ],
    "model_type": "ovis2_6_moe",
@@ -4256,94 +1399,6 @@
   },
   {
    "architectures": [
-    "PhiForCausalLM"
-   ],
-   "model_type": "phi",
-   "path": "fixtures/phi/microsoft__phi-1_5.json",
-   "repo": "microsoft/phi-1_5",
-   "repo_source": "filename",
-   "sha256": "2fe52126434075e8a23aca5bfed8cca8aff7051779e6f11c76de9e9e9923dcef",
-   "size": 736
-  },
-  {
-   "architectures": [
-    "PhiForCausalLM"
-   ],
-   "model_type": "phi",
-   "path": "fixtures/phi/microsoft__phi-2.json",
-   "repo": "microsoft/phi-2",
-   "repo_source": "filename",
-   "sha256": "fbd955b298fdbd35fb81b3350a0d68d12616da7b7e9d81397ef632038ccc1111",
-   "size": 735
-  },
-  {
-   "architectures": [
-    "Phi3ForCausalLM"
-   ],
-   "model_type": "phi3",
-   "path": "fixtures/phi3/microsoft__Phi-3-mini-128k-instruct.json",
-   "repo": "microsoft/Phi-3-mini-128k-instruct",
-   "repo_source": "filename",
-   "sha256": "af70441b867458d18788c564ea69894adddaa4de47ab6534391604fc4893f03b",
-   "size": 3484
-  },
-  {
-   "architectures": [
-    "Phi3ForCausalLM"
-   ],
-   "model_type": "phi3",
-   "path": "fixtures/phi3/microsoft__Phi-3-mini-4k-instruct.json",
-   "repo": "microsoft/Phi-3-mini-4k-instruct",
-   "repo_source": "filename",
-   "sha256": "072d4df63228ef806a6b2b2f02a93f1d048ebd31584d0f61d1180aef36e5bcea",
-   "size": 967
-  },
-  {
-   "architectures": [
-    "Phi3ForCausalLM"
-   ],
-   "model_type": "phi3",
-   "path": "fixtures/phi3/microsoft__Phi-4-mini-instruct.json",
-   "repo": "microsoft/Phi-4-mini-instruct",
-   "repo_source": "filename",
-   "sha256": "ac65d86061d3d0d704ee2511fd0eb8713ef19eb6eedba17c3080a4165d5b933b",
-   "size": 2504
-  },
-  {
-   "architectures": [
-    "Phi3ForCausalLM"
-   ],
-   "model_type": "phi3",
-   "path": "fixtures/phi3/microsoft__Phi-4.json",
-   "repo": "microsoft/Phi-4",
-   "repo_source": "filename",
-   "sha256": "07eedad2c48798b6e3728e4a1b75e0e092019a375ba725a40e40c78d13664045",
-   "size": 802
-  },
-  {
-   "architectures": [
-    "Phi3VForCausalLM"
-   ],
-   "model_type": "phi3_v",
-   "path": "fixtures/phi3_v/microsoft__Phi-3-vision-128k-instruct.json",
-   "repo": "microsoft/Phi-3-vision-128k-instruct",
-   "repo_source": "filename",
-   "sha256": "e3fbad3779524ca7e4186f276cd0fd81e2c2b33aaed3331fcced7253d5f7d391",
-   "size": 3664
-  },
-  {
-   "architectures": [
-    "Phi3VForCausalLM"
-   ],
-   "model_type": "phi3_v",
-   "path": "fixtures/phi3_v/microsoft__Phi-3.5-vision-instruct.json",
-   "repo": "microsoft/Phi-3.5-vision-instruct",
-   "repo_source": "filename",
-   "sha256": "567e28c638a3e41aba1a304ae58b283845ad07e1c60e970643b0ad8fc229b382",
-   "size": 3778
-  },
-  {
-   "architectures": [
     "Phi4ForCausalLMV"
    ],
    "model_type": "phi4-siglip",
@@ -4352,28 +1407,6 @@
    "repo_source": "csv",
    "sha256": "7b7ff89262b61d52fd806a64dad827b2d5231bb3a9fdf33661220e378f6aec22",
    "size": 1650
-  },
-  {
-   "architectures": [
-    "Phi4MMForCausalLM"
-   ],
-   "model_type": "phi4mm",
-   "path": "fixtures/phi4mm/microsoft__Phi-4-multimodal-instruct.json",
-   "repo": "microsoft/Phi-4-multimodal-instruct",
-   "repo_source": "filename",
-   "sha256": "49e1c05f93d43d7f17715b779a2576235b019f587285d7d914e5b05156253f62",
-   "size": 4631
-  },
-  {
-   "architectures": [
-    "PhiMoEForCausalLM"
-   ],
-   "model_type": "phimoe",
-   "path": "fixtures/phimoe/microsoft__Phi-3.5-MoE-instruct.json",
-   "repo": "microsoft/Phi-3.5-MoE-instruct",
-   "repo_source": "filename",
-   "sha256": "0b7d26ba176054d43f2b47012ec7cb01868ae7078693757f940e90c13e5bae15",
-   "size": 4526
   },
   {
    "architectures": [
@@ -4388,94 +1421,6 @@
   },
   {
    "architectures": [
-    "Qwen2ForCausalLM"
-   ],
-   "model_type": "qwen2",
-   "path": "fixtures/qwen2/Qwen__QwQ-32B-Preview.json",
-   "repo": "Qwen/QwQ-32B-Preview",
-   "repo_source": "filename",
-   "sha256": "dbdf0b45cb852d6647154ed63b6fb26a70061c1a16246315a55614d524e6e500",
-   "size": 662
-  },
-  {
-   "architectures": [
-    "Qwen2ForCausalLM"
-   ],
-   "model_type": "qwen2",
-   "path": "fixtures/qwen2/Qwen__Qwen2-0.5B-Instruct.json",
-   "repo": "Qwen/Qwen2-0.5B-Instruct",
-   "repo_source": "filename",
-   "sha256": "168aa1bd401abc3bc262ba15ba4e499627a8b4e006e9d050b47c22de20660185",
-   "size": 659
-  },
-  {
-   "architectures": [
-    "Qwen2ForCausalLM"
-   ],
-   "model_type": "qwen2",
-   "path": "fixtures/qwen2/Qwen__Qwen2-7B-Instruct.json",
-   "repo": "Qwen/Qwen2-7B-Instruct",
-   "repo_source": "filename",
-   "sha256": "8b9a4f6c0acf4854a2d301616d4203039c3d7972cb0a557dae98686b6c3ae4b2",
-   "size": 663
-  },
-  {
-   "architectures": [
-    "Qwen2ForCausalLM"
-   ],
-   "model_type": "qwen2",
-   "path": "fixtures/qwen2/Qwen__Qwen2-7B.json",
-   "repo": "Qwen/Qwen2-7B",
-   "repo_source": "filename",
-   "sha256": "d318b49c4a29771e259d93053084eb752f5bfe69c20c4f2e041bd1017884f810",
-   "size": 664
-  },
-  {
-   "architectures": [
-    "Qwen2ForCausalLM"
-   ],
-   "model_type": "qwen2",
-   "path": "fixtures/qwen2/Qwen__Qwen2.5-0.5B-Instruct.json",
-   "repo": "Qwen/Qwen2.5-0.5B-Instruct",
-   "repo_source": "filename",
-   "sha256": "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45",
-   "size": 659
-  },
-  {
-   "architectures": [
-    "Qwen2ForCausalLM"
-   ],
-   "model_type": "qwen2",
-   "path": "fixtures/qwen2/Qwen__Qwen2.5-1.5B-Instruct.json",
-   "repo": "Qwen/Qwen2.5-1.5B-Instruct",
-   "repo_source": "filename",
-   "sha256": "98d2ff8cc47488d08a2b0b3acf4eb99ef210779b42bd48605f6b8e36acdbf670",
-   "size": 660
-  },
-  {
-   "architectures": [
-    "Qwen2ForProcessRewardModel"
-   ],
-   "model_type": "qwen2",
-   "path": "fixtures/qwen2/Qwen__Qwen2.5-Math-PRM-7B.json",
-   "repo": "Qwen/Qwen2.5-Math-PRM-7B",
-   "repo_source": "filename",
-   "sha256": "70d5ef2f21af53e6c95252d8838f4898fbac6c83708a67c9c7c3f83f75318bbe",
-   "size": 835
-  },
-  {
-   "architectures": [
-    "Qwen2ForRewardModel"
-   ],
-   "model_type": "qwen2",
-   "path": "fixtures/qwen2/Qwen__Qwen2.5-Math-RM-72B.json",
-   "repo": "Qwen/Qwen2.5-Math-RM-72B",
-   "repo_source": "filename",
-   "sha256": "d13b0bb1ae61c94e169df0a192976820dddaa9643ff14869fd5d6f874c952a58",
-   "size": 819
-  },
-  {
-   "architectures": [
     "FireRedASR2ForConditionalGeneration"
    ],
    "model_type": "qwen2",
@@ -4487,127 +1432,6 @@
   },
   {
    "architectures": [
-    "Qwen2ForSequenceClassification"
-   ],
-   "model_type": "qwen2",
-   "path": "fixtures/qwen2/jason9693__Qwen2.5-1.5B-apeach.json",
-   "repo": "jason9693/Qwen2.5-1.5B-apeach",
-   "repo_source": "filename",
-   "sha256": "d939a2a0148078031f3c2b374287aa62af9799afcc7a5974555c85fa2ff868df",
-   "size": 950
-  },
-  {
-   "architectures": [
-    "Qwen2Model"
-   ],
-   "model_type": "qwen2",
-   "path": "fixtures/qwen2/ssmits__Qwen2-7B-Instruct-embed-base.json",
-   "repo": "ssmits/Qwen2-7B-Instruct-embed-base",
-   "repo_source": "filename",
-   "sha256": "07fbf933dbf2352254b4c67a0d6a8c663337d6caa8a15f21c00fcb95aa3e43f8",
-   "size": 706
-  },
-  {
-   "architectures": [
-    "Qwen2_5OmniModel"
-   ],
-   "model_type": "qwen2_5_omni",
-   "path": "fixtures/qwen2_5_omni/Qwen__Qwen2.5-Omni-3B.json",
-   "repo": "Qwen/Qwen2.5-Omni-3B",
-   "repo_source": "filename",
-   "sha256": "20790f362c37a1718a3e764f597ae33dfc20177399762018dffaabf8321d4dd1",
-   "size": 13183
-  },
-  {
-   "architectures": [
-    "Qwen2_5OmniForConditionalGeneration"
-   ],
-   "model_type": "qwen2_5_omni",
-   "path": "fixtures/qwen2_5_omni/Qwen__Qwen2.5-Omni-7B-AWQ.json",
-   "repo": "Qwen/Qwen2.5-Omni-7B-AWQ",
-   "repo_source": "filename",
-   "sha256": "62f8197ef62cdc6ccfe5409e7fbc0db21a647b05b0c01049fbb67423cc22016d",
-   "size": 15418
-  },
-  {
-   "architectures": [
-    "Qwen2_5_VLForConditionalGeneration"
-   ],
-   "model_type": "qwen2_5_vl",
-   "path": "fixtures/qwen2_5_vl/Qwen__Qwen2.5-VL-3B-Instruct.json",
-   "repo": "Qwen/Qwen2.5-VL-3B-Instruct",
-   "repo_source": "filename",
-   "sha256": "7ed3eed5be6924cc800e8a5e53fc405c1aab1aaf36bad65c33403b36c56827f5",
-   "size": 1373
-  },
-  {
-   "architectures": [
-    "Qwen2_5_VLForConditionalGeneration"
-   ],
-   "model_type": "qwen2_5_vl",
-   "path": "fixtures/qwen2_5_vl/Qwen__Qwen2.5-VL-7B-Instruct.json",
-   "repo": "Qwen/Qwen2.5-VL-7B-Instruct",
-   "repo_source": "filename",
-   "sha256": "77d9ec7321cc572e3579e2c84799c9cadaded63c49ce93b101733349fc330c43",
-   "size": 1374
-  },
-  {
-   "architectures": [
-    "Qwen2AudioForConditionalGeneration"
-   ],
-   "model_type": "qwen2_audio",
-   "path": "fixtures/qwen2_audio/Qwen__Qwen2-Audio-7B-Instruct.json",
-   "repo": "Qwen/Qwen2-Audio-7B-Instruct",
-   "repo_source": "filename",
-   "sha256": "ab122e112e2450f10cec59216185bd519ccd7529c79d4c1c00255d43b97a037d",
-   "size": 853
-  },
-  {
-   "architectures": [
-    "Qwen2MoeForCausalLM"
-   ],
-   "model_type": "qwen2_moe",
-   "path": "fixtures/qwen2_moe/Qwen__Qwen1.5-MoE-A2.7B-Chat.json",
-   "repo": "Qwen/Qwen1.5-MoE-A2.7B-Chat",
-   "repo_source": "filename",
-   "sha256": "b3e9fc1ad643d12f6536dee80a66c5ea045b571856165a598252720b6f2c553e",
-   "size": 920
-  },
-  {
-   "architectures": [
-    "Qwen2MoeForCausalLM"
-   ],
-   "model_type": "qwen2_moe",
-   "path": "fixtures/qwen2_moe/Qwen__Qwen1.5-MoE-A2.7B.json",
-   "repo": "Qwen/Qwen1.5-MoE-A2.7B",
-   "repo_source": "filename",
-   "sha256": "d0b1cd8f35beccb75211c06940da3274ea986363792ab0ececb60d4ec03dd8c6",
-   "size": 919
-  },
-  {
-   "architectures": [
-    "Qwen2VLForConditionalGeneration"
-   ],
-   "model_type": "qwen2_vl",
-   "path": "fixtures/qwen2_vl/Qwen__Qwen2-VL-2B-Instruct.json",
-   "repo": "Qwen/Qwen2-VL-2B-Instruct",
-   "repo_source": "filename",
-   "sha256": "422adefa19e62dd175961cec85bc0400344fe5bf9b22bd1182e05aaae78556e0",
-   "size": 1196
-  },
-  {
-   "architectures": [
-    "JinaVLForRanking"
-   ],
-   "model_type": "qwen2_vl",
-   "path": "fixtures/qwen2_vl/jinaai__jina-reranker-m0.json",
-   "repo": "jinaai/jina-reranker-m0",
-   "repo_source": "filename",
-   "sha256": "0471a8a57077a424777fad69553806a856b400be4438d9900365bf5265845423",
-   "size": 1159
-  },
-  {
-   "architectures": [
     "FunASRForConditionalGeneration"
    ],
    "model_type": "qwen3",
@@ -4616,28 +1440,6 @@
    "repo_source": "csv",
    "sha256": "5e72ae4baf304d65bfdf0e779be19817a71f7d65441b096f1dcff377c63ed0e5",
    "size": 1395
-  },
-  {
-   "architectures": [
-    "Qwen3ForCausalLM"
-   ],
-   "model_type": "qwen3",
-   "path": "fixtures/qwen3/Qwen__Qwen3-0.6B.json",
-   "repo": "Qwen/Qwen3-0.6B",
-   "repo_source": "filename",
-   "sha256": "660db3b73d788119c04535e48cf9be5f55bc3100841a718637ae695b442f27dd",
-   "size": 726
-  },
-  {
-   "architectures": [
-    "Qwen3ForCausalLM"
-   ],
-   "model_type": "qwen3",
-   "path": "fixtures/qwen3/Qwen__Qwen3-4B.json",
-   "repo": "Qwen/Qwen3-4B",
-   "repo_source": "filename",
-   "sha256": "8ba006f74fecfaaeb392872a60f4a480e7ec9860153d2e1b769ec81f9a147f8a",
-   "size": 726
   },
   {
    "architectures": [
@@ -4660,17 +1462,6 @@
    "repo_source": "csv",
    "sha256": "1d380d912bde24a459ac611a877037e803fae458679b09c10590cbd91e3be877",
    "size": 1254
-  },
-  {
-   "architectures": [
-    "Qwen3ForTokenClassification"
-   ],
-   "model_type": "qwen3",
-   "path": "fixtures/qwen3/bd2lcco__Qwen3-0.6B-finetuned.json",
-   "repo": "bd2lcco/Qwen3-0.6B-finetuned",
-   "repo_source": "filename",
-   "sha256": "4f650acdb8a2168e013edfc94e12297da61d9860a6cd03b46544a3fa3b87915d",
-   "size": 3060
   },
   {
    "architectures": [
@@ -4707,17 +1498,6 @@
   },
   {
    "architectures": [
-    "Qwen3ForSequenceClassification"
-   ],
-   "model_type": "qwen3",
-   "path": "fixtures/qwen3/tomaarsen__Qwen3-Reranker-0.6B-seq-cls.json",
-   "repo": "tomaarsen/Qwen3-Reranker-0.6B-seq-cls",
-   "repo_source": "filename",
-   "sha256": "31a91877619971ca75746b7da4c6af707424e9c7296489819af35aa6be66f33e",
-   "size": 844
-  },
-  {
-   "architectures": [
     "Qwen3ForCausalLM"
    ],
    "model_type": "qwen3",
@@ -4726,17 +1506,6 @@
    "repo_source": "csv",
    "sha256": "bcba1ed5644d9bc592aa6bf0e36e11c6642294b5aef0fe65fdc2d0c8cf098cae",
    "size": 1041
-  },
-  {
-   "architectures": [
-    "DFlashDraftModel"
-   ],
-   "model_type": "qwen3",
-   "path": "fixtures/qwen3/z-lab__Qwen3-4B-DFlash-b16.json",
-   "repo": "z-lab/Qwen3-4B-DFlash-b16",
-   "repo_source": "filename",
-   "sha256": "2de97cdf48f429628074d229d024753f1ea02b575732983d6ed2bc882bbd63c8",
-   "size": 1097
   },
   {
    "architectures": [
@@ -4795,17 +1564,6 @@
   },
   {
    "architectures": [
-    "Qwen3_5ForConditionalGeneration"
-   ],
-   "model_type": "qwen3_5",
-   "path": "fixtures/qwen3_5/Qwen__Qwen3.8-27B.json",
-   "repo": "Qwen/Qwen3.8-27B",
-   "repo_source": "filename",
-   "sha256": "191e0af232104ed8b65258cf3fb2b842e288008baca7633c11b82a1ac7203aab",
-   "size": 4312
-  },
-  {
-   "architectures": [
     "ColQwen3_5"
    ],
    "model_type": "qwen3_5",
@@ -4828,50 +1586,6 @@
   },
   {
    "architectures": [
-    "Qwen3_5Model"
-   ],
-   "model_type": "qwen3_5",
-   "path": "fixtures/qwen3_5/vllm-sr__d3-flash.json",
-   "repo": "vllm-sr/d3-flash",
-   "repo_source": "filename",
-   "sha256": "9c3e6eea217964096c7b032285bab6757720a847fbb9d0a04e551d2b1606c0eb",
-   "size": 3093
-  },
-  {
-   "architectures": [
-    "Qwen3_5Model"
-   ],
-   "model_type": "qwen3_5",
-   "path": "fixtures/qwen3_5/vllm-sr__d3-mini.json",
-   "repo": "vllm-sr/d3-mini",
-   "repo_source": "filename",
-   "sha256": "8f5f404a71ecc53c4ff26fc42cb4c778ffacfb4c9623f5e2d51245166d6b5057",
-   "size": 3090
-  },
-  {
-   "architectures": [
-    "Qwen3_5Model"
-   ],
-   "model_type": "qwen3_5",
-   "path": "fixtures/qwen3_5/vllm-sr__d3.json",
-   "repo": "vllm-sr/d3",
-   "repo_source": "filename",
-   "sha256": "7e16284fafd2d54b73c10073c0391bfd6804886ceaf2cbe37fdb62d4c6813dea",
-   "size": 3949
-  },
-  {
-   "architectures": [
-    "ColQwen3_5"
-   ],
-   "model_type": "qwen3_5",
-   "path": "fixtures/qwen3_5/vultr__VultronRetrieverPrime-Qwen3.5-8B.json",
-   "repo": "vultr/VultronRetrieverPrime-Qwen3.5-8B",
-   "repo_source": "filename",
-   "sha256": "dcd4e50c19f059de29e71916b5ee34ee7f39622c3d49d6a817eaa8574f785676",
-   "size": 2802
-  },
-  {
-   "architectures": [
     "Qwen3_5MoeForConditionalGeneration"
    ],
    "model_type": "qwen3_5_moe",
@@ -4886,44 +1600,11 @@
     "Qwen3_5MoeForCausalLM"
    ],
    "model_type": "qwen3_5_moe_text",
-   "path": "fixtures/qwen3_5_moe_text/Inferact__Qwen3.8-2.4T-A95B-NVFP4.json",
-   "repo": "Inferact/Qwen3.8-2.4T-A95B-NVFP4",
-   "repo_source": "filename",
-   "sha256": "c197a96cc6fc28ac88264cc98511cddc985e1c7c0d6aebf40158eb9acd363391",
-   "size": 69781
-  },
-  {
-   "architectures": [
-    "Qwen3_5MoeForCausalLM"
-   ],
-   "model_type": "qwen3_5_moe_text",
    "path": "fixtures/qwen3_5_moe_text/Qwen__Qwen3.8-2.4T-A95B.json",
    "repo": "Qwen/Qwen3.8-2.4T-A95B",
    "repo_source": "csv",
    "sha256": "4e3819548967e319ab435d044a3a331dbe3b078590ce822e9d74b79430533987",
    "size": 3951
-  },
-  {
-   "architectures": [
-    "Qwen3_5MoeForCausalLM"
-   ],
-   "model_type": "qwen3_5_moe_text",
-   "path": "fixtures/qwen3_5_moe_text/codecho__Qwen3.5-35B-A3B-text-only.json",
-   "repo": "codecho/Qwen3.5-35B-A3B-text-only",
-   "repo_source": "filename",
-   "sha256": "acb3b63419cc72b37607ab2c6fa2b0c6e44f49d967ca37807f05331a0a65fb67",
-   "size": 2223
-  },
-  {
-   "architectures": [
-    "Qwen3_5MoeForCausalLM"
-   ],
-   "model_type": "qwen3_5_moe_text",
-   "path": "fixtures/qwen3_5_moe_text/imdatta0__small_qwen3_5_20b.json",
-   "repo": "imdatta0/small_qwen3_5_20b",
-   "repo_source": "filename",
-   "sha256": "8a928b4d221301b30c070bc44ccf2a0b2e6b1bbbd4926a5dc489e3e7ebfb4671",
-   "size": 2038
   },
   {
    "architectures": [
@@ -4952,66 +1633,11 @@
     "Qwen3ASRForConditionalGeneration"
    ],
    "model_type": "qwen3_asr",
-   "path": "fixtures/qwen3_asr/Qwen__Qwen3-ASR-1.7B.json",
-   "repo": "Qwen/Qwen3-ASR-1.7B",
-   "repo_source": "filename",
-   "sha256": "2e74a751548b8ad7d7526d29365ad8144c345d8b412b1152d25dc6698452712f",
-   "size": 6194
-  },
-  {
-   "architectures": [
-    "Qwen3ASRForConditionalGeneration"
-   ],
-   "model_type": "qwen3_asr",
    "path": "fixtures/qwen3_asr/Qwen__Qwen3-ForcedAligner-0.6B.json",
    "repo": "Qwen/Qwen3-ForcedAligner-0.6B",
    "repo_source": "csv",
    "sha256": "d616c65d46c4b90bdc651b0a0963ea932732241140f337f9bb6b0335a9c8ef09",
    "size": 5982
-  },
-  {
-   "architectures": [
-    "Qwen3MoeForCausalLM"
-   ],
-   "model_type": "qwen3_moe",
-   "path": "fixtures/qwen3_moe/Qwen__Qwen3-30B-A3B.json",
-   "repo": "Qwen/Qwen3-30B-A3B",
-   "repo_source": "filename",
-   "sha256": "2850ddb3bf7aecad20b611e2d44f3077fc8193f4827c93beddd4c02ad63c2297",
-   "size": 963
-  },
-  {
-   "architectures": [
-    "Qwen3NextForCausalLM"
-   ],
-   "model_type": "qwen3_next",
-   "path": "fixtures/qwen3_next/Qwen__Qwen3-Coder-Next.json",
-   "repo": "Qwen/Qwen3-Coder-Next",
-   "repo_source": "filename",
-   "sha256": "a7b8098d3b05777f12bb5677a26bf1240a1bb09def1b06b29e6be86cae2e84f8",
-   "size": 1178
-  },
-  {
-   "architectures": [
-    "Qwen3NextForCausalLM"
-   ],
-   "model_type": "qwen3_next",
-   "path": "fixtures/qwen3_next/Qwen__Qwen3-Next-80B-A3B-Instruct.json",
-   "repo": "Qwen/Qwen3-Next-80B-A3B-Instruct",
-   "repo_source": "filename",
-   "sha256": "2d483c7cabad7c8704478ed4038fa7e7b2eff840bc00a118eccbe38e2b488303",
-   "size": 1154
-  },
-  {
-   "architectures": [
-    "Qwen3NextForCausalLM"
-   ],
-   "model_type": "qwen3_next",
-   "path": "fixtures/qwen3_next/tiny-random__qwen3-next-moe.json",
-   "repo": "tiny-random/qwen3-next-moe",
-   "repo_source": "filename",
-   "sha256": "8b59382210a275a69022460ea4be6e78b0ca71318f002630d7cdda8514e348b2",
-   "size": 1281
   },
   {
    "architectures": [
@@ -5040,44 +1666,11 @@
     "Qwen3VLForConditionalGeneration"
    ],
    "model_type": "qwen3_vl",
-   "path": "fixtures/qwen3_vl/Qwen__Qwen3-VL-4B-Instruct.json",
-   "repo": "Qwen/Qwen3-VL-4B-Instruct",
-   "repo_source": "filename",
-   "sha256": "edac7703329133edfc53e46ac0081835144c99d7eebf28b71c732694d435224d",
-   "size": 1505
-  },
-  {
-   "architectures": [
-    "Qwen3VLForConditionalGeneration"
-   ],
-   "model_type": "qwen3_vl",
    "path": "fixtures/qwen3_vl/Qwen__Qwen3-VL-8B-Instruct.json",
    "repo": "Qwen/Qwen3-VL-8B-Instruct",
    "repo_source": "csv",
    "sha256": "5cd452860dc1e9c29dd71cc3cef7f39b338b7a40793f7a260655c2d3568f3661",
    "size": 1474
-  },
-  {
-   "architectures": [
-    "Qwen3VLForConditionalGeneration"
-   ],
-   "model_type": "qwen3_vl",
-   "path": "fixtures/qwen3_vl/Qwen__Qwen3-VL-Reranker-2B.json",
-   "repo": "Qwen/Qwen3-VL-Reranker-2B",
-   "repo_source": "filename",
-   "sha256": "82d38a8f803e38e13986fdd622114a6fec12a834adbd3cee9253d757a257d23d",
-   "size": 1652
-  },
-  {
-   "architectures": [
-    "Qwen3VLMoeForConditionalGeneration"
-   ],
-   "model_type": "qwen3_vl_moe",
-   "path": "fixtures/qwen3_vl_moe/Qwen__Qwen3-VL-30B-A3B-Instruct.json",
-   "repo": "Qwen/Qwen3-VL-30B-A3B-Instruct",
-   "repo_source": "filename",
-   "sha256": "6129b3f54d517a18553cf7525ff4886be6831c5806fc094d632b8ef38d859912",
-   "size": 1661
   },
   {
    "architectures": [
@@ -5089,17 +1682,6 @@
    "repo_source": "csv",
    "sha256": "eb531e7f4069d4362cefd0f5a553c7ec9209a825ff118c54704f3e037bf2b3e8",
    "size": 2068
-  },
-  {
-   "architectures": [
-    "Qwen3VLNemotronEmbedModel"
-   ],
-   "model_type": "qwen3_vl_nemotron_embed",
-   "path": "fixtures/qwen3_vl_nemotron_embed/nvidia__nemotron-colembed-vl-8b-v2.json",
-   "repo": "nvidia/nemotron-colembed-vl-8b-v2",
-   "repo_source": "filename",
-   "sha256": "6bfd341440b901e83503cceae2f8dfd2e0bfa4646f9214b57b13bbbcc6601492",
-   "size": 2064
   },
   {
    "architectures": [
@@ -5125,39 +1707,6 @@
   },
   {
    "architectures": [
-    "RobertaForSequenceClassification"
-   ],
-   "model_type": "roberta",
-   "path": "fixtures/roberta/cross-encoder__quora-roberta-base.json",
-   "repo": "cross-encoder/quora-roberta-base",
-   "repo_source": "filename",
-   "sha256": "8c50d3f5de660e595ff1f94d199984de19c51d0a8e7d26e692d6c52c18e20562",
-   "size": 608
-  },
-  {
-   "architectures": [
-    "RobertaForMaskedLM"
-   ],
-   "model_type": "roberta",
-   "path": "fixtures/roberta/sentence-transformers__all-roberta-large-v1.json",
-   "repo": "sentence-transformers/all-roberta-large-v1",
-   "repo_source": "filename",
-   "sha256": "46ec095fd384ac352e2a58609f234834afc7e88e196149d9a5124651dd550424",
-   "size": 650
-  },
-  {
-   "architectures": [
-    "RobertaModel"
-   ],
-   "model_type": "roberta",
-   "path": "fixtures/roberta/sentence-transformers__stsb-roberta-base-v2.json",
-   "repo": "sentence-transformers/stsb-roberta-base-v2",
-   "repo_source": "filename",
-   "sha256": "350608bd1847c8a2cec75fe1c36a407ce092ad82e8e41694569aa699ff84ee8f",
-   "size": 675
-  },
-  {
-   "architectures": [
     "SarvamMLAForCausalLM"
    ],
    "model_type": "sarvam_mla",
@@ -5180,136 +1729,6 @@
   },
   {
    "architectures": [
-    "SeedOssForCausalLM"
-   ],
-   "model_type": "seed_oss",
-   "path": "fixtures/seed_oss/ByteDance-Seed__Seed-OSS-36B-Instruct.json",
-   "repo": "ByteDance-Seed/Seed-OSS-36B-Instruct",
-   "repo_source": "filename",
-   "sha256": "09f91799169531b687cbd15e6338aee6105fcbb058193c04faa7ae0344506132",
-   "size": 770
-  },
-  {
-   "architectures": [
-    "SiglipModel"
-   ],
-   "model_type": "siglip",
-   "path": "fixtures/siglip/google__siglip-base-patch16-224.json",
-   "repo": "google/siglip-base-patch16-224",
-   "repo_source": "filename",
-   "sha256": "cd85b3d28829722820bcb89a2cfbb4160e55fd359249a3044da724166a8d9688",
-   "size": 432
-  },
-  {
-   "architectures": null,
-   "model_type": "siglip",
-   "path": "fixtures/siglip/google__siglip2-base-patch16-224.json",
-   "repo": "google/siglip2-base-patch16-224",
-   "repo_source": "filename",
-   "sha256": "fe8b5fe6d5734360678fd71c11c21e1ea3364bd8598d34295d9206335973ffd7",
-   "size": 253
-  },
-  {
-   "architectures": [
-    "SkyworkR1VChatModel"
-   ],
-   "model_type": "skywork_chat",
-   "path": "fixtures/skywork_chat/Skywork__Skywork-R1V-38B.json",
-   "repo": "Skywork/Skywork-R1V-38B",
-   "repo_source": "filename",
-   "sha256": "63541e69bd37cc6e54af40cdc3003ef9ecd5927ac475b14cc3e3bf84972612e5",
-   "size": 3709
-  },
-  {
-   "architectures": [
-    "SmolLM3ForCausalLM"
-   ],
-   "model_type": "smollm3",
-   "path": "fixtures/smollm3/HuggingFaceTB__SmolLM3-3B.json",
-   "repo": "HuggingFaceTB/SmolLM3-3B",
-   "repo_source": "filename",
-   "sha256": "c72b1031274ff4626e434d0019e88e95a767460135db9ee492eb80652b786af1",
-   "size": 1915
-  },
-  {
-   "architectures": [
-    "SmolVLMForConditionalGeneration"
-   ],
-   "model_type": "smolvlm",
-   "path": "fixtures/smolvlm/HuggingFaceTB__SmolVLM2-2.2B-Instruct.json",
-   "repo": "HuggingFaceTB/SmolVLM2-2.2B-Instruct",
-   "repo_source": "filename",
-   "sha256": "ec1f7e45deeafba7601f8dd0b6ca9ba75985dffc2f053e82341d12d06e2d9d46",
-   "size": 3642
-  },
-  {
-   "architectures": [
-    "SolarForCausalLM"
-   ],
-   "model_type": "solar",
-   "path": "fixtures/solar/upstage__solar-pro-preview-instruct.json",
-   "repo": "upstage/solar-pro-preview-instruct",
-   "repo_source": "filename",
-   "sha256": "2f155ce0b51b40c0c2e9d7bedaed0877ffbda623fc0f903b4f4ccb6da49f3b6e",
-   "size": 1035
-  },
-  {
-   "architectures": [
-    "StableLmForCausalLM"
-   ],
-   "model_type": "stablelm",
-   "path": "fixtures/stablelm/stabilityai__stablelm-3b-4e1t.json",
-   "repo": "stabilityai/stablelm-3b-4e1t",
-   "repo_source": "filename",
-   "sha256": "6a8e761cc1117804c0ebc733f880268f71b1b06c9269f4cdb092c6f115526976",
-   "size": 599
-  },
-  {
-   "architectures": [
-    "StableLMAlphaForCausalLM"
-   ],
-   "model_type": "stablelm_alpha",
-   "path": "fixtures/stablelm_alpha/stabilityai__stablelm-base-alpha-7b-v2.json",
-   "repo": "stabilityai/stablelm-base-alpha-7b-v2",
-   "repo_source": "filename",
-   "sha256": "413a4bd74fadd7f9f1ba4f5ddcfeb85d4622323a2a90251290885a389fee8e13",
-   "size": 706
-  },
-  {
-   "architectures": [
-    "Starcoder2ForCausalLM"
-   ],
-   "model_type": "starcoder2",
-   "path": "fixtures/starcoder2/bigcode__starcoder2-15b.json",
-   "repo": "bigcode/starcoder2-15b",
-   "repo_source": "filename",
-   "sha256": "fdb2d6526092653e5f6f7af655926bf08161fadc165607eb41c2c840f5e5ca1d",
-   "size": 803
-  },
-  {
-   "architectures": [
-    "Starcoder2ForCausalLM"
-   ],
-   "model_type": "starcoder2",
-   "path": "fixtures/starcoder2/bigcode__starcoder2-3b.json",
-   "repo": "bigcode/starcoder2-3b",
-   "repo_source": "filename",
-   "sha256": "636a8a48c05d5882e4467aacc1e2cc0dcff83be582f5658e3af172bda5e7d94e",
-   "size": 700
-  },
-  {
-   "architectures": [
-    "Starcoder2ForCausalLM"
-   ],
-   "model_type": "starcoder2",
-   "path": "fixtures/starcoder2/bigcode__starcoder2-7b.json",
-   "repo": "bigcode/starcoder2-7b",
-   "repo_source": "filename",
-   "sha256": "af07df1e6ea8f9a1b74b8ada728e694c9e63db00fd71b1feccd0ae69d5292b9d",
-   "size": 893
-  },
-  {
-   "architectures": [
     "Step1ForCausalLM"
    ],
    "model_type": "step1",
@@ -5318,17 +1737,6 @@
    "repo_source": "csv",
    "sha256": "593253b2e70af8c2c9922cf7613b825d4fec6aaad4c8476df3f4692c100af266",
    "size": 568
-  },
-  {
-   "architectures": [
-    "Step3VLForConditionalGeneration"
-   ],
-   "model_type": "step3_vl",
-   "path": "fixtures/step3_vl/stepfun-ai__step3.json",
-   "repo": "stepfun-ai/step3",
-   "repo_source": "filename",
-   "sha256": "d817cef5cb09412ae57de4922b4bfb20abd84899c5405ca4e2017cf37188d453",
-   "size": 1540
   },
   {
    "architectures": [
@@ -5376,34 +1784,12 @@
   },
   {
    "architectures": [
-    "TeleChat2ForCausalLM"
-   ],
-   "model_type": "telechat",
-   "path": "fixtures/telechat/Tele-AI__TeleChat2-3B.json",
-   "repo": "Tele-AI/TeleChat2-3B",
-   "repo_source": "filename",
-   "sha256": "18d42dab5d6b0ede933f896484a618e2f1bd0f21e7c2a281e477383bbce72dd1",
-   "size": 1044
-  },
-  {
-   "architectures": [
     "TeleChat3ForCausalLM"
    ],
    "model_type": "telechat3",
    "path": "fixtures/telechat3/Tele-AI__TeleChat3-36B-Thinking.json",
    "repo": "Tele-AI/TeleChat3-36B-Thinking",
    "repo_source": "csv",
-   "sha256": "e556336f28c8f093df12cc0cfbdd679404ec5f45ca151ef6f218a8d5e80fd49f",
-   "size": 1093
-  },
-  {
-   "architectures": [
-    "TeleChat3ForCausalLM"
-   ],
-   "model_type": "telechat3",
-   "path": "fixtures/telechat3/Tele-AI__TeleChat3-Coder-36B-Thinking.json",
-   "repo": "Tele-AI/TeleChat3-Coder-36B-Thinking",
-   "repo_source": "filename",
    "sha256": "e556336f28c8f093df12cc0cfbdd679404ec5f45ca151ef6f218a8d5e80fd49f",
    "size": 1093
   },
@@ -5417,17 +1803,6 @@
    "repo_source": "csv",
    "sha256": "bfc87993bb361468a52fbe54fb53b0e4d1fe9fd13d34f21451a46d2a93b41dd5",
    "size": 2612
-  },
-  {
-   "architectures": [
-    "UltravoxModel"
-   ],
-   "model_type": "ultravox",
-   "path": "fixtures/ultravox/fixie-ai__ultravox-v0_5-llama-3_2-1b.json",
-   "repo": "fixie-ai/ultravox-v0_5-llama-3_2-1b",
-   "repo_source": "filename",
-   "sha256": "103cff0cf245b20a640c9d8d19c769a74fae74fa227436c4f6d8082aad71db7e",
-   "size": 2151
   },
   {
    "architectures": [
@@ -5453,28 +1828,6 @@
   },
   {
    "architectures": [
-    "VoxtralForConditionalGeneration"
-   ],
-   "model_type": "voxtral",
-   "path": "fixtures/voxtral/mistralai__Voxtral-Mini-3B-2507.json",
-   "repo": "mistralai/Voxtral-Mini-3B-2507",
-   "repo_source": "filename",
-   "sha256": "368124c9a9171b3a6c0cdb35cd7fedeff465eefecf315e2a621684bbed7dcd7e",
-   "size": 1361
-  },
-  {
-   "architectures": [
-    "VoxtralForConditionalGeneration"
-   ],
-   "model_type": "voxtral",
-   "path": "fixtures/voxtral/mistralai__Voxtral-Small-24B-2507.json",
-   "repo": "mistralai/Voxtral-Small-24B-2507",
-   "repo_source": "filename",
-   "sha256": "fcef38958b7d3063034518a14613a60511547e939f8f58fa107dad595483737c",
-   "size": 1362
-  },
-  {
-   "architectures": [
     "VoxtralRealtimeForConditionalGeneration"
    ],
    "model_type": "voxtral_realtime",
@@ -5483,39 +1836,6 @@
    "repo_source": "csv",
    "sha256": "96582f5809ad179531d47f9f89d76c696058fbdeff608d6611dcb7e076ea7e93",
    "size": 1572
-  },
-  {
-   "architectures": [
-    "WhisperForConditionalGeneration"
-   ],
-   "model_type": "whisper",
-   "path": "fixtures/whisper/openai__whisper-large-v3-turbo.json",
-   "repo": "openai/whisper-large-v3-turbo",
-   "repo_source": "filename",
-   "sha256": "c5b526b3e3cd64cd8940dabb45e8ba726629e22d8ed389c29b552f9140daf04a",
-   "size": 1256
-  },
-  {
-   "architectures": [
-    "WhisperForConditionalGeneration"
-   ],
-   "model_type": "whisper",
-   "path": "fixtures/whisper/openai__whisper-large-v3.json",
-   "repo": "openai/whisper-large-v3",
-   "repo_source": "filename",
-   "sha256": "ad0e8d1e46f4d01f7861a21509e5d0f977d6cc1f367a370603c92541d819807b",
-   "size": 1272
-  },
-  {
-   "architectures": [
-    "WhisperForConditionalGeneration"
-   ],
-   "model_type": "whisper",
-   "path": "fixtures/whisper/openai__whisper-small.json",
-   "repo": "openai/whisper-small",
-   "repo_source": "filename",
-   "sha256": "e6a2b489da1b5aed65a8eb8d1e7466fa867ad5643a8bc138ba708bd56b2875c4",
-   "size": 1967
   },
   {
    "architectures": [
@@ -5530,17 +1850,6 @@
   },
   {
    "architectures": [
-    "XLMRobertaForSequenceClassification"
-   ],
-   "model_type": "xlm-roberta",
-   "path": "fixtures/xlm-roberta/BAAI__bge-reranker-v2-m3.json",
-   "repo": "BAAI/bge-reranker-v2-m3",
-   "repo_source": "filename",
-   "sha256": "13dcd6c31d9fec9d1d8e158702072f62d7fa7d312a64b9fe057bec9a08cfe41a",
-   "size": 795
-  },
-  {
-   "architectures": [
     "XLMRobertaForTokenClassification"
    ],
    "model_type": "xlm-roberta",
@@ -5549,167 +1858,12 @@
    "repo_source": "csv",
    "sha256": "b39f5cdaa31793288077859feb3d4e742b2d5a1226fe3374e97fc0220c02222f",
    "size": 980
-  },
-  {
-   "architectures": [
-    "XLMRobertaModel"
-   ],
-   "model_type": "xlm-roberta",
-   "path": "fixtures/xlm-roberta/intfloat__multilingual-e5-base.json",
-   "repo": "intfloat/multilingual-e5-base",
-   "repo_source": "filename",
-   "sha256": "9dab198f24c8c0879e481cf7822005d5ecbceedbacb390ffafa594e28d31bac4",
-   "size": 694
-  },
-  {
-   "architectures": [
-    "XLMRobertaForSequenceClassification"
-   ],
-   "model_type": "xlm-roberta",
-   "path": "fixtures/xlm-roberta/papluca__xlm-roberta-base-language-detection.json",
-   "repo": "papluca/xlm-roberta-base-language-detection",
-   "repo_source": "filename",
-   "sha256": "c853c935230721240f2fc06acb72fb086cecea3cec99b62d843ac4678b7daba9",
-   "size": 1417
-  },
-  {
-   "architectures": [
-    "Zamba2ForCausalLM"
-   ],
-   "model_type": "zamba2",
-   "path": "fixtures/zamba2/Zyphra__Zamba2-1.2B-instruct.json",
-   "repo": "Zyphra/Zamba2-1.2B-instruct",
-   "repo_source": "filename",
-   "sha256": "3cc6e1fd1266a062390f50cd5e13ae36e2f36ada8dbb3443c284581af5eb355a",
-   "size": 1707
-  },
-  {
-   "architectures": [
-    "Zamba2ForCausalLM"
-   ],
-   "model_type": "zamba2",
-   "path": "fixtures/zamba2/Zyphra__Zamba2-2.7B-instruct.json",
-   "repo": "Zyphra/Zamba2-2.7B-instruct",
-   "repo_source": "filename",
-   "sha256": "0497ca3001366ed8eaef1030c84f856fd864f6f5e2ba86cef9ee9b211807df02",
-   "size": 2020
-  },
-  {
-   "architectures": [
-    "Zamba2ForCausalLM"
-   ],
-   "model_type": "zamba2",
-   "path": "fixtures/zamba2/Zyphra__Zamba2-7B-instruct.json",
-   "repo": "Zyphra/Zamba2-7B-instruct",
-   "repo_source": "filename",
-   "sha256": "51d90f27707cd78e64184c5f5295f5b2dcc967c75f4469d522b198a0f245f5e8",
-   "size": 2408
   }
  ],
  "kind": "config-only (no weights)",
- "model_types": 248,
+ "model_types": 134,
  "schema": 1,
- "skipped": [
-  {
-   "file": "cfg/MiniMaxAI_MiniMax-M3.1-Flash.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg/Qwen_Qwen3.8-27B.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg/llama-nemotron-rerank-1b-v2.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg/meta-models_Muse-Spark-Open-816B-A42B.json",
-   "head": "Access to model meta-models/Muse-Spark-Open-816B-A42B is res",
-   "reason": "not-json-object"
-  },
-  {
-   "file": "cfg/nvidia_NVIDIA-Nemotron-3-Super-120B-A12B-BF16.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg/nvidia_NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg/nvidia_NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg/openbmb_MiniCPM-V-4_7.json",
-   "head": "Invalid username or password.",
-   "reason": "not-json-object"
-  },
-  {
-   "file": "cfg/zai-org_GLM-5.2.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg/zai-org_GLM-5.3.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg32/llama-nemotron-embed-1b-v2.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg32/llama-nemotron-embed-vl-1b-v2.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg32/llama-nemotron-rerank-1b-v2.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg32/llama-nemotron-rerank-vl-1b-v2.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg51/Qwen_Qwen3.8-Flash-Next-FP8.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg51/Qwen_Qwen4-Exp.json",
-   "head": "Invalid username or password.",
-   "reason": "not-json-object"
-  },
-  {
-   "file": "cfg51/idx.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg57/vox.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg57/voxp.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg57/voy.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfg57/xlm.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfgI/Intern-S1-Pro.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfgI/Intern-S2-Mobius.json",
-   "reason": "no-csv-match"
-  },
-  {
-   "file": "cfgI/Intern-S2-Preview.json",
-   "reason": "no-csv-match"
-  }
- ],
+ "skipped": [],
  "unfetched": [
   {
    "reason": "no-file",

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Build the offline config bundle: fixtures/ + MANIFEST.json.   (no network, reads local files only)
 
-usage: make_bundle.py --src DIR [--src DIR ...] [--csv model-coverage.csv] [--out scripts/conformance/offline]
+usage: make_bundle.py --src DIR [--src DIR ...] [--csv model-coverage.csv] [--out scripts/conformance/offline] [--csv-only]
+
+--csv-only keeps only repos listed in the survey CSV (smaller bundle); others are recorded under "skipped".
 
 * Inputs are directories of previously fetched config.json files. They are UNTRUSTED DATA: files are
   only parsed as JSON and copied byte-for-byte; nothing in them is executed or interpreted as an instruction.
@@ -25,6 +27,7 @@ def main():
     ap.add_argument("--src", action="append", required=True)
     ap.add_argument("--csv", default=os.path.join(here, "..", "model-coverage.csv"))
     ap.add_argument("--out", default=here)
+    ap.add_argument("--csv-only", action="store_true")
     a = ap.parse_args()
 
     repos = {}  # sanitised filename stem -> repo
@@ -56,7 +59,7 @@ def main():
                                 "head": raw[:60].decode("utf8", "replace")})
                 if repo: errors.setdefault(repo, raw[:60].decode("utf8", "replace"))
                 continue
-            if repo is None:
+            if repo is None or (a.csv_only and prov != "csv"):
                 skipped.append({"file": f"{os.path.basename(src)}/{name}", "reason": "no-csv-match"})
                 continue
             if repo in seen:

@@ -68,6 +68,18 @@ struct ConformanceRegistryTests {
         }
     }
 
+    @Test("every registry key found in source is still registered at runtime")
+    func allRegistryKeysResolve() async {
+        var missing: [String] = []
+        for (registry, keys) in ConformanceExpectations.registryKeys {
+            for key in keys {
+                let found = await Self.actualRegistries(for: key)
+                if !found.contains(registry) { missing.append("\(registry.rawValue): \(key)") }
+            }
+        }
+        #expect(missing.isEmpty, "REGRESSION (key in registry source but not registered):\n\(missing.sorted().joined(separator: "\n"))")
+    }
+
     @Test("expectations contain no duplicate model_type")
     func noDuplicateModelTypes() {
         let types = ConformanceExpectations.all.map(\.modelType)
