@@ -5,8 +5,11 @@
 // wrapper, the OUTCOME is tracked: the wrapper observes whether any assertion in the body failed.
 //   * assertions failed  -> `[gap][OPEN] <name>`   (gap still exists)
 //   * assertions passed  -> `[gap][FIXED] <name>`  (gap closed: remove the wrapper / retire the overlay)
-// A running `[gap][SUMMARY] fixed N, open M` line follows each report (Swift Testing has no
-// suite-end hook, so the last SUMMARY line of the log is the final count).
+//   * no issue AND no counted assertion -> `[gap][UNKNOWN] <name>` (never FIXED: an empty body or bare
+//     `#expect`, which Swift Testing cannot observe when it passes; assert via `ConformanceGap.expect`)
+// A `[gap][SUMMARY] fixed N, open M, unknown K` line follows each report, printed inside the tracker
+// lock from the final state, so the LAST SUMMARY line of the log is authoritative (Swift Testing has
+// no suite-end hook, so there is no separate end-of-run print).
 // Strict run (`CONFORMANCE_STRICT=1`, same switch as ConformanceRegistryTests' LANDED rule): a FIXED
 // gap is a test FAILURE ("remove the knownIssue wrapper / retire the overlay"); by default it is a
 // warning line only.
@@ -17,40 +20,98 @@
 import Foundation
 import Testing
 
+/// Outcome of one known-gap body.
+enum ConformanceGapOutcome: Sendable, Equatable {
+    case open     // an assertion failed: the gap still exists
+    case fixed    // at least one counted assertion ran and none failed
+    case unknown  // no issue recorded, but no counted assertion ran either (empty body / bare #expect)
+}
+
 /// Outcome book-keeping for known gaps. A class so the shared instance can be mutated from
 /// parallel tests; tests of the support itself use their own instance.
 final class ConformanceGapTracker: @unchecked Sendable {
     private let lock = NSLock()
-    private var fixed: [String: Bool] = [:]
+    private var outcomes: [String: ConformanceGapOutcome] = [:]
 
-    func record(_ name: String, fixed isFixed: Bool) {
+    /// Records the outcome and calls `emit` for each report line WHILE HOLDING the lock, so lines of
+    /// concurrent gaps never interleave and the last SUMMARY line printed is computed from the final
+    /// state (it is authoritative). `emit` must not call back into the tracker.
+    func record(
+        _ name: String, outcome: ConformanceGapOutcome,
+        emit: (_ summary: String) -> Void = { _ in }
+    ) {
         lock.lock(); defer { lock.unlock() }
-        // A name seen twice (e.g. a parameterised test) is FIXED only if every occurrence passed.
-        fixed[name] = (fixed[name] ?? true) && isFixed
+        // A name seen twice (parameterised test): OPEN beats UNKNOWN beats FIXED.
+        switch (outcomes[name], outcome) {
+        case (.open, _), (_, .open): outcomes[name] = .open
+        case (.unknown, _), (_, .unknown): outcomes[name] = .unknown
+        default: outcomes[name] = .fixed
+        }
+        emit(Self.summary(outcomes))
     }
 
-    var counts: (fixed: Int, open: Int) {
+    private static func summary(_ o: [String: ConformanceGapOutcome]) -> String {
+        let (f, op, u) = count(o)
+        return "[gap][SUMMARY] fixed \(f), open \(op), unknown \(u)"
+    }
+
+    private static func count(_ o: [String: ConformanceGapOutcome]) -> (Int, Int, Int) {
+        var f = 0, op = 0, u = 0
+        for v in o.values { switch v { case .fixed: f += 1; case .open: op += 1; case .unknown: u += 1 } }
+        return (f, op, u)
+    }
+
+    var counts: (fixed: Int, open: Int, unknown: Int) {
         lock.lock(); defer { lock.unlock() }
-        let f = fixed.values.filter { $0 }.count
-        return (f, fixed.count - f)
+        let c = Self.count(outcomes)
+        return (c.0, c.1, c.2)
+    }
+
+    func outcome(_ name: String) -> ConformanceGapOutcome? {
+        lock.lock(); defer { lock.unlock() }
+        return outcomes[name]
     }
 
     func isFixed(_ name: String) -> Bool? {
-        lock.lock(); defer { lock.unlock() }
-        return fixed[name]
+        guard let o = outcome(name) else { return nil }
+        if case .fixed = o { return true }
+        return false
     }
-}
-
-final class IssueFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var flag = false
-    func set() { lock.lock(); flag = true; lock.unlock() }
-    var value: Bool { lock.lock(); defer { lock.unlock() }; return flag }
 }
 
 enum ConformanceGap {
     static var raw: Bool { ProcessInfo.processInfo.environment["CONFORMANCE_GAP_RAW"] == "1" }
     static var strict: Bool { ProcessInfo.processInfo.environment["CONFORMANCE_STRICT"] == "1" }
+
+    final class IssueFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var flag = false
+        func set() { lock.lock(); flag = true; lock.unlock() }
+        var value: Bool { lock.lock(); defer { lock.unlock() }; return flag }
+    }
+
+    /// Counts assertions made through `ConformanceGap.expect` inside one gap body.
+    final class AssertionCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        func bump() { lock.lock(); n += 1; lock.unlock() }
+        var count: Int { lock.lock(); defer { lock.unlock() }; return n }
+    }
+
+    @TaskLocal static var currentCounter: AssertionCounter?
+
+    /// Swift Testing cannot observe a PASSING `#expect`, so "no issue recorded" alone cannot tell a
+    /// fixed gap from an empty body. Assertions inside a gap body should go through this helper (or
+    /// call `noteAssertion()`); a body that counted none is reported UNKNOWN, not FIXED.
+    static func expect(
+        _ condition: @autoclosure () -> Bool, _ comment: @autoclosure () -> Comment? = nil,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        noteAssertion()
+        #expect(condition(), comment(), sourceLocation: sourceLocation)
+    }
+
+    static func noteAssertion() { currentCounter?.bump() }
 
     static let shared = ConformanceGapTracker()
 
@@ -81,27 +142,38 @@ enum ConformanceGap {
         _ body: () throws -> Void
     ) -> Bool {
         let saw = IssueFlag()
+        let counter = AssertionCounter()
         do {
-            try withKnownIssue(
-                Comment(rawValue: name), isIntermittent: true, sourceLocation: sourceLocation,
-                { try body() },
-                matching: { _ in saw.set(); return true })
+            try $currentCounter.withValue(counter) {
+                try withKnownIssue(
+                    Comment(rawValue: name), isIntermittent: true, sourceLocation: sourceLocation,
+                    { try body() },
+                    matching: { _ in saw.set(); return true })
+            }
         } catch {
             // Unreachable: `matching` accepts every issue, including a thrown error.
             saw.set()
         }
-        let isFixed = !saw.value
-        tracker.record(name, fixed: isFixed)
-        print("[gap][\(isFixed ? "FIXED" : "OPEN")] \(name)")
-        if isFixed {
-            if strict {
-                onStrictViolation("gap FIXED: \(name) -- \(strictMessage)")
-            } else {
-                print("[gap][WARNING] \(name) is FIXED -- \(strictMessage) (failure under CONFORMANCE_STRICT=1)")
+        let outcome: ConformanceGapOutcome =
+            saw.value ? .open : (counter.count > 0 ? .fixed : .unknown)
+        // All report lines are printed inside the tracker lock (see `record`).
+        tracker.record(name, outcome: outcome) { summary in
+            switch outcome {
+            case .open: print("[gap][OPEN] \(name)")
+            case .unknown:
+                print("[gap][UNKNOWN] \(name)")
+                print("[gap][WARNING] \(name) recorded no counted assertion (empty body or bare #expect): not reported FIXED; use ConformanceGap.expect")
+            case .fixed:
+                print("[gap][FIXED] \(name)")
+                if !strict {
+                    print("[gap][WARNING] \(name) is FIXED -- \(strictMessage) (failure under CONFORMANCE_STRICT=1)")
+                }
             }
+            print(summary)
         }
-        let c = tracker.counts
-        print("[gap][SUMMARY] fixed \(c.fixed), open \(c.open)")
-        return isFixed
+        if case .fixed = outcome, strict {
+            onStrictViolation("gap FIXED: \(name) -- \(strictMessage)")
+        }
+        return { if case .fixed = outcome { return true } else { return false } }()
     }
 }
