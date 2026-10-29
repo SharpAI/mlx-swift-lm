@@ -3,7 +3,7 @@
 #
 # Merges ml-explore/mlx-swift-lm main into a THROWAWAY local branch of a SCRATCH clone, regenerates
 # the expectations, runs the conformance tests with CONFORMANCE_STRICT=1 and prints a short report:
-#   conflicts (files), LANDED, REGRESSION, EXIT.
+#   shadow-check (COLLISION => EXIT=4, before any merge), conflicts (files), LANDED, REGRESSION, EXIT.
 #
 # Step BEFORE running this: diff the harness against upstream (git diff HEAD...upstream/main on Libraries,
 # Tests/MLXLMTests/Conformance, scripts/conformance) and run shadow-check.sh --upstream <checkout>. This script
@@ -72,6 +72,22 @@ git -C "$repo" config user.email >/dev/null || git -C "$repo" config user.email 
 
 echo "== sentinel: fetching upstream main"
 git -C "$repo" fetch --quiet upstream main || die "fetch of upstream main failed"
+# Shadow check BEFORE merging (SL-30): our overlay names against the upstream tree as fetched. Run on the
+# unmerged clone so upstream's own direct registerModelType calls are not misread as ours. A collision means the
+# merge could not build, so stop here (EXIT=4) instead of reporting a misleading build failure.
+up_tree="$work/upstream-tree"; mkdir -p "$up_tree"
+git -C "$repo" archive FETCH_HEAD Libraries | tar -x -C "$up_tree" || die "cannot export upstream Libraries/ from FETCH_HEAD"
+echo "== sentinel: shadow-check (ours vs upstream @ $(git -C "$repo" rev-parse --short FETCH_HEAD))"
+shadow_status=0
+"$here/shadow-check.sh" --repo "$repo" --upstream "$up_tree" >"$work/sentinel-shadow.log" 2>&1 || shadow_status=$?
+sed 's/^/  /' "$work/sentinel-shadow.log"
+[ "$shadow_status" -le 1 ] || die "shadow-check could not run (exit $shadow_status, see output above)"
+if [ "$shadow_status" -eq 1 ]; then
+    echo "SENTINEL_RESULT=COLLISION"
+    echo "EXIT=4"
+    exit 4
+fi
+
 base_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
 branch="sentinel/upstream-$(date +%Y%m%d-%H%M%S)"
 git -C "$repo" checkout -q -b "$branch" || die "cannot create $branch"

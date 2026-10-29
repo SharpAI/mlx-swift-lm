@@ -46,4 +46,26 @@ out=$(SENTINEL_SCRATCH_ROOTS="$(cd "$tmp/s" && pwd -P)" "$here/upstream/sentinel
 # 6. a failed refusal must not have touched remotes (no push URL rewritten before the checks).
 [ "$(git -C "$tmp/s/repo" remote get-url --push origin)" = "$tmp/real" ]; check "sentinel: refusals leave remotes untouched" $?
 
+# 7. sentinel runs shadow-check against the fetched upstream tree (SL-30): a planted collision stops it with
+#    SENTINEL_RESULT=COLLISION / EXIT=4 BEFORE any merge; a clean upstream lets it proceed to the merge step.
+#    The "upstream" is a local git repo (SENTINEL_UPSTREAM_URL), so no network is used.
+mk_fixture() { # mk_fixture <name> <upstream swift line>  -> $tmp/<name>/{repo,up}
+    local d="$tmp/$1"; mkdir -p "$d/up/Libraries/MLXLMCommon" "$d/repo/Libraries/MLXLMCommon/SharpAIOverlay" "$d/repo/scripts/conformance/upstream"
+    printf '%s\n' "$2" >"$d/up/Libraries/MLXLMCommon/Up.swift"
+    git init -q -b main "$d/up" && git -C "$d/up" add -A && git -C "$d/up" -c user.name=t -c user.email=t@t commit -q -m up
+    printf 'public enum SharpAIOverlay {}\n' >"$d/repo/Libraries/MLXLMCommon/SharpAIOverlay/H.swift"
+    cp "$here/upstream/shadow-check.sh" "$d/repo/scripts/conformance/upstream/"
+    : >"$d/repo/scripts/conformance/upstream/shadow-allowlist.txt"
+    git init -q -b main "$d/repo" && git -C "$d/repo" remote add origin https://example.invalid/x.git
+    git -C "$d/repo" add -A && git -C "$d/repo" -c user.name=t -c user.email=t@t commit -q -m ours
+}
+tmpr=$(cd "$tmp" && pwd -P)
+mk_fixture coll 'public enum SharpAIOverlay {}'
+out=$(SENTINEL_SCRATCH_ROOTS="$tmpr" SENTINEL_UPSTREAM_URL="$tmp/coll/up" "$here/upstream/sentinel.sh" "$tmp/coll/repo" 2>&1); s=$?
+{ [ "$s" -eq 4 ] && echo "$out" | grep -q "COLLISION SharpAIOverlay" && echo "$out" | grep -q "SENTINEL_RESULT=COLLISION" && [ "$(echo "$out" | tail -1)" = "EXIT=4" ]; }; check "sentinel: upstream name collision exits 4 (shadow-check wired in)" $?
+git -C "$tmp/coll/repo" branch --list 'sentinel/*' | grep -q .; [ $? -ne 0 ]; check "sentinel: collision stops before creating the merge branch" $?
+mk_fixture clean 'public struct Unrelated {}'
+out=$(SENTINEL_SCRATCH_ROOTS="$tmpr" SENTINEL_UPSTREAM_URL="$tmp/clean/up" "$here/upstream/sentinel.sh" "$tmp/clean/repo" 2>&1); s=$?
+{ echo "$out" | grep -q "SHADOW_CHECK=PASS" && ! echo "$out" | grep -q "SENTINEL_RESULT=COLLISION" && [ "$s" -ne 4 ]; }; check "sentinel: clean upstream passes shadow-check and goes on to the merge" $?
+
 exit "$fail"
