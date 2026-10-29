@@ -2933,7 +2933,6 @@ public func generateMTP(
         return try generate(input: input, cache: cache, parameters: parameters, context: context,
                             wiredMemoryTicket: wiredMemoryTicket, tools: tools)
     }
-    let iterator = try MTPTokenIterator(
     // Read the prompt before the iterator queues its prefill, which this would wait for.
     let reasoningPrimedInside = promptPrimesReasoning(
         input: input, modelConfiguration: context.configuration, tokenizer: context.tokenizer)
