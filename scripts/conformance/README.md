@@ -1,0 +1,40 @@
+# Conformance harness (air-gapped model coverage)
+
+Config-only tests that track which architectures this fork can run, without downloading any
+weights. Tracking issue and survey method: SharpAI/SwiftLM#254.
+
+## What is in here
+
+| File | Role |
+|---|---|
+| `model-coverage.csv` | Snapshot of the static vLLM-vs-SharpAI survey (225 rows). Input only. |
+| `gen_expectations.py` | Greps the three type registries and writes `Tests/MLXLMTests/Conformance/ConformanceExpectations.swift`. |
+| `Tests/MLXLMTests/Conformance/ConformanceRegistryTests.swift` | Tier 0: committed expectations == real registries (no GPU, no weights). |
+| `Tests/MLXLMTests/Conformance/ConformanceForwardTests.swift` | Tiers 1-2: build from config JSON with random weights, forward, check numeric properties. |
+
+## Reading a failure
+
+* `REGRESSION` -- a `model_type` that used to be registered is gone. A real bug.
+* `LANDED` -- a `model_type` we listed as missing is now registered. After an **upstream sync** this
+  means upstream implemented it: re-run `gen_expectations.py`, and delete any local overlay for it.
+* A `withKnownIssue` test going red with "known issue not recorded" means the gap was fixed:
+  remove the wrapper in the same change. A fix always lands together with the test that proves it.
+
+## Rules for adding ops / models (so upstream syncs stay painless)
+
+1. **Red first.** Add a failing case (or a `withKnownIssue` wrapper) that demonstrates the gap, then fix.
+2. **New files only.** Put new models/ops in new files under their own directory; do not edit
+   upstream-owned files except for a minimal hook.
+3. **Namespaced types.** Never reuse an upstream type name (`enum SharpAIOverlay { ... }`). A same-named
+   public type or function breaks the build when upstream adds it -- this is exactly how the
+   `compile(shapeless:)` shims broke mlx-swift#28 (fixed by mlx-swift-lm#89).
+4. **Register if absent.** Overlay registration must check `ModelTypeRegistry.contains(_:)` first, so
+   an upstream registration wins automatically.
+5. **Upstream watch.** Record, next to each overlay, the upstream symbol / `model_type` to look for;
+   the periodic upstream check runs this harness after every sync.
+
+## Regenerating
+
+```bash
+python3 scripts/conformance/gen_expectations.py   # then: swift test --filter Conformance
+```

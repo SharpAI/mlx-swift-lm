@@ -1,0 +1,226 @@
+arch,repo,model_type,added,params_total_b,params_active_b,modality,features,our_status,our_gaps
+AXK1ForCausalLM,skt/A.X-K1,axk1,2026-02-27,519,32.7,text,mla|moe|rope_yarn|post_mlp_norm,missing,no axk1 key; post_mlp_layernorm on MoE layers only; conditional e_score bias
+AfmoeForCausalLM,arcee-ai/Trinity-Nano-Preview,afmoe,2025-11-17,6.1,1.0,text,gqa|swa|moe|gated_attn|qk_norm,supported,no gap found (not run)
+AliceAIForCausalLM,yandex/AliceAI-Foundation-80B-A3B-Base,alice_ai,2026-10-15,80,3,text,kda|gqa|moe|attn_residual,missing,AttnRes absent; no alice_ai key; KDA only in SwiftLM DFlash path
+Alpamayo2Super,nvidia/Alpamayo2-Super,alpamayo2_super,2026-10-22,33.7,33,image+text,qwen3vl_wrapper|logit_mask,partial,vlm_config unwrap; weight remap; trajectory-token mask
+AudioFlamingo3ForConditionalGeneration,nvidia/audio-flamingo-3-hf,audioflamingo3,2025-12-14,8.27,8.27,audio+text,whisper_style_encoder|qwen2,missing,no audio tower (ALM whisper is a stub)
+BagelForConditionalGeneration,ByteDance-Seed/BAGEL-7B-MoT,bagel,2025-12-15,14.69,8.0,image+text,siglip|qwen2_qk_norm|mot,missing,qwen2 lacks qk_norm; no bagel key; SigLIP private to Gemma3/Paligemma
+BailingMoeV25MTPModel,inclusionAI/Ring-2.5-1T,bailing_hybrid,2026-07-06,1012.2,62.3,text,mtp|mla|moe,missing,target missing; no drafter; Ring-2.5 config has 0 nextn layers
+BailingMoeV2_5ForCausalLM,inclusionAI/Ling-2.5-1T,bailing_hybrid,2026-02-26,1012.23,62.3,text,mla|lightning_linear_attn|moe|fp8,missing,bailing_hybrid unregistered; no lightning attention; no channel FP8
+BailingMoeV3ForCausalLM,inclusionAI/Ling-3.0-flash,bailing_hybrid,2026-08-06,124.4,5.5,text,mla|kda|moe|swiglu_clamp,missing,no V3 class; KDA full-rank gate absent; per-layer swiglu clamp
+BailingMoeV3MTPModel,inclusionAI/Ling-3.0-flash,bailing_hybrid,2026-08-06,3.07,,text,mtp|mla|moe,missing,blocked on V3 target
+BailingMoeV3VLForConditionalGeneration,inclusionAI/Ling-3.0-flash-VL,bailing_moe_v3_vl,2026-09-10,124.4,5.5,image+text,mla|kda|mrope|vit,missing,text backbone missing; bailing_mrope on MLA rope slice
+BeamForCausalLM,reflection/Beam-1.0-501B-A23B,beam,2026-10-18,501.3,23.4,text,swa|nope_ssmax|sandwich_norm|moe|softcap,missing,no SSMax; depth-scaled residual; NVFP4 W4A4 loader
+BertForMaskedLM,google-bert/bert-base-uncased,bert,2026-07-13,0.1095,0.1095,text,encoder|mlm_head,partial,MLM head implemented but never selected; silu vs gelu; no tie
+BgeM3EmbeddingModel,BAAI/bge-m3,xlm-roberta,2026-01-22,0.5678,0.5678,text,encoder|sparse_head|colbert_head,partial,dense path ok; no sparse/colbert heads; .bin only
+ClefFlashForJointSchema,Cloudflare/clef-flash,qwen3_5,2026-10-13,9.41,9.41,image+text,gdn|vit|joint_head,partial,backbone resolves; JointSchema head missing
+ClefOmniForJointSchema,Cloudflare/clef-omni,qwen3_omni_moe,2026-10-12,35.26,3.35,omni,moe|audio|vit|joint_head,missing,no qwen3_omni; no audio encoder; no head
+Cohere2MoeForCausalLM,CohereLabs/North-Mini-Code-1.0,cohere2_moe,2026-05-08,30.48,3.31,text,moe|swa|nope|parallel_block,missing,not registered; Cohere.swift dense only
+CohereAsrForConditionalGeneration,CohereLabs/cohere-transcribe-03-2026,cohere_asr,2026-03-25,2.066,2.066,audio,fastconformer|enc_dec,missing,no FastConformer; no cross-attn path; gated config
+CohereCompassForConditionalGeneration,CohereLabs/North-Micro-Vision-Instruct,cohere_compass,2026-09-07,2.5,2.5,image+text,deepstack|mrope|swa|nope,missing,no key; vision tower diff vs Qwen3VL unverified
+ColBERTJinaRobertaModel,jinaai/jina-colbert-v2,none,2026-02-13,0.5595,0.5595,text,rotary_xlmr|colbert,missing,no jina rotary XLM-R; config has no model_type
+ColBERTLfm2Model,LiquidAI/LFM2-ColBERT-350M,lfm2,2026-03-20,0.353,0.353,text,short_conv|colbert,partial,library ok; MLXEmbedders not linked in SwiftLM; no MaxSim route
+ColBERTModernBertModel,lightonai/GTE-ModernColBERT-v1,modernbert,2026-02-13,0.149,0.149,text,modernbert|colbert,missing,no ModernBERT encoder
+ColModernVBertForRetrieval,ModernVBERT/colmodernvbert-merged,modernvbert,2026-02-22,0.245,0.245,image+text,modernbert|siglip|colbert,missing,no encoder; no retrieval path in VLM registry
+ColPaliForRetrieval,vidore/colpali-v1.3-hf,colpali,2026-03-13,2.92,2.92,image+text,paligemma|colbert,missing,vlm_config nesting; projection head; key remap
+ColQwen3,TomoroAI/tomoro-colqwen3-embed-4b,colqwen3,2026-02-14,4.44,4.44,image+text,qwen3vl|colbert,partial,backbone only; no projection head or multi-vector API
+ColQwen3_5,athrael-soju/colqwen3.5-4.5B-v3,qwen3_5,2026-03-17,4.5,4.5,image+text,gdn|colbert|bidirectional,partial,loads as generator; no head; bidirectional flag ignored
+ColUltraVBertForRetrieval,athrael-soju/ColUltraVBERT,ultravbert,2026-10-19,0.247,0.247,image+text,ultrabert|siglip|colbert,missing,no encoder; dim unknown
+Cosmos3EdgeForConditionalGeneration,nvidia/Cosmos3-Edge,cosmos3_edge,2026-07-14,2.44,2.44,image+video+text,relu2|mrope|siglip2,missing,NemotronH attn has no RoPE; patch merger; processor
+Cosmos3ForConditionalGeneration (name inferred),nvidia/Cosmos3-Super,cosmos3_omni,2026-05-28,33.4,33.4,image+video+text,qwen3vl|deepstack,missing,weight remap; config adapter; subfolder weights
+D3ForSequenceClassification (name inferred),vllm-sr/d3-edge,qwen3_5,2026-10-14,0.594,0.594,text+image,gdn|readout_head,partial,backbone ok; readout head absent
+DFlash2BeamDraftModel,reflection/Beam-1.0-501B-A23B-DFlash2,qwen3,2026-10-18,1.927,1.927,text,dflash2|grouped_conv|candidate_selector,missing,target missing; DFlash2 modules missing
+DFlash2DraftModel (name inferred),z-lab/Qwen3.8-27B-DFlash2,qwen3,2026-08-20,1.924,1.924,text,dflash2|grouped_conv|candidate_selector,partial,DFlash base ok; DFlash2 modules missing
+DFlashDraftModel,z-lab/Qwen3-Coder-Next-DFlash,qwen3,2026-03-30,0.47,0.47,text,dflash,partial,not in registry; fixed ctx cache; verify none
+DFlashLagunaForCausalLM,poolside/Laguna-XS-2.1-DFlash-NVFP4,laguna,2026-07-02,0.5,0.5,text,dflash|gating|nvfp4,missing,no Laguna target; no g_proj/aux norms
+DFlashMuseGlimmerAssistantModel,meta-models/Muse-Glimmer-30B-assistant,muse_glimmer_assistant,2026-08-14,2.56,2.56,text,dflash|swa,partial,top-level layer ids ignored; no target conformance
+DFlashQwen3XPressModel,UIUC-SSAIL/Qwen3-8B-XPress-b16,qwen3,2026-10-22,1.13,1.13,text,dflash|jacobi_refiner,partial,xpress head dropped
+DSparkDraftModel,deepseek-ai/DeepSeek-V4-Pro-DSpark,deepseek_v4,2026-07-01,1650,49,text,dspark|markov|confidence|mla,missing,no block drafter; target incomplete
+DSparkMiniMaxDraftModel,MiniMaxAI/MiniMax-M3,minimax_m3_dspark,2026-10-28,428,23,text,dspark|dense_ffn,missing,draft checkpoint not public (404)
+DSparkV41DraftModel,deepseek-ai/DeepSeek-V4.1-Flash,deepseek_v41,2026-09-11,763,8,image+text,dspark|engram|ced,missing,no V41 target; no drafter
+DeepSeekV4MTPModel,deepseek-ai/DeepSeek-V4-Flash,deepseek_v4,2026-04-26,284,13,text,mtp|hyper_connection,partial,head lacks enorm/hnorm/e_proj; layer count off by one
+DeepseekOCR2ForCausalLM,deepseek-ai/DeepSeek-OCR-2,deepseek_vl_v2,2026-02-02,3.39,0.74,image+text,sam_vit|qwen2_encoder|moe_mha,missing,no SAM/encoder; DeepseekV2 MLA-only
+DeepseekV32MTPModel,nvidia/DeepSeek-V3.2-NVFP4,deepseek_v32,2026-07-23,683.5,38.4,text,mtp|dsa|nvfp4,partial,deepseek_v32 vs deepseek_v3_2 key; no MTP head; no ModelOpt
+DeepseekV3BidirectionalModel,ai-sage/Giga-Embeddings-instruct-10B-A1.8B-0826,deepseek_v3_bidirec,2026-08-19,10.5,1.6,text,mla|moe|bidirectional|embedding,missing,no key; no non-causal mode; q_lora_rank non-optional
+DeepseekV41ForCausalLM,deepseek-ai/DeepSeek-V4.1-Flash,deepseek_v41,2026-09-11,552,8,image+text,csa2|engram|ced|mhc|moe,missing,no key; V4 compressor/indexer/hash routing absent; Engram; ViT
+DeepseekV4ForCausalLM,deepseek-ai/DeepSeek-V4-Pro,deepseek_v4,2026-04-26,1573,49.7,text,mla|dsa|mhc|hash_moe|fp4,partial,compressor/indexer/hash routing/SWA absent; fp4 loader
+DeepseekV4ForConditionalGeneration,deepseek-ai/DeepSeek-V4-Flash-Vision-Exp,deepseek_v4,2026-09-02,284,13.8,image+text,v4|vit|bias_vl,missing,no VLM path; text gaps inherited
+DiffusionGemmaForBlockDiffusion,google/diffusiongemma-26B-A4B-it,diffusion_gemma,2026-06-11,25.8,3.8,image+text,gemma4_moe|block_diffusion|self_cond,missing,no key; denoise engine; config shim
+DomynEdgeForCausalLM,domyn/Domyn-Edge-Base,domynedge,2026-10-23,3.93,3.93,text,swa|nope|sandwich_norm|per_layer_head_dim,missing,no class
+DoryForCausalLM (name inferred),nvidia/NVIDIA-Nemotron-Labs-Dory1.0-4B-BF16,dory,2026-10-25,3.974,3.97,text,ngpt|looped_layers|slerp_residual,missing,no class; looped per-loop caches
+Dots3NoteForCausalLM (name inferred),dots-studio/dots3-note-prev,dots3_note,2026-08-12,288.4,16.25,omni,mla_dsa|swa_mla|moe|vit|audio,missing,hybrid layer geometry; gates; vision/audio towers
+Dots3NoteMTPModel,dots-studio/dots3-note-prev,dots3_note_mtp,2026-08-12,,0.9,text,mtp,missing,blocked on base
+Eagle2_5_VLForConditionalGeneration,nvidia/Eagle2.5-8B,eagle_2_5_vl,2026-01-21,8.07,8.07,image+text,siglip2|pixel_shuffle|qwen2,missing,no key; private SigLIP; dynamic tiling; gated config
+Eagle3DeepseekV2ForCausalLM,moonshotai/Kimi-K2.5,llama (draft),2026-03-11,1.19,1.19,text,eagle3|mla,missing,no EAGLE3 anywhere
+Eagle3DeepseekV3ForCausalLM,moonshotai/Kimi-K2.5,llama (draft),2026-03-11,1.19,1.19,text,eagle3 alias,missing,same as V2
+Eagle3MiniMaxM2ForCausalLM,MiniMaxAI/MiniMax-M2,minimax_m2,2026-04-05,,10,text,eagle3 alias,missing,no EAGLE3; no minimax_m2 key
+Eagle3Qwen3ForCausalLM (name inferred),Qwen/Qwen3-8B,llama/qwen3 draft,2026-06-21,1.02,1.02,text,eagle3|qk_norm,missing,no EAGLE3; no aux hidden tap; no d2t
+Eagle3Qwen3vlForCausalLM,Qwen/Qwen3-VL-8B-Instruct,llama draft,2025-11-27,1.02,1.02,text,eagle3|mrope,partial,target ok; no draft class
+EagleCohereForCausalLM,none public,unknown,2026-05-08,,,text,eagle|parallel_block,missing,no config; cohere2 unregistered
+EagleMistralForCausalLM,mistralai/Mistral-Medium-3.5-128B,mistral3,2026-04-28,3.1,3.1,text,eagle|fp8,partial,no EAGLE; params.json; static FP8 scale
+EagleMistralLargeThree (EagleMistralLarge3ForCausalLM),mistralai/Mistral-Large-3-675B-Instruct-2512,params.json,2025-12-02,11.7,0.73,text,eagle|mla|moe,partial,no EAGLE; native loader; llama4 scaling
+EmbeddingGemma2Model,google/embeddinggemma-2,embedding_gemma2,2026-10-06,0.271,0.271,text+image+audio,bidirectional|ple,partial,needs submodule bump; SwiftLM not linking MLXEmbedders
+Exaone4_5_ForConditionalGeneration,LGAI-EXAONE/EXAONE-4.5-33B,exaone4_5,2026-04-09,33.8,32.5,image+video+text,swa_nope|gqa_vit,missing,strict Exaone4 config; GQA ViT
+Exaone4_5_MTP,LGAI-EXAONE/EXAONE-4.5-33B,exaone4_5,2026-04-09,0.536,0.54,text,mtp,missing,blocked on base
+ExaoneMoEForCausalLM,LGAI-EXAONE/K-EXAONE-236B-A23B,exaone_moe,2026-01-12,236.6,23.7,text,moe|swa_nope|sigmoid_router,missing,no class
+ExaoneMoeForCausalLM,LGAI-EXAONE/K-EXAONE-2.0-750B-A37B,exaone_moe,2026-08-03,748.8,37.2,text,moe|swiglu_clamp,missing,no class; clamp helper
+ExaoneMoeMTP,LGAI-EXAONE/K-EXAONE-236B-A23B,exaone_moe,2026-01-12,0.53,0.53,text,mtp,missing,blocked on base
+ExtractHiddenStatesModel,Qwen/Qwen3-8B,none,2026-03-02,0,0,text,hidden_capture,partial,capture primitive internal to DFlash
+FireRedASR2ForConditionalGeneration,allendou/FireRedASR2-LLM-vllm,qwen2,2026-03-03,8.29,8.29,audio,conformer|qwen2,partial,no conformer encoder; no Kaldi fbank
+FlintForCausalLM (name inferred),RecursiveSI/flint,flint,2026-10-22,39.8,2.8,text,moe|sinks|swa|nope,missing,assembly of known pieces; no key
+FunASRForConditionalGeneration (name inferred),FunAudioLLM/Fun-ASR-Nano-2512-vllm,qwen3,2026-02-11,0.83,0.83,audio,sanm|qwen3,partial,decoder ok; SANM encoder and fbank absent
+FunAudioChatForConditionalGeneration (name inferred),none public,funaudiochat,2026-01-28,,,audio+text,whisper_encoder|qwen3,partial,no public repo
+Gemma4DSparkModel,deepseek-ai/dspark_gemma4_12b_block7,gemma4_text,2026-07-16,3.35,3.35,text,dspark|k_eq_v,partial,no DSpark; aux hidden tap
+Gemma4ForCausalLM,google/gemma-4-E2B-it,gemma4_text,2026-04-02,4.6,2.3,text,ple|kv_shared|swa,supported,config defaults quirk (not run)
+Gemma4ForConditionalGeneration,google/gemma-4-31B-it,gemma4,2026-04-02,30.7,30.7,image+text,k_eq_v|vit,supported,mask clamp vs window unverified
+Gemma4MTPModel,google/gemma-4-E4B-it,gemma4_assistant,2026-05-06,,,text,mtp|centroid_head,supported,registration wiring in server unverified
+Gemma4UnifiedForConditionalGeneration,google/gemma-4-12B-it,gemma4_unified,2026-06-03,11.9,11.9,omni,encoder_free,supported,pos-embed parity unverified
+Glm4MoeLiteForCausalLM,zai-org/GLM-4.7-Flash,glm4_moe_lite,2026-01-19,29.9,3.9,text,mla|moe,supported,MTP dropped
+Glm4MoeLiteMTPModel,zai-org/GLM-4.7-Flash,glm4_moe_lite,2026-01-19,0.64,0.13,text,mtp,missing,sanitize drops nextn layer
+Glm5NextForCausalLM,zai-org/GLM-5.3-Flash,glm5_next,2026-09-03,313,17.4,text,kda|mla_nope|kpool_indexer|mhc|moe,missing,no key; kpool indexer; NoPE MLA; mHC reuse unproven
+Glm5NextForConditionalGeneration,zai-org/GLM-5.3-Flash,glm5_next,2026-09-03,321,17.4,image+video+text,glm5next|vit,missing,plus vision tower
+Glm5NextMTPModel,zai-org/GLM-5.3-Flash,glm5_next,2026-09-03,321,18,text,mtp|dsa,missing,no drafter
+GlmAsrForConditionalGeneration (name inferred),zai-org/GLM-ASR-Nano-2512,glmasr,2025-12-31,2.26,2.26,audio,conv1d_rope_encoder|llama,missing,no audio tower; no 128-mel extractor
+GlmMoeDsaForCausalLM (name inferred),zai-org/GLM-5,glm_moe_dsa,2026-02-09,754,40,text,mla|dsa|moe,alias-supported,MTP dropped; mask-based sparse
+GlmOcrForConditionalGeneration (name inferred),zai-org/GLM-OCR,glm_ocr,2026-01-26,1.33,1.33,image+text,mrope|vit,supported,MTP dropped
+GlmOcrMTPModel,zai-org/GLM-OCR,glm_ocr,2026-01-26,0.9,0.9,image+text,mtp,partial,no drafter
+Granite4VisionForConditionalGeneration,ibm-granite/granite-vision-4.1-4b,granite4_vision,2026-04-21,4,4,image+text,qformer|deepstack|anyres,missing,no key; QFormer
+GraniteMoeSWAForCausalLM,ibm-granite/granite-swash-3b-a600m,granitemoe_swa,2026-08-18,3.02,0.6,text,swa|sinks|moe,missing,no key; sinks+swa
+GraniteSWAForCausalLM,ibm-granite/granite-swash-2b,granite_swa,2026-08-18,2.14,2.14,text,swa|sinks,missing,no key
+GraniteSpeechPlusForConditionalGeneration,ibm-granite/granite-speech-4.1-2b-plus,granite_speech_plus,2026-06-04,2.11,2.11,audio,conformer_ctc|qformer,missing,no encoder/QFormer; rope_parameters yarn dropped
+HCXVisionV2ForCausalLM,naver-hyperclovax/HyperCLOVAX-SEED-Think-32B,hyperclovax_vision_v2,2026-03-10,33.31,33.31,image+video+text,qwen25vl_vit|mup,missing,ViT fileprivate; no text model_type
+HF_ColBERT,colbert-ir/colbertv2.0,bert,2026-02-05,0.1096,0.1096,text,bert|colbert,partial,no projection head; per-token path
+HYV3ForCausalLM,tencent/Hy3,hy_v3,2026-04-23,298.79,20.7,text,moe|sigmoid_router|qk_norm,missing,GLM4MOE close; key names differ
+HYV3MTPModel,tencent/Hy3-preview,hy_v3,2026-04-23,3.8,,text,mtp|moe,missing,blocked on base
+HYV4ForCausalLM,tencent/Hy4-preview,hy_v4,2026-08-29,770,49,text,mla_dsa|ihc|sinks|gated_mla,missing,gated MLA; shared indexer; iHC; clamped MoE
+HYV4MTPModel,tencent/Hy4-preview,hy_v4,2026-08-29,10,0.7,text,mtp,missing,blocked on base
+HfMoondream,moondream/moondream3-preview,moondream3,2026-05-01,9,2,image+text,tau_attn|moe,missing,no class
+Moondream3ForCausalLM,moondream/moondream3-preview,moondream3,2026-05-01,9.2,2.16,image+text,tau_attn|geglu_plus1|multicrop,missing,no tau attention; no multicrop
+HrmTextForCausalLM (name inferred),sapientinc/HRM-Text-1B,hrm_text,2026-06-16,1.18,1.18,text,hierarchical_loops|prefix_lm,missing,per-step caches; prefix mask
+HunYuanVLForConditionalGeneration (name inferred),tencent/HunyuanOCR,hunyuan_vl,2025-11-25,1.12,1.12,image+text,xdrope|vit,missing,no xdrope; no ViT
+HyperCLOVAXForCausalLM (name inferred),naver-hyperclovax/HyperCLOVAX-SEED-Think-14B,hyperclovax,2026-03-10,14.75,14.75,text,mup|peri_ln,missing,multipliers and post norms absent in Llama.swift
+IQuestCoderForCausalLM (name inferred),IQuestLab/IQuest-Coder-V1-40B-Instruct,iquestcoder,2026-01-08,39.79,39.79,text,llama_identical,partial,alias only
+IQuestLoopCoderForCausalLM,IQuestLab/IQuest-Coder-V1-40B-Loop-Instruct,iquestloopcoder,2026-01-08,39.8,39.8,text,looped_layers|swa_gate,missing,loop+dual cache+gate
+InklingForConditionalGeneration,thinkingmachines/Inkling,inkling_mm_model,2026-07-15,947,41,omni,rel_bias_attn|sconv|sink_moe|nvfp4,missing,rel-bias attention; 4-stream sconv; ModelOpt NVFP4
+InklingForCausalLM,thinkingmachines/Inkling-NVFP4,inkling_model,2026-07-15,947,41,text,same backbone,missing,same as above
+InklingMTPModel,thinkingmachines/Inkling-NVFP4,inkling_mm_model,2026-07-16,5.2,0.65,text,mtp x8,missing,blocked on base
+InternS1ProForConditionalGeneration,internlm/Intern-S1-Pro,interns1_pro,2026-02-03,917,22,image+video+text,fope|grouped_router|fp8,missing,FoPE; per-group topk; FP8 expert path
+InternS2MobiusForConditionalGeneration,internlm/Intern-S2-Mobius,interns2_mobius,2026-08-06,35.1,3.7,image+video+text,shared_moe_banks|gdn,missing,shared banks by layer index
+InternS2MobiusMTP,internlm/Intern-S2-Mobius,interns2_mobius,2026-08-06,0.85,0.1,text,mtp,partial,mtp_num_experts not decoded
+InternS2PreviewForConditionalGeneration,internlm/Intern-S2-Preview,intern_s2_preview,2026-05-14,35.1,3.5,image+video+text,qwen3_5_moe verbatim,partial,alias plus time_series excludePrefix
+IsaacForConditionalGeneration,PerceptronAI/Isaac-0.2-2B-Preview,isaac,2025-12-25,2.46,2.46,image+text,siglip2_varlen|mrope,missing,no Siglip2; processor
+Jais2ForCausalLM,inceptionai/Jais-2-8B-Chat,jais2,2025-12-18,8.1,8.1,text,layernorm|relu2,missing,config gated
+JinaEmbeddingsV5Model,jinaai/jina-embeddings-v5-text-small,jina_embeddings_v5,2026-04-16,0.60,0.60,text,qwen3|lora_merge,partial,no alias; no adapter merge; nano differs
+JinaForRanking,jinaai/jina-reranker-v3,qwen3,2026-04-10,0.60,0.60,text,listwise_rerank,supported,not numerically tested
+K2HorizonForCausalLM,IFM/K2-Horizon-7B,k2_horizon,2026-09-03,9.0,9.0,text,grouped_rmsnorm,missing,grouped RMSNorm; rope_parameters ignored by Llama
+K3DSparkModel,Inferact/Kimi-K3-DSpark,k3_dspark,2026-07-30,2.39,2.39,text,dspark|mla,missing,target K3 missing
+KananaVForConditionalGeneration,kakaocorp/kanana-1.5-v-3b-instruct,kanana-1.5-v,2026-01-12,3.64,3.64,image+text,qwen2vl_vit|regnet,missing,quick_gelu mismatch; RegStage
+KimiK25ForConditionalGeneration,moonshotai/Kimi-K2.5,kimi_k25,2026-01-27,1026,32.9,image+video+text,mla|moe|int4,partial,text only; nested config breaks decode; no int4 loader
+KimiK3ForConditionalGeneration,moonshotai/Kimi-K3,kimi_k3,2026-07-30,2779,105,image+text,kda|attn_res|latent_moe|situ|mxfp4,missing,none of K3 features
+KimiK3MTPModel,moonshotai/Kimi-K3,kimi_k3_mtp,2026-07-30,,,text,mtp,missing,index lists no mtp tensors
+KimiLinearForCausalLM,moonshotai/Kimi-Linear-48B-A3B-Instruct,kimi_linear,2025-10-30,49.12,3.66,text,kda|mla_nope|moe,partial,SwiftLM only; MLP silu on up_proj likely bug
+Kolibri1ForCausalLM,Aleph-Alpha/Kolibri-1,kolibri1,2026-10-13,78.1,3.46,text,swa|nope|sandwich|moe|fp8,missing,no class
+LagunaForCausalLM,poolside/Laguna-XS.2,laguna,2026-04-28,33.4,3.0,text,moe|softplus_gate|yarn_partial,missing,no class
+Lfm2BidirectionalModel,LiquidAI/LFM2.5-Embedding-350M,lfm2,2026-10-26,0.354,0.354,text,bidirectional|cls_pool,supported,not served by SwiftLM
+Lfm2VlForConditionalGeneration,LiquidAI/LFM2-VL-3B,lfm2_vl,2026-01-08,3.0,3.0,image+text,siglip2|tiling,partial,tiling/thumbnail/markers not HF conformant
+LiLiCorrDraftModel,Qwen/Qwen3-8B (target),none,2026-09-25,,,text,lattice_drafter,missing,no checkpoint published
+LlamaBidirectionalForSequenceClassification,nvidia/llama-nemotron-rerank-1b-v2,llama_bidirec,2025-12-23,1.236,1.236,text,bidirectional|score_head,missing,no key
+LlamaBidirectionalModel,nvidia/llama-nemotron-embed-1b-v2,llama_bidirec,2025-12-23,1.236,1.236,text,bidirectional|mean_pool,missing,no key
+LlamaNemotronVLForSequenceClassification,nvidia/llama-nemotron-rerank-vl-1b-v2,llama_nemotron_vl_rerank,2026-03-03,1.663,1.663,image+text,siglip|internvl_tiling,missing,no VLM rerank
+LlamaNemotronVLModel,nvidia/llama-nemotron-embed-vl-1b-v2,llama_nemotron_vl,2026-02-26,1.663,1.663,image+text,siglip|mlp1,missing,no VLM embedder
+LlavaOnevision2ForConditionalGeneration,lmms-lab-encoder/LLaVA-OneVision-2-8B-Instruct,llava_onevision2,2026-07-02,8.5,8.5,image+video+text,onevision_vit|qwen3,partial,text only; new ViT and processor
+LongcatFlashNgramForCausalLM,meituan-longcat/LongCat-Flash-Lite,longcat_flash,2026-07-10,68.6,4.9,text,dual_attn|zero_experts|ngram_embed,missing,no class; ngram history cache
+MellumForCausalLM,JetBrains/Mellum2-12B-A2.5B-Base,mellum,2026-06-01,12.15,2.44,text,swa|moe|yarn,partial,absent in pinned submodule; main ok
+MiMoV2FlashForCausalLM,XiaomiMiMo/MiMo-V2-Flash,mimo_v2_flash,2025-12-19,308.8,15.5,text,swa|sinks|diffkv|moe,partial,attention_value_scale not applied
+MiMoV2ForCausalLM,XiaomiMiMo/MiMo-V2.5-Pro,mimo_v2,2026-04-27,1021,41.9,text,swa|fused_qkv|moe,partial,model_type unregistered; fused qkv; value scale
+MiMoV2MTPModel,XiaomiMiMo/MiMo-V2.5-Pro,mimo_v2,2026-04-27,0.64,,text,mtp,missing,mtp weights dropped
+MiMoV2OmniForCausalLM,XiaomiMiMo/MiMo-V2.5-Omni,mimo_v2,2026-04-27,311,15,omni,vit_sink|audio_rvq,missing,towers absent; Omni config 401
+MiMoV2OmniMTPModel,XiaomiMiMo/MiMo-V2.5-Omni,mimo_v2,2026-04-27,0.33,0.33,omni,mtp,missing,blocked
+MingV3ASRForConditionalGeneration (name inferred),inclusionAI/Ming-3.0-asr-tiny,ming_v3_asr,2026-10-29,8.4,1.9,audio,kda|mla|moe|whisper_enc,missing,no bailing_moe_v3; no encoder
+MiniCPM-OCR (arch name unknown),openbmb/MiniCPM-OCR-1.0,minicpm_ocr,2026-10-23,1.17,1.17,image+text,gdn|navit|window_merger,partial,text backbone ok; ViT mergers; slice processor
+MiniCPMV4_6ForConditionalGeneration (name inferred),openbmb/MiniCPM-V-4_6,minicpmv4_6,2026-05-12,1.15,1.15,image+video+text,gdn|navit,partial,same as OCR plus video
+MiniCPMV4_7ForConditionalGeneration (name inferred),openbmb/MiniCPM-V-4_7 (not public),minicpmv4_7,2026-10-11,,,image+video+text,canvas_mrope,missing,config unverified
+MiniMaxM3SparseForConditionalGeneration,MiniMaxAI/MiniMax-M3,minimax_m3_vl,2026-06-16,426,26,image+video+text,block_sparse_indexer|gemma_norm|moe,missing,block-sparse attention; tower; no key
+MiniMaxM3SparseForCausalLM,MiniMaxAI/MiniMax-M3,minimax_m3_text,2026-06-16,425,26,text,same,missing,per-head qk norm; dense layers; indexer
+MiniMaxM3MTP,MiniMaxAI/MiniMax-M3,minimax_m3_mtp,2026-06-16,7.5,0.6,text,mtp x7,missing,blocked
+Ministral3ForCausalLM,mistralai/Ministral-3-3B-Instruct-2512,mistral3,2026-04-14,3.43,3.43,text,yarn|llama4_scale,supported,no top-level ministral3 key; FP8 per-tensor scale unverified
+MistralLarge3ForCausalLM,mistralai/Mistral-Large-3-675B-Instruct-2512,deepseek_v3 (synth),2025-12-02,673,39.9,text,mla|moe|llama4_scale,partial,params.json synth; llama4 scale on MLA; native key remap
+MistralLarge4ForConditionalGeneration,mistralai/Mistral-Large-4-1T-A52B,mistral_large4,not in vLLM registry,1048,51,image+text,indexer_sharing|kv_sharing|softcap,missing,no key; no vLLM source ref
+ModernVBertModel,ModernVBERT/colmodernvbert-merged,modernvbert,2026-10-20,0.245,0.245,image+text,modernbert|siglip|colbert,missing,no encoder
+Molmo2ForConditionalGeneration,allenai/Molmo2-O-7B,molmo2,2026-01-14,7.78,7.78,image+video+text,olmo_norm_after|vit_pooling,missing,no key
+MoonshotKimiaForCausalLM,moonshotai/Kimi-Audio-7B-Instruct,none,2026-03-10,8.36,8.36,audio+text,whisper|qwen2|vq_adaptor,partial,no model_type; encoder stub
+MossAudioModel,OpenMOSS-Team/MOSS-Audio-4B-Instruct,moss_audio,2026-06-24,5.1,5.1,audio+text,conv2d_enc|deepstack,partial,qwen3 under language_config unread
+MossTranscribeDiarizeForConditionalGeneration,OpenMOSS-Team/MOSS-Transcribe-Diarize,moss_transcribe_diarize,2026-07-08,0.90,0.90,audio,whisper|qwen3,partial,no wrapper; stub encoder
+MuseGlimmerForConditionalGeneration,meta-models/Muse-Glimmer-30B,muse_glimmer,2026-08-14,29.8,29.8,image+text,swa|nope|gate|vit,supported,video rejected; no DFlash target
+MuseGlimmerForCausalLM,meta-models/Muse-Glimmer-30B,muse_glimmer_text,2026-08-14,27.85,27.85,text,same,partial,no LLM-registry entry
+MuseGlimmerAssistantModel,meta-models/Muse-Glimmer-30B-assistant,muse_glimmer_assistant,2026-08-14,2.6,2.6,text,dflash,missing,top-level ids ignored
+MuseSparkDSparkModel,Inferact/Muse-Spark-Open-DSpark,muse_spark_dspark,2026-10-22,5.3,5.3,text,dspark|o_gate,missing,no target
+MuseSparkForConditionalGeneration,meta-models/Muse-Spark-Open-816B-A42B-NVFP4,muse_spark,2026-10-22,816,42,omni,moe|gdn2_optional|nvfp4,missing,config gated
+NanbeigeForCausalLM,Nanbeige/Nanbeige4.2-3B,nanbeige,2026-09-14,4.17,4.17,text,looped_layers,supported,numerics unverified
+Nemotron3_5TranscribeForConditionalGeneration,nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B,nemo_speechlm,2026-10-28,32,4.2,audio,nemotron_h|sortformer,missing,no wrapper; no audio tower
+Nemotron3_5TranscribeMTPModel,nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B,nemo_speechlm,2026-10-28,1.3,0.2,audio,mtp,missing,blocked
+NemotronHForCausalLM,nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16,nemotron_h,<2025-10-20,31.6,3.6,text,mamba2|moe|relu2,supported,latent MoE only on unmerged branch
+NemotronHMTPModel (name inferred),none public,nemotron_h_mtp,2026-02-24,,,text,mtp,missing,main does not strip mtp keys
+NemotronHPuzzle (arch name inferred),none public,nemotron_h_puzzle,2026-01-27,,,text,per_layer_experts,partial,only on unmerged branch
+NemotronH_Nano_Omni_Reasoning_V3,nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16,NemotronH_Nano_Omni_Reasoning_V3,2026-04-15,33,5,omni,radio|parakeet|nemotron_h,missing,no towers; nested llm_config
+NemotronH_Nano_VL_V2,nvidia/Nemotron-Nano-12B-v2-VL-BF16,NemotronH_Nano_VL_V2,<2025-10-20,13.2,13.2,image+video+text,radio|nemotron_h,missing,no RADIO; llm_config unwrap
+NemotronH_Omni_Reasoning_V3,nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16,nemotron_h_omni,2026-08-19,121.5,13.6,image+video+text,latent_moe|radio|mtp,missing,latent MoE; towers
+NemotronH_Super_Omni_Reasoning_V3,nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16,NemotronH_Nano_Omni_Reasoning_V3,2026-04-15,33,5,omni,radio|parakeet,missing,arch string mismatch; same gaps
+NemotronParseForConditionalGeneration,nvidia/NVIDIA-Nemotron-Parse-v1.2,nemotron_parse,2026-01-05,0.94,0.94,image+text,radio|mbart_decoder,missing,no enc-dec
+OlmoHybridForCausalLM,allenai/Olmo-Hybrid-7B,olmo_hybrid,2026-03-05,7.4,7.4,text,gdn|nope,missing,no allow_neg_eigval; no class
+OpenAIPrivacyFilterForTokenClassification,openai/privacy-filter,openai_privacy_filter,2026-06-28,1.40,0.18,text,gpt_oss_encoder|token_cls,missing,non-causal+sinks; no token logits route
+OpenCUAForConditionalGeneration,xlangai/OpenCUA-7B,opencua,2025-11-24,8.3,8.3,image+text,qwen25vl_vit|qwen2,missing,no key; nested text_config
+OpenPanguMTPModel,FreedomIntelligence/openPangu-Ultra-MoE-718B-V1.1,pangu_ultra_moe_mtp,2025-11-04,12.3,0.6,text,mtp|sandwich,missing,blocked
+OpenPanguVLForConditionalGeneration (name inferred),FreedomIntelligence/openPangu-VL-7B,openpangu_vl,2026-01-30,8.78,8.78,image+video+text,window_vit|interleaved_mrope,missing,no key; fileprivate ViT
+OpenVLAForActionPrediction,openvla/openvla-7b,openvla,2026-05-19,7.54,7.54,image+text,dinov2|siglip|llama,missing,no DINOv2
+OpsColQwen3Model,OpenSearch-AI/Ops-Colqwen3-4B,ops_colqwen3,2026-02-14,4.44,4.44,image+text,qwen3vl|colbert,partial,no head; model_type unregistered
+Ovis2_6ForCausalLM / Ovis2_6_MoeForCausalLM,AIDC-AI/Ovis2.6-30B-A3B,ovis2_6_moe,2026-02-13,31.4,4.2,image+video+text,siglip2_navit|visual_vocab|moe,missing,no tokenizer/head; dense repo gated
+PEagleDraftModel,nm-testing/qwen3-8b-peagle-speculators,none,2026-05-12,2.09,2.09,text,peagle,missing,no EAGLE family
+PeagleQwen3ForCausalLM,inference-optimization/Qwen3-8B-speculators.peagle-qwen3arch-ckpt4,qwen3 inner,2026-06-21,0.93,0.93,text,peagle|qk_norm,missing,no EAGLE family
+PaddleOCRVLForConditionalGeneration,PaddlePaddle/PaddleOCR-VL,paddleocr_vl,2025-11-03,0.90,0.90,image+text,ernie|mrope_3d|navit,partial,Ernie text exists; mrope; ViT; projector
+PanguEmbeddedForCausalLM,FreedomIntelligence/openPangu-Embedded-7B-V1.1,PanguEmbedded,2025-11-04,8.03,8.03,text,llama_like|qkvo_bias,partial,alias plus bias key fallback
+PanguProMoEV2ForCausalLM,none public,unknown,2025-12-30,,,text,sink_attn|moe,missing,no config
+PanguUltraMoEForCausalLM,FreedomIntelligence/openPangu-Ultra-MoE-718B-V1.1,pangu_ultra_moe,2025-11-04,719,39,text,mla|moe|sandwich,missing,no class
+Param2MoEForCausalLM,bharatgenai/Param2-17B-A2.4B-Thinking,param2moe,2026-04-06,17.15,2.56,text,moe|qk_norm,missing,no class; parts exist
+ParseAuxMTPModel,nvidia/Nemotron-3.5-Parse,mtp (synth),2026-10-21,0.631,0.631,image+text,mtp|radio,missing,no parse model
+Phi4ForCausalLMV,microsoft/Phi-4-reasoning-vision-15B,phi4-siglip,2026-04-02,15.1,15.1,image+text,siglip2_naflex|phi3,missing,no key; NaFlex processor
+Plamo3ForCausalLM,pfnet/plamo-3-nict-2b-base,plamo3,2025-11-20,,,text,swa|sandwich_norm|offsets,missing,gated config; custom tokenizer
+QianfanOCRForConditionalGeneration,baidu/Qianfan-OCR,qianfan_ocr,2026-05-05,4.74,4.74,image+text,internvit|qwen3,missing,no key
+Qwen3ASRForConditionalGeneration,Qwen/Qwen3-ASR-0.6B,qwen3_asr,2026-01-29,0.78,0.78,audio,conv2d_enc|qwen3,missing,no audio tower; no transcription route
+Qwen3ASRForcedAlignerForTokenClassification,Qwen/Qwen3-ForcedAligner-0.6B,qwen3_asr,2026-03-29,0.92,0.92,audio,token_cls,missing,all ASR gaps plus head
+Qwen3ASRRealtimeGeneration,Qwen/Qwen3-ASR-0.6B,qwen3_asr,2026-02-20,0.78,0.78,audio,streaming,missing,no realtime route
+Qwen3DSparkModel,deepseek-ai/dspark_qwen3_8b_block7,qwen3,2026-07-01,2.37,2.37,text,dspark|markov,missing,no heads or loop
+Qwen3OmniDSparkModel,Qwen/Qwen3-Omni-30B-A3B-Instruct,qwen3_omni_moe,2026-08-22,35,3.35,omni,dspark,missing,no omni thinker
+Qwen3VLNemotronEmbedModel,nvidia/nemotron-colembed-vl-4b-v2,qwen3_vl_nemotron_embed,2026-02-20,4.32,4.32,image+text,qwen3vl|colbert,partial,wrapper type; head
+Qwen3XPressModel,UIUC-SSAIL/Qwen3-8B-XPress-b16,qwen3,2026-10-22,2.45,2.45,text,dflash|jacobi,partial,refiner head dropped
+Qwen3_5ForCausalLM,codecho/Qwen3.5-0.8B-text-only,qwen3_5_text,2026-07-29,0.75,0.75,text,gdn|gate,supported,norm +1 heuristic
+Qwen3_5ForConditionalGeneration,Qwen/Qwen3.5-4B,qwen3_5,2026-02-09,4.5,4.5,image+video+text,gdn|vit|mtp,supported,video parity unverified
+Qwen3_5MTP,Qwen/Qwen3.5-0.8B,qwen3_5_mtp,2026-02-09,0.02,0.02,text,mtp,supported,opt-in; main only
+Qwen3_5MoeForCausalLM,Qwen/Qwen3.8-2.4T-A95B,qwen3_5_moe_text,2026-07-29,2420,95.3,text,gdn|moe,partial,model_type qwen3_5_moe_text unregistered; scale
+Qwen3_5MoeForConditionalGeneration,Qwen/Qwen3.5-35B-A3B,qwen3_5_moe,2026-02-09,35.1,3.45,image+video+text,gdn|moe|mtp,supported,not run
+Qwen3_5MoeMTP,Qwen/Qwen3.5-35B-A3B,qwen3_5_mtp,2026-02-09,0.85,,text,mtp,supported,absent in pinned submodule
+Qwen4ExpForCausalLM,Qwen/Qwen3.8-Flash-Next,qwen4_exp,2026-08-31,180,7.3,text,hyper_conn|qsa|ple|gdn|moe,missing,none of the new parts
+Qwen4ExpForConditionalGeneration,Qwen/Qwen3.8-Flash-Next,qwen4_exp,2026-08-31,180,7.3,image+video+text,same plus vit,missing,same
+Qwen4ExpMTP,none public (tiny random fixture),qwen4_exp,2026-08-31,2.6,,text,mtp|hc,missing,blocked
+RadioMBartPrefixForCausalLM,nvidia/Nemotron-3.5-Parse,nemotron_parse,2026-10-21,0.6,0.6,image+text,radio|mbart_prefix,missing,no encoder or decoder
+Rnj1ForCausalLM,EssentialAI/rnj-1-instruct,gemma3_text,2026-04-21,8.3,8.3,text,gemma3|yarn|softcap,partial,final_logit_softcapping ignored (wrong logits)
+RobertaForTokenClassification,Jean-Baptiste/roberta-large-ner-english,roberta,2026-07-15,0.355,0.355,text,encoder|token_cls,partial,no token head or route
+SarvamMLAForCausalLM,sarvamai/sarvam-105b,sarvam_mla,2026-03-08,106,12.4,text,mla|moe,missing,config decode fails; no alias
+SarvamMoEForCausalLM,sarvamai/sarvam-30b,sarvam_moe,2026-03-08,32.2,4.5,text,bailing_moe_like,partial,no alias; raw-layout sanitize absent
+Step1ForCausalLM,stepfun-ai/Step-Audio-EditX,step1,2026-01-18,3.53,3.53,audio_tokens,alibi_sqrt,missing,sqrt ALiBi absent
+Step3p5ForCausalLM,stepfun-ai/Step-3.5-Flash,step3p5,2026-02-02,197,12,text,swa|headwise_gate|moe|swiglu_clamp,missing,no class
+Step3p5MTP,stepfun-ai/Step-3.5-Flash,step3p5,2026-02-02,0.81,,text,mtp x3,missing,blocked
+Step3p7ForConditionalGeneration,stepfun-ai/Step-3.7-Flash,step3p7,2026-05-28,198,11,image+text,pe_vit|step3p5,missing,backbone plus PE tower
+Step5ForCausalLM,stepfun-ai/Step-5-Preview,step5,2026-10-19,598,26.7,text,csa_sparse|fp32_residual|moe,missing,sparse attention; scale
+Step5ForConditionalGeneration,stepfun-ai/Step-5-Preview,step5_vl,2026-10-19,600,27,image+video+text,same plus vit,missing,same
+Step5MTP,stepfun-ai/Step-5-Preview,step5_mtp,2026-10-19,,,image+text,mtp x3,missing,blocked
+StepVLForConditionalGeneration,stepfun-ai/Step3-VL-10B,step_robotics,2026-01-15,9.7,9.7,image+text,pe_vit|qwen3,missing,no PE tower; wrapper prefix remap
+TeleChat3ForCausalLM,Tele-AI/TeleChat3-36B-Thinking,telechat3,2026-04-03,36.2,36.2,text,llama_layout|yarn,partial,alias; mscale coefficient unverified
+TransformersForMTP,zai-org/GLM-4.5,glm4_moe,2026-10-28,352.7,33.6,text,mtp,partial,GLM nextn dropped; no drafter
+TransformersMoEForMTP,zai-org/GLM-4.5,glm4_moe,2026-10-28,352.8,33.6,text,mtp,partial,same
+UnlimitedOCRForCausalLM,baidu/Unlimited-OCR,unlimited_ocr,2026-06-27,3.3,0.74,image+text,moe_mha|rswa|sam_clip,missing,no encoder; DeepseekV2 MLA only
+VaultGemmaForCausalLM,google/vaultgemma-1b,vaultgemma,2026-07-25,1,1,text,gemma2_minus_post_norms,missing,Gemma2 requires post norms; no swa
+VibeVoiceAsrForConditionalGeneration,microsoft/VibeVoice-ASR-HF,vibevoice_asr,2026-07-25,7.6,7.6,audio,conv_tokenizers|qwen2,missing,no tokenizer encoders
+VoxtralRealtimeGeneration,mistralai/Voxtral-Mini-4B-Realtime-2602,voxtral_realtime,2026-01-31,4.43,4.43,audio,causal_enc|ada_rmsnorm,missing,stub encoder; no ada-norm
+VoyageQwen3BidirectionalEmbedModel,voyageai/voyage-4-nano,qwen3,2026-02-06,0.35,0.35,text,bidirectional|linear_head,partial,causal mask; head dropped
+XLMRobertaForTokenClassification,Davlan/xlm-roberta-base-ner-hrl,xlm-roberta,2026-07-15,0.278,0.278,text,encoder|token_cls,partial,no token head
