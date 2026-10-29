@@ -22,7 +22,7 @@
 #               SENTINEL_UPSTREAM_URL (default https://github.com/ml-explore/mlx-swift-lm.git)
 set -u
 
-die() { echo "sentinel: REFUSED: $*" >&2; exit 2; }
+die() { echo "sentinel: REFUSED: $*" >&2; echo "SENTINEL_RESULT=REFUSED"; echo "EXIT=2"; exit 2; }
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 2
 repo=${1:-$here/../../..}
@@ -112,23 +112,15 @@ echo "== merge: clean"
 exp=Tests/MLXLMTests/Conformance/ConformanceExpectations.swift
 python3 "$repo/scripts/conformance/gen_expectations.py" "$repo" || die "gen_expectations.py failed"
 
-# Static LANDED / REGRESSION: compare each model_type's registries before and after regeneration.
-parse() { sed -n 's/.*modelType: "\([^"]*\)", registries: \[\([^]]*\)\].*/\1 \2/p'; }
-git -C "$repo" show "HEAD:$exp" | parse | sort >"$work/exp-before.txt"
-parse <"$repo/$exp" | sort >"$work/exp-after.txt"
+# Static LANDED / REGRESSION: compare the registry SET of each model_type before and after regeneration
+# (registry-diff.py). REGRESSION only when a registry that was expected is gone; a registry that was merely
+# gained (llm -> llm, vlm) is LANDED.
+git -C "$repo" show "HEAD:$exp" >"$work/exp-before.swift"
+python3 -I "$here/registry-diff.py" "$work/exp-before.swift" "$repo/$exp" >"$work/registry-diff.txt" || die "registry-diff.py failed"
 echo "== LANDED (registry grew vs committed expectations):"
-landed=0
-while IFS= read -r l; do
-    echo "  LANDED $l"; landed=$((landed + 1))
-done < <(comm -13 "$work/exp-before.txt" "$work/exp-after.txt" | awk '{n=$1; $1=""; if ($0 !~ /^ *$/) print n " ->" $0}')
-[ "$landed" -eq 0 ] && echo "  (none)"
+grep '^LANDED ' "$work/registry-diff.txt" | sed 's/^/  /' | grep . || echo "  (none)"
 echo "== REGRESSION (registry shrank vs committed expectations):"
-reg=0
-while IFS= read -r l; do
-    echo "  REGRESSION $l"; reg=$((reg + 1))
-done < <(comm -23 "$work/exp-before.txt" "$work/exp-after.txt" | awk '{n=$1; $1=""; if ($0 !~ /^ *$/) print n " was" $0}')
-[ "$reg" -eq 0 ] && echo "  (none)"
-echo "   (static diff; entries whose registries changed appear in both lists as old/new)"
+grep '^REGRESSION ' "$work/registry-diff.txt" | sed 's/^/  /' | grep . || echo "  (none)"
 
 lock_build=(); lock_gpu=()
 if [ -n "${SENTINEL_LOCK:-}" ]; then
@@ -150,11 +142,13 @@ fi
 echo "== sentinel: conformance tests (CONFORMANCE_STRICT=1)"
 export CONFORMANCE_STRICT=1
 test_status=0
-for f in ConformanceRegistryTests ConformanceForwardTests; do
+# ConformanceGap = every known-gap suite: under CONFORMANCE_STRICT=1 a gap that got FIXED fails ([gap][FIXED]).
+for f in ConformanceRegistryTests ConformanceForwardTests ConformanceGap; do
     ${lock_gpu[@]+"${lock_gpu[@]}"} "$repo/scripts/conformance/run-test.sh" "$f" >"$work/sentinel-$f.log" 2>&1
     s=$?
     echo "   $f exit=$s"
-    grep -E "\[conformance\]|REGRESSION|LANDED|Test run with|error:" "$work/sentinel-$f.log" | head -40 | sed 's/^/     /'
+    grep -E "\[conformance\]|\[gap\]\[(FIXED|WARNING)\]|REGRESSION|LANDED|Test run with|error:" "$work/sentinel-$f.log" | head -40 | sed 's/^/     /'
+    echo "     gaps_open=$(grep -c -F '[gap][OPEN]' "$work/sentinel-$f.log")"
     [ "$s" -ne 0 ] && test_status=$s
 done
 echo "SENTINEL_RESULT=$([ "$test_status" -eq 0 ] && echo PASS || echo FAIL)"

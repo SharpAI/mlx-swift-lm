@@ -7,7 +7,9 @@
 #   --mlx-swift DIR  a checkout of ml-explore/mlx-swift (read only; Source/ is scanned, minus Source/Cmlx)
 #   --repo DIR       the fork checkout (default: the clone holding this script); its Libraries/ is scanned
 #   --allowlist FILE default: mlx-swift-shadow-allowlist.txt next to this script. One entry per line:
-#                    "<Context>.<name>(<labels>)  # reason"   e.g.  ".compile(shapeless:_:)  # reason"
+#                    "<KIND> <Context>.<name>(<labels>)  # reason"  e.g.  "OVERLAP .compile(shapeless:_:)  # reason"
+#                    KIND is COLLISION or OVERLAP and must match the finding: an allowed OVERLAP never silences a
+#                    COLLISION of the same key (list both lines to allow both). A line without a KIND is an error.
 #
 # A declaration is keyed as Context.name(label:label:...). Context = enclosing extension/type name, empty for free funcs.
 #   COLLISION  same key (name + argument labels) declared public by both sides.
@@ -115,7 +117,10 @@ scan() { # scan <root> <ours|theirs>
 scan "$repo/Libraries" ours >"$work/ours.tsv"
 scan "$mlx/Source" theirs >"$work/theirs.tsv"
 
-grep -v -E '^[[:space:]]*(#|$)' "$allow" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//' >"$work/allow.txt"
+grep -v -E '^[[:space:]]*(#|$)' "$allow" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//; s/[[:space:]][[:space:]]*/ /g' >"$work/allow.txt"
+if bad=$(grep -v -E '^(COLLISION|OVERLAP) [^ ]+$' "$work/allow.txt" | head -1) && [ -n "$bad" ]; then
+    die "allow-list entry needs a kind, COLLISION or OVERLAP, then the key (got: $bad)"
+fi
 
 echo "== mlx-swift-shadow: ours=$(wc -l <"$work/ours.tsv" | tr -d ' ') public funcs, mlx-swift=$(wc -l <"$work/theirs.tsv" | tr -d ' ') public funcs"
 python3 -I - "$work" <<'PY' >"$work/result.txt"
@@ -159,7 +164,7 @@ for c, n, labs, dfl, rel in ours:
 PY
 status=0
 while IFS="$(printf '\t')" read -r kind k ours_f theirs_f theirs_k; do
-    if grep -qxF -- "$k" "$work/allow.txt"; then
+    if grep -qxF -- "$kind $k" "$work/allow.txt"; then
         echo "ALLOWED $kind $k  (ours: $ours_f; mlx-swift: $theirs_f $theirs_k)"
     else
         echo "$kind $k  (ours: $ours_f; mlx-swift: $theirs_f declares $theirs_k)"

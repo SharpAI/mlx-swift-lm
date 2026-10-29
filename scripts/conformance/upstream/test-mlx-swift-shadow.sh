@@ -47,7 +47,7 @@ out=$(run); s=$?
 { [ "$s" -eq 1 ] && echo "$out" | grep -q "COLLISION .helperFree(x:y:)" && echo "$out" | grep -q "MLX_SWIFT_SHADOW=FAIL"; }; check "mlx-swift-shadow: planted free-func collision fails" $?
 
 # allow-listing it passes and still prints it.
-echo '.helperFree(x:y:)  # test reason' >"$tmp/allow.txt"
+echo 'COLLISION .helperFree(x:y:)  # test reason' >"$tmp/allow.txt"
 out=$(run); s=$?
 { [ "$s" -eq 0 ] && echo "$out" | grep -q "ALLOWED COLLISION .helperFree(x:y:)"; }; check "mlx-swift-shadow: allow-listed collision passes but stays visible" $?
 : >"$tmp/allow.txt"
@@ -88,6 +88,33 @@ public func compile(
 S
 out=$(run); s=$?
 { [ "$s" -eq 1 ] && echo "$out" | grep -q "COLLISION .compile(shapeless:_:)"; }; check "mlx-swift-shadow: multi-line exact-label collision fails" $?
+
+# allow-list entries match key AND kind: an allowed OVERLAP must not silence a later COLLISION of the same key.
+cat >"$mlx/Source/MLX/Compile.swift" <<'S'
+public func compile(
+    inputs: [Int] = [], outputs: [Int] = [], shapeless: Bool = false,
+    _ f: @escaping (MLXArray) -> MLXArray
+) -> Int { 0 }
+S
+echo 'OVERLAP .compile(shapeless:_:)  # test reason' >"$tmp/allow.txt"
+out=$(run); s=$?
+{ [ "$s" -eq 0 ] && echo "$out" | grep -q "ALLOWED OVERLAP .compile(shapeless:_:)"; }; check "mlx-swift-shadow: allow-listed OVERLAP passes" $?
+cat >>"$mlx/Source/MLX/Compile.swift" <<'S'
+public func compile(
+    shapeless: Bool = false,
+    _ f: @escaping @Sendable (MLXArray) -> MLXArray
+) -> Int { 0 }
+S
+out=$(run); s=$?
+{ [ "$s" -eq 1 ] && echo "$out" | grep -q "^COLLISION .compile(shapeless:_:)" && echo "$out" | grep -q "ALLOWED OVERLAP .compile(shapeless:_:)"; }; check "mlx-swift-shadow: allowed OVERLAP does not silence a later COLLISION of the same key" $?
+printf 'COLLISION .compile(shapeless:_:)  # test reason\n' >>"$tmp/allow.txt"
+out=$(run); s=$?
+[ "$s" -eq 0 ]; check "mlx-swift-shadow: both kinds allow-listed passes" $?
+# a kind-less (or unknown-kind) entry is an error, never a silent allow.
+echo '.compile(shapeless:_:)  # no kind' >"$tmp/allow.txt"
+out=$(run); s=$?
+{ [ "$s" -eq 2 ] && echo "$out" | grep -q "allow-list.*COLLISION or OVERLAP"; }; check "mlx-swift-shadow: kind-less allow-list entry is rejected (exit 2)" $?
+: >"$tmp/allow.txt"
 
 # the committed repo against the committed allow-list is covered by the periodic script test (needs a real mlx-swift tree).
 exit "$fail"
