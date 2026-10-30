@@ -126,6 +126,12 @@ enum GoldenKit {
         var i = 0
         init(b: [UInt8]) { self.b = b }
 
+        mutating func literal(_ word: String) throws {
+            let w = Array(word.utf8)
+            guard i + w.count <= b.count, Array(b[i ..< i + w.count]) == w else { throw fail("bad literal, expected '\(word)'") }
+            i += w.count
+        }
+
         func fail(_ what: String) -> LoadError { LoadError(description: "JSON: \(what) at offset \(i)") }
 
         mutating func skipWhitespace() {
@@ -205,9 +211,9 @@ enum GoldenKit {
                     return a
                 }
             case 0x22: return try string()
-            case 0x74: i += 4; return NSNumber(value: true)
-            case 0x66: i += 5; return NSNumber(value: false)
-            case 0x6E: i += 4; return NSNull()
+            case 0x74: try literal("true"); return NSNumber(value: true)
+            case 0x66: try literal("false"); return NSNumber(value: false)
+            case 0x6E: try literal("null"); return NSNull()
             default:
                 let start = i
                 while i < b.count, "+-0123456789.eE".utf8.contains(b[i]) { i += 1 }
@@ -233,7 +239,7 @@ struct ConformanceGoldenKitTests {
 
     @Test("GoldenKit: malformed JSON throws instead of trapping")
     func malformedThrows() {
-        for bad in ["", "{", "[1,", "{\"a\" 1}", "[1 2]", "{\"a\":\"\\u12\"}", "1 2"] {
+        for bad in ["", "{", "[1,", "{\"a\" 1}", "[1 2]", "{\"a\":\"\\u12\"}", "1 2", "txxx", "[fxxxx]", "nxxx"] {
             #expect(throws: GoldenKit.LoadError.self, "\(bad)") { _ = try GoldenKit.parseJSON(Data(bad.utf8)) }
         }
     }
