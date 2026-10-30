@@ -914,6 +914,7 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
     @ModuleInfo(key: "lm_head") var lmHead: Linear
 
     public init(_ args: DeepseekV4Configuration) {
+        SharpAIOverlay.V4CompressorStateCache.register()  // SharpAI overlay (SL-37): restore saved prompt caches
         self.args = args
         self.kvHeads = Array(repeating: 1, count: args.numHiddenLayers)
         self.model = DeepseekV4ModelInner(config: args)

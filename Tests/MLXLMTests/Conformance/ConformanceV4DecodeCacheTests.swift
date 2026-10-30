@@ -201,3 +201,36 @@ struct ConformanceV4CacheFallbackTests {
         #expect(w.first?.contains("QuantizedKVCache") == true)
     }
 }
+
+/// SL-37 lane LIB: the compressor state type must be registered for prompt-cache restore as soon as a V4 model
+/// exists, not lazily when the first cache instance is built.
+@Suite(.serialized)
+struct ConformanceV4CacheRegistrationTests {
+    @Test("constructing a V4 model registers the compressor state type, before any cache instance exists")
+    func modelInitRegisters() async throws {
+        let before = SharpAIOverlay.V4CompressorStateCache.registerCalls
+        let m = try await ConformanceV4DecodeCache.model(ratios: [0, 4, 8, 0])
+        #expect(SharpAIOverlay.V4CompressorStateCache.registerCalls > before, "model init must call register()")
+        // creating a cache through the model is not what registers it
+        let afterModel = SharpAIOverlay.V4CompressorStateCache.registerCalls
+        _ = try m.newCache(parameters: nil)
+        #expect(SharpAIOverlay.V4CompressorStateCache.registerCalls == afterModel)
+    }
+
+    @Test("a saved V4 prompt cache restores through the registry by its class name")
+    func restoreByRegisteredName() async throws {
+        SharpAIOverlay.V4CompressorStateCache.register()
+        let m = try await ConformanceV4DecodeCache.model(ratios: [0, 4, 8, 0])
+        let cache = try m.newCache(parameters: nil)
+        _ = ConformanceV4DecodeCache.run(m, ConformanceV4DecodeCache.tokens(13), cache: cache, chunks: [13])
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("v4reg-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("c.safetensors")
+        try savePromptCache(url: url, cache: cache)
+        let (restored, _) = try loadPromptCache(url: url)
+        #expect(ConformanceV4DecodeCache.offsets(restored) == ConformanceV4DecodeCache.offsets(cache))
+        let states = restored.compactMap { SharpAIOverlay.v4Split($0).state }
+        #expect(states.count == 2)
+    }
+}

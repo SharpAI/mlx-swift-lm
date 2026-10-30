@@ -78,8 +78,20 @@ extension SharpAIOverlay {
             try! registerKVCacheType(V4CompressorStateCache.self)
         }()
 
-        /// Register the type for prompt cache restore (also happens when an instance is created).
-        public static func register() { _ = registration }
+        private static let registerCallLock = NSLock()
+        private static let registerCallCounter = Counter()
+        private final class Counter: @unchecked Sendable { var n = 0 }
+
+        /// Number of `register()` calls so far (tests: proves the model registers eagerly).
+        static var registerCalls: Int { registerCallLock.withLock { registerCallCounter.n } }
+
+        /// Register the type for prompt cache restore. `DeepseekV4Model.init` calls this, so a saved V4 prompt
+        /// cache restores in a process that has built the model but not yet any cache instance; creating an
+        /// instance also registers it (backstop for caches built without a model).
+        public static func register() {
+            registerCallLock.withLock { registerCallCounter.n += 1 }
+            _ = registration
+        }
 
         let ratio: Int
         let headDim: Int
