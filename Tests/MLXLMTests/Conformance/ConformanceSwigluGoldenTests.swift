@@ -48,8 +48,27 @@ enum SwigluGolden {
         struct Entry: Decodable { let sha256: String; let cases: Int }
         struct Tol: Decodable { let rtol: Double; let atol: Double }
         struct Tols: Decodable { let float32: Tol; let bfloat16: Tol; let float16: Tol }
+        struct Generator: Decodable { let scripts: [String: String] }
         let files: [String: Entry]
         let tolerances: Tols
+        let generator: Generator
+    }
+
+    /// The tolerances the suite enforces. These are the authority; MANIFEST.json only documents them (manifestComplete
+    /// fails if they differ). |swift - golden| <= atol + rtol * |golden|.
+    static let tolerances: [String: (rtol: Double, atol: Double)] = [
+        "float32": (2e-6, 1e-20),
+        "bfloat16": (2e-2, 1e-20),
+        "float16": (2e-3, 1e-7),
+    ]
+
+    /// Repository root, derived from this file: Tests/MLXLMTests/Conformance/<this file>.
+    static let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+    static let scriptsDir = repoRoot.appendingPathComponent("tools/conformance/golden/swiglu")
+
+    static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     static let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -64,7 +83,7 @@ enum SwigluGolden {
         let data = try Data(contentsOf: dir.appendingPathComponent(name))
         let m = try manifest()
         let want = try #require(m.files[name], "\(name) is not in MANIFEST.json")
-        let got = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let got = sha256(data)
         #expect(got == want.sha256, "\(name): sha256 \(got) != manifest \(want.sha256)")
         let f = try JSONDecoder().decode(File.self, from: data)
         #expect(f.cases.count == want.cases, "\(name): \(f.cases.count) cases != manifest \(want.cases)")
@@ -79,21 +98,15 @@ enum SwigluGolden {
         }
     }
 
-    static func tol(_ s: String, _ m: Manifest) -> (rtol: Double, atol: Double) {
-        let t = s == "float32" ? m.tolerances.float32 : (s == "bfloat16" ? m.tolerances.bfloat16 : m.tolerances.float16)
-        return (t.rtol, t.atol)
+    static func tol(_ s: String) -> (rtol: Double, atol: Double) { tolerances[s]! }
+
+    /// gate / up of output element `i` (row-major [rows, d]) read out of the fixture input `x` ([rows, 2d]).
+    static func gateUp(_ c: Case, layout: String, _ i: Int) -> (gate: Double, up: Double) {
+        let row = i / c.d, col = i % c.d, base = row * 2 * c.d
+        return layout == "chunk" ? (c.x[base + col], c.x[base + c.d + col]) : (c.x[base + 2 * col], c.x[base + 2 * col + 1])
     }
 
-    /// Indices where |out - golden| > atol + rtol*|golden| (NaN / inf always count).
-    static func mismatches(_ out: [Float], _ golden: [Double], dtype: String, _ m: Manifest) -> [Int] {
-        let (rtol, atol) = tol(dtype, m)
-        var bad: [Int] = []
-        for (i, g) in golden.enumerated() {
-            let o = Double(out[i])
-            if !o.isFinite || abs(o - g) > atol + rtol * abs(g) { bad.append(i) }
-        }
-        return bad
-    }
+    struct Bad { let c: Case; let index: Int; let out: Float; let golden: Double; let gate: Double; let up: Double }
 
     /// 0/1 projections that route the fixture layout into gate / up and read the first d outputs back.
     /// layout "chunk": gate = x[:d], up = x[d:];  "interleave": gate = x[::2], up = x[1::2].
@@ -208,36 +221,50 @@ struct ConformanceSwigluGoldenTests {
         "swiglustep_and_mul.json": ["gap: no Swift Step path"],
     ]
 
-    /// Runs every case of `file` through `run`, returns the failures as readable strings.
+    typealias Result = (failures: [String], compared: Int, nonzero: Int, bad: [S.Bad])
+
+    /// Runs every case of `file` through `run`, returns the failures as readable strings plus every out-of-tolerance element.
+    /// `tolDType` overrides which dtype's tolerance row applies; `include` restricts which elements are compared;
+    /// `extraRtol` widens the relative tolerance per element (see `SwigluGolden.oaiTailRtol`).
     static func check(_ file: String, label: String = "", golden: KeyPath<S.Case, [Double]?>? = nil,
                       mutate: Bool = false, only: (S.Case) -> Bool = { _ in true },
-                      run: (S.Case, String) throws -> [Float]) throws -> (failures: [String], compared: Int, nonzero: Int) {
-        let f = try S.load(file), m = try S.manifest()
+                      tolDType: String? = nil,
+                      include: (S.Case, String, Int) -> Bool = { _, _, _ in true },
+                      extraRtol: (S.Case, String, Int) -> Double = { _, _, _ in 0 },
+                      run: (S.Case, String) throws -> [Float]) throws -> Result {
+        let f = try S.load(file)
         var fails: [String] = [], nonzero = 0, compared = 0
+        var allBad: [S.Bad] = []
         var worst: [String: (abs: Double, rel: Double)] = [:]   // per dtype, for the log
         for c in f.cases where only(c) {
             compared += 1
             let out = try run(c, f.layout)
             #expect(out.count == c.golden.count, "\(c.name): output size \(out.count) != \(c.golden.count)")
             var want = golden.flatMap { c[keyPath: $0] } ?? c.golden
+            let (rtol, atol) = S.tol(tolDType ?? c.dtype)
             if mutate {   // non-vacuity: a golden perturbed far beyond tolerance must be rejected
-                let (rtol, atol) = S.tol(c.dtype, m)
                 want[0] = want[0] + 50 * (atol + rtol * abs(want[0])) + 1e-3
             }
             nonzero += out.filter { $0 != 0 }.count
-            if !mutate {
-                var w = worst[c.dtype] ?? (0, 0)
-                for (i, g) in want.enumerated() where out[i].isFinite {
-                    let a = abs(Double(out[i]) - g)
+            var bad: [Int] = []
+            for (i, g) in want.enumerated() where include(c, f.layout, i) {
+                let o = Double(out[i])
+                if !mutate && o.isFinite {
+                    var w = worst[c.dtype] ?? (0, 0)
+                    let a = abs(o - g)
                     w.abs = max(w.abs, a)
                     if abs(g) > 1e-30 { w.rel = max(w.rel, a / abs(g)) }
+                    worst[c.dtype] = w
                 }
-                worst[c.dtype] = w
+                if !o.isFinite || abs(o - g) > atol + (rtol + extraRtol(c, f.layout, i)) * abs(g) {
+                    bad.append(i)
+                    let gu = S.gateUp(c, layout: f.layout, i)
+                    allBad.append(S.Bad(c: c, index: i, out: out[i], golden: g, gate: gu.gate, up: gu.up))
+                }
             }
-            let bad = S.mismatches(out, want, dtype: c.dtype, m)
-            if !bad.isEmpty {
-                let i = bad[0]
-                fails.append("\(c.name): \(bad.count)/\(want.count) out of tolerance, first #\(i) swift=\(out[i]) golden=\(want[i]) x=\(c.x.count > i ? c.x[i] : 0)")
+            if let i = bad.first {
+                let gu = S.gateUp(c, layout: f.layout, i)
+                fails.append("\(c.name): \(bad.count)/\(want.count) out of tolerance, first #\(i) swift=\(out[i]) golden=\(want[i]) gate=\(gu.gate) up=\(gu.up)")
             }
         }
         if !mutate {
@@ -245,10 +272,10 @@ struct ConformanceSwigluGoldenTests {
                 print("[swiglu][stats] \(file) \(label) \(dt) max|abs err|=\(w.abs) max rel err=\(w.rel)")
             }
         }
-        return (fails, compared, nonzero)
+        return (fails, compared, nonzero, allBad)
     }
 
-    @Test("manifest: every fixture is listed, hashed, and has a consumer")
+    @Test("manifest: every fixture is listed, hashed, has a consumer; tolerances and generator scripts match")
     func manifestComplete() throws {
         let m = try S.manifest()
         #expect(Set(m.files.keys) == Set(Self.consumers.keys), "manifest files \(m.files.keys.sorted()) vs consumers \(Self.consumers.keys.sorted())")
@@ -256,6 +283,16 @@ struct ConformanceSwigluGoldenTests {
         #expect(Set(onDisk) == Set(m.files.keys), "fixture files on disk \(onDisk.sorted()) vs manifest")
         for (file, paths) in Self.consumers { #expect(!paths.isEmpty, "\(file) has no consumer") }
         for file in m.files.keys { _ = try S.load(file) }   // verifies sha256 + case counts
+        // The manifest only documents the tolerances; the constants in S.tolerances are what the tests enforce.
+        for (name, t) in [("float32", m.tolerances.float32), ("bfloat16", m.tolerances.bfloat16), ("float16", m.tolerances.float16)] {
+            #expect(t.rtol == S.tol(name).rtol && t.atol == S.tol(name).atol, "\(name): MANIFEST.json \(t) differs from the enforced \(S.tol(name))")
+        }
+        // The generator scripts that produced the fixtures are the ones in the repo.
+        #expect(Set(m.generator.scripts.keys) == ["generate.py", "swiglu_ref.py"])
+        for (script, want) in m.generator.scripts {
+            let data = try Data(contentsOf: S.scriptsDir.appendingPathComponent(script))
+            #expect(S.sha256(data) == want, "tools/conformance/golden/swiglu/\(script) changed since the fixtures were generated; regenerate")
+        }
     }
 
     @Test("fixtures cover dtypes, boundary values, negative gates, last-dim 1 and odd sizes")
@@ -275,6 +312,7 @@ struct ConformanceSwigluGoldenTests {
 
     /// Cases a path is held to without a gap wrapper. fp16 silu(gate)*up is a pinned gap (see `siluFloat16Gap`).
     static let notFloat16: @Sendable (S.Case) -> Bool = { $0.dtype != "float16" }
+
     /// The one fp32 GPT-OSS case that misses the a-priori rtol by a hair (see `gptossFloat32Outlier`).
     static let oaiOutlier = "swigluoai_and_mul-L7.0-float32-5x129"
     static let notOaiOutlier: @Sendable (S.Case) -> Bool = { $0.name != ConformanceSwigluGoldenTests.oaiOutlier }
