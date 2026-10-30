@@ -11,8 +11,14 @@ float64) and executes them. The maths is vLLM's text, run in float64, so the com
   [AC]  vllm/model_executor/layers/activation.py::SiluAndMulWithClamp.forward_native
   [FU]  vllm/model_executor/layers/fused_moe/utils.py::_swiglu_limit_torch (torch.compile decorator dropped)
 
+Needs a vLLM source tree (it is NOT part of this repo; one-time download, never from tests/CI). The oracle was
+transcribed from commit 2eae56c of https://github.com/vllm-project/vllm (the commit the lane was given; the tree it
+was read from had no .git, so that id is not re-verified). To reproduce:
+    git clone https://github.com/vllm-project/vllm /some/dir/vllm && git -C /some/dir/vllm checkout 2eae56c
+The tree root is passed with --vllm or the VLLM_SRC environment variable; there is no default path.
+
 Run (python reads downloaded data, so -I):
-    .venv-golden/bin/python -I tools/conformance/golden/v4route_crosscheck.py [--vllm <vllm tree root>]
+    .venv-golden/bin/python -I tools/conformance/golden/v4route_crosscheck.py --vllm /some/dir/vllm
 Prints one line per check with the number of cases and the worst relative disagreement, then OK. Exit code 1 on
 any disagreement above REL_TOL (1e-10) that is not one of the EXPLAINED cases (there is exactly one, below).
 
@@ -37,7 +43,6 @@ import v4route_ref as R  # noqa: E402
 
 F64 = torch.float64
 REL_TOL = 1e-10
-DEFAULT_VLLM = "/private/tmp/claude-501/-Users-simba-SwiftLM/85247f50-f34b-4898-b8ab-d9cdf7d9c026/scratchpad/vllm-main/src"
 SUBS = [("torch.float32", "torch.float64"), ("torch.bfloat16", "torch.float64"), (".float()", ".double()"),
         (".bfloat16()", ".double()")]
 
@@ -88,9 +93,13 @@ class Report:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--vllm", default=DEFAULT_VLLM)
+    ap.add_argument("--vllm", default=os.environ.get("VLLM_SRC"),
+                    help="vLLM source tree root (commit 2eae56c); or set VLLM_SRC")
     args = ap.parse_args()
     root = args.vllm
+    if not root or not os.path.isdir(os.path.join(root, "vllm")):
+        ap.error("need a vLLM source tree: pass --vllm <root> or set VLLM_SRC (see the docstring for how to fetch "
+                 "commit 2eae56c)")
     g = torch.Generator()
     g.manual_seed(20261029)
     rep = Report()
