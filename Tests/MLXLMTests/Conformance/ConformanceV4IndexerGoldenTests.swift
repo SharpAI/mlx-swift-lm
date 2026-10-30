@@ -33,7 +33,6 @@
 // and oracle are hashed but never re-run in CI.
 // upstream-watch: Libraries/MLXLLM/Models/DeepseekV4Indexer.swift, DeepseekV4.swift.
 
-import CryptoKit
 import Foundation
 import MLX
 import MLXLLM
@@ -44,7 +43,7 @@ import Testing
 @testable import MLXLLM
 @testable import MLXLMCommon
 
-// TODO consolidate GoldenKit
+// Loading, sha256, location and exact IO come from GoldenKit; the manifest schema, pins and comparators stay here.
 enum V4IdxGolden {
 
     // MARK: file format
@@ -176,49 +175,35 @@ enum V4IdxGolden {
         let fixtures: [Fixture]
     }
 
-    struct LoadError: Error, CustomStringConvertible {
-        let description: String
-    }
+    typealias LoadError = GoldenKit.LoadError
 
     // MARK: loader
 
     /// <repo>/Tests/MLXLMTests/Conformance/Golden/v4idx, derived from this file's path.
-    static let defaultDirectory: URL = {
-        var url = URL(fileURLWithPath: #filePath)
-        url.deleteLastPathComponent()
-        return url.appendingPathComponent("Golden/v4idx")
-    }()
+    static let defaultDirectory: URL = GoldenKit.directory("Golden/v4idx")
 
     /// <repo>/tools/conformance/golden/v4idx (generator and oracle), derived from this file's path.
-    static let defaultToolsDirectory: URL = {
-        var url = URL(fileURLWithPath: #filePath)
-        for _ in 0 ..< 4 { url.deleteLastPathComponent() }
-        return url.appendingPathComponent("tools/conformance/golden/v4idx")
-    }()
+    static let defaultToolsDirectory: URL = GoldenKit.directory("tools/conformance/golden/v4idx")
 
     /// sha256 of MANIFEST.json. Regenerating the fixtures (or changing the oracle and rerunning the generator) changes the
     /// manifest and so fails the default load until this line is edited: the change shows up in a second file.
     static let pinnedManifestSha256 = "0735c2a2479c243675e44422298808c2eddadb051ea4ff29ce2dc295a7300228"
-
-    static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
 
     /// Loads and VERIFIES a fixture directory. Throws (never skips) when anything is off.
     static func load(from dir: URL, toolsDir: URL = defaultToolsDirectory, pinnedManifestSha256: String? = nil) throws -> Loaded {
         let manifestURL = dir.appendingPathComponent("MANIFEST.json")
         let manifest: Manifest
         do {
-            let manifestData = try Data(contentsOf: manifestURL)
+            let manifestData = try GoldenKit.read(manifestURL)
             if let pinnedManifestSha256 {
-                let actualManifest = sha256(manifestData)
+                let actualManifest = GoldenKit.sha256(manifestData)
                 guard actualManifest == pinnedManifestSha256 else {
                     throw LoadError(
                         description: "MANIFEST CHANGED: MANIFEST.json sha256 \(actualManifest) != the pin in this test file. "
                             + "Regenerated fixtures need a reviewed update of `pinnedManifestSha256`.")
                 }
             }
-            manifest = try JSONDecoder().decode(Manifest.self, from: manifestData)
+            manifest = try GoldenKit.decode(Manifest.self, from: manifestData, name: "MANIFEST.json")
         } catch let error as LoadError {
             throw error
         } catch {
@@ -239,7 +224,7 @@ enum V4IdxGolden {
             let file = toolsDir.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent)
             let actual: String
             do {
-                actual = sha256(try Data(contentsOf: file))
+                actual = GoldenKit.sha256(try GoldenKit.read(file))
             } catch {
                 throw LoadError(description: "cannot read \(file.path) pinned by the manifest: \(error)")
             }
@@ -252,19 +237,14 @@ enum V4IdxGolden {
         var fixtures = [Fixture]()
         for name in manifest.files.keys.sorted() {
             guard let entry = manifest.files[name] else { continue }
-            let data = try Data(contentsOf: dir.appendingPathComponent(name))
-            let actual = sha256(data)
+            let data = try GoldenKit.read(dir.appendingPathComponent(name))
+            let actual = GoldenKit.sha256(data)
             guard actual == entry.sha256 else {
                 throw LoadError(
                     description: "FIXTURE CHANGED: \(name) sha256 \(actual) != manifest \(entry.sha256). "
                         + "Regenerate with tools/conformance/golden/gen_v4idx_golden.py and review the diff.")
             }
-            let fixture: Fixture
-            do {
-                fixture = try JSONDecoder().decode(Fixture.self, from: data)
-            } catch {
-                throw LoadError(description: "cannot decode \(name): \(error)")
-            }
+            let fixture = try GoldenKit.decode(Fixture.self, from: data, name: name)
             guard fixture.name + ".json" == name, fixture.kind == entry.kind, fixture.group == entry.group,
                 fixture.dtype == entry.dtype, fixture.tolerance == entry.tolerance
             else {

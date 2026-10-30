@@ -1,5 +1,5 @@
 // Shared plumbing for the committed-golden conformance suites (ConformanceKdaGoldenTests, ConformanceSwigluGoldenTests,
-// DequantGoldenTests). Replaces the three lane-private loaders.
+// DequantGoldenTests and the three V4 golden suites: compressor, indexer, routing). Replaces the lane-private loaders.
 //
 // What every golden suite needs, and gets here once:
 //  * Location through `#filePath` (no Package.swift resource, no bundle), so fixtures are read from the source tree.
@@ -74,8 +74,12 @@ enum GoldenKit {
     }
 
     /// Typed decode (JSONDecoder reads Double exactly).
-    static func decode<T: Decodable>(_ type: T.Type, from data: Data, name: String = "") throws -> T {
-        do { return try JSONDecoder().decode(type, from: data) } catch {
+    static func decode<T: Decodable>(_ type: T.Type, from data: Data, name: String = "", snakeCase: Bool = false) throws -> T {
+        do {
+            let decoder = JSONDecoder()
+            if snakeCase { decoder.keyDecodingStrategy = .convertFromSnakeCase }
+            return try decoder.decode(type, from: data)
+        } catch {
             throw LoadError(description: "cannot decode \(name.isEmpty ? String(describing: type) : name): \(error)")
         }
     }

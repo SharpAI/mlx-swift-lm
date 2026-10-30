@@ -19,7 +19,6 @@
 // Provenance: the generator inputs are pinned in tools/conformance/golden/v4comp/requirements.txt; the manifest records the vLLM commit,
 // the crosscheck, and the sha256 of the generator and oracle sources, which `manifestComplete` re-checks.
 
-import CryptoKit
 import Foundation
 import MLX
 import MLXLLM
@@ -29,7 +28,7 @@ import Testing
 
 @testable import MLXLLM
 
-// TODO consolidate GoldenKit
+// Loading, sha256 and location come from GoldenKit; the manifest schema and comparators stay here.
 enum V4CompGolden {
     struct Case: Decodable {
         let name: String
@@ -85,38 +84,31 @@ enum V4CompGolden {
         let tolerances: Tols
     }
 
-    static let decoder: JSONDecoder = {
-        let d = JSONDecoder()
-        d.keyDecodingStrategy = .convertFromSnakeCase
-        return d
-    }()
-    static let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        .appendingPathComponent("Golden/v4comp")
+    static let dir = GoldenKit.directory("Golden/v4comp")
     static let files = [
         "ratio4.json", "ratio128.json", "bf16.json", "eps.json", "yarn.json", "wide.json",
     ]
 
     static func manifest() throws -> Manifest {
-        try decoder.decode(
-            Manifest.self, from: Data(contentsOf: dir.appendingPathComponent("MANIFEST.json")))
+        try GoldenKit.decode(
+            Manifest.self, from: GoldenKit.read(dir.appendingPathComponent("MANIFEST.json")),
+            name: "MANIFEST.json", snakeCase: true)
     }
 
-    struct LoadError: Error, CustomStringConvertible {
-        let description: String
-    }
+    typealias LoadError = GoldenKit.LoadError
 
     /// Loads a fixture after verifying its sha256 and case count against MANIFEST.json. Throws (never records an issue from a
     /// static initializer): a tampered or truncated fixture surfaces through `manifestComplete`, which rethrows `loaded`.
     static func load(_ name: String) throws -> File {
-        let data = try Data(contentsOf: dir.appendingPathComponent(name))
+        let data = try GoldenKit.read(dir.appendingPathComponent(name))
         guard let want = try manifest().files[name] else {
             throw LoadError(description: "\(name) is not in MANIFEST.json")
         }
-        let got = sha256(data)
+        let got = GoldenKit.sha256(data)
         guard got == want.sha256 else {
             throw LoadError(description: "\(name): sha256 \(got) != manifest \(want.sha256)")
         }
-        let f = try decoder.decode(File.self, from: data)
+        let f = try GoldenKit.decode(File.self, from: data, name: name, snakeCase: true)
         guard f.cases.count == want.cases else {
             throw LoadError(
                 description: "\(name): \(f.cases.count) cases != manifest \(want.cases)")
@@ -124,15 +116,8 @@ enum V4CompGolden {
         return f
     }
 
-    static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-
-    /// tools/conformance/golden/v4comp (generator and oracle sources), five levels above the fixture directory's parent chain.
-    static let generatorDir = dir.deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(
-            "tools/conformance/golden/v4comp")
+    /// tools/conformance/golden/v4comp (generator and oracle sources).
+    static let generatorDir = GoldenKit.directory("tools/conformance/golden/v4comp")
 
     static func allCases() throws -> [Case] { try files.flatMap { try load($0).cases } }
 
@@ -343,7 +328,7 @@ struct ConformanceV4CompressorGoldenTests {
         // the committed generator and oracle are the ones that produced the fixtures (detects drift between them, not wrong content:
         // the independent guard for content is the 240-case crosscheck against vLLM's own reference code, recorded below)
         for (file, want) in m.generator {
-            let got = G.sha256(try Data(contentsOf: G.generatorDir.appendingPathComponent(file)))
+            let got = GoldenKit.sha256(try GoldenKit.read(G.generatorDir.appendingPathComponent(file)))
             #expect(
                 got == want, "\(file): sha256 \(got) != manifest \(want) (regenerate the fixtures)")
         }

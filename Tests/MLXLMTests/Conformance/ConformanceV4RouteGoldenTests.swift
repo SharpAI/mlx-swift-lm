@@ -14,7 +14,6 @@
 // `ConformanceGap.knownIssue`; CONFORMANCE_GAP_RAW=1 shows the raw failure, CONFORMANCE_STRICT=1 fails once a gap is
 // fixed. upstream-watch: Libraries/MLXLLM/Models/DeepseekV4.swift.
 
-import CryptoKit
 import Foundation
 import MLX
 import MLXLLM
@@ -24,7 +23,7 @@ import Testing
 
 @testable import MLXLLM
 
-// TODO consolidate GoldenKit (the loader, manifest verification and comparators below are lane-private copies)
+// Loading, sha256, location and exact IO come from GoldenKit; the manifest schema, tolerance pins and comparators stay here.
 enum V4RouteGolden {
 
     // MARK: file format
@@ -99,27 +98,13 @@ enum V4RouteGolden {
         let fixtures: [Fixture]
     }
 
-    struct LoadError: Error, CustomStringConvertible {
-        let description: String
-    }
+    typealias LoadError = GoldenKit.LoadError
 
     // MARK: loader
 
-    static let defaultDirectory: URL = {
-        var url = URL(fileURLWithPath: #filePath)
-        url.deleteLastPathComponent()
-        return url.appendingPathComponent("Golden/v4route")
-    }()
+    static let defaultDirectory: URL = GoldenKit.directory("Golden/v4route")
 
-    static let defaultToolsDirectory: URL = {
-        var url = URL(fileURLWithPath: #filePath)
-        for _ in 0 ..< 4 { url.deleteLastPathComponent() }
-        return url.appendingPathComponent("tools/conformance/golden")
-    }()
-
-    static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
+    static let defaultToolsDirectory: URL = GoldenKit.directory("tools/conformance/golden")
 
     /// The tolerances, pinned in this file. MANIFEST.json holds the numbers the comparator uses but is not itself
     /// sha-pinned, so a commit could loosen a tolerance and the manifest together; with this copy that change also
@@ -138,7 +123,7 @@ enum V4RouteGolden {
         let manifestURL = dir.appendingPathComponent("MANIFEST.json")
         let manifest: Manifest
         do {
-            manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
+            manifest = try GoldenKit.decode(Manifest.self, from: GoldenKit.read(manifestURL), name: "MANIFEST.json")
         } catch {
             throw LoadError(description: "cannot read \(manifestURL.path): \(error)")
         }
@@ -157,7 +142,7 @@ enum V4RouteGolden {
             let file = toolsDir.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent)
             let actual: String
             do {
-                actual = sha256(try Data(contentsOf: file))
+                actual = GoldenKit.sha256(try GoldenKit.read(file))
             } catch {
                 throw LoadError(description: "cannot read \(file.path) pinned by the manifest: \(error)")
             }
@@ -178,19 +163,14 @@ enum V4RouteGolden {
         var fixtures = [Fixture]()
         for name in manifest.files.keys.sorted() {
             guard let entry = manifest.files[name] else { continue }
-            let data = try Data(contentsOf: dir.appendingPathComponent(name))
-            let actual = sha256(data)
+            let data = try GoldenKit.read(dir.appendingPathComponent(name))
+            let actual = GoldenKit.sha256(data)
             guard actual == entry.sha256 else {
                 throw LoadError(
                     description: "FIXTURE CHANGED: \(name) sha256 \(actual) != manifest \(entry.sha256). "
                         + "Regenerate with tools/conformance/golden/gen_v4route_golden.py and review the diff.")
             }
-            let fixture: Fixture
-            do {
-                fixture = try JSONDecoder().decode(Fixture.self, from: data)
-            } catch {
-                throw LoadError(description: "cannot decode \(name): \(error)")
-            }
+            let fixture = try GoldenKit.decode(Fixture.self, from: data, name: name)
             guard fixture.name + ".json" == name, fixture.kind == entry.kind, fixture.group == entry.group,
                 fixture.dtype == entry.dtype, fixture.tolerance == entry.tolerance
             else {
