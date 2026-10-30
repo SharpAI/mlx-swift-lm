@@ -491,6 +491,12 @@ struct ConformanceDequantGoldenTests {
 
     static func checkDecode(_ key: String, _ b: BlockCase) {
         guard fp8DecodeEnabled else {
+            // PRECISE MEANING OF THIS OPEN GAP: it is OPEN because the decode comparison was NOT EXECUTED in this run
+            // (DEQUANT_GOLDEN_FP8_DECODE unset), not because a decode result was measured wrong. The reason is that
+            // running it hits a fatal, uncatchable Metal compile failure of FP8Linear's kernel. It therefore reports
+            // [gap][OPEN] on every default run, can never become FIXED by itself, and says nothing about decode
+            // correctness. With the variable set the comparison below runs for real (and crashes today).
+            // Retire it when the kernel compiles: delete this branch and run the comparison unconditionally.
             ConformanceGap.knownIssue(
                 "FP8Linear single-token decode cannot run: its Metal kernel source is a complete kernel passed as a metalKernel BODY and fails to compile (fatal); set DEQUANT_GOLDEN_FP8_DECODE=1 to execute (OPEN)"
             ) {
