@@ -211,7 +211,7 @@ public class DeepseekV4Tests: XCTestCase {
     }
 
     func testSanitizeDropsCompressorIndexerKeys() {
-        // Compressor/indexer sub-modules are not yet implemented; ensure sanitize drops them.
+        // Compressor (SL-35 4.1) and indexer (SL-35 4.2) are implemented; ensure sanitize keeps their tensors.
         let config = makeSmallConfig()
         let model = DeepseekV4Model(config)
 
@@ -228,21 +228,24 @@ public class DeepseekV4Tests: XCTestCase {
 
         XCTAssertNotNil(sanitized["model.layers.0.attn.wkv.weight"],
                         "Standard wkv should be kept")
-        XCTAssertNil(sanitized["model.layers.0.attn.compressor.wkv.weight"],
-                     "Compressor keys should be dropped")
-        XCTAssertNil(sanitized["model.layers.0.attn.compressor.wgate.weight"],
-                     "Compressor keys should be dropped")
-        XCTAssertNil(sanitized["model.layers.0.attn.indexer.wq_b.weight"],
-                     "Indexer keys should be dropped")
-        XCTAssertNil(sanitized["model.layers.0.attn.indexer.compressor.wkv.weight"],
-                     "Nested indexer compressor keys should be dropped")
+        // SL-35 step 4.1: the compressor is implemented, its keys are kept.
+        XCTAssertNotNil(sanitized["model.layers.0.attn.compressor.wkv.weight"],
+                        "Compressor keys should be kept")
+        XCTAssertNotNil(sanitized["model.layers.0.attn.compressor.wgate.weight"],
+                        "Compressor keys should be kept")
+        // SL-35 step 4.2: the indexer is implemented, its keys are kept too.
+        XCTAssertNotNil(sanitized["model.layers.0.attn.indexer.wq_b.weight"],
+                        "Indexer keys should be kept")
+        XCTAssertNotNil(sanitized["model.layers.0.attn.indexer.compressor.wkv.weight"],
+                        "Nested indexer compressor keys should be kept")
     }
 
 
 
     func testMoEGateRoutingShape() {
         let config = makeSmallConfig()
-        let gate = DeepseekV4Gate(config: config)
+        // Layer 1 is a learned-routing layer; layer 0 (< num_hash_layers) is a hash layer that needs token ids (SL-35 4.3).
+        let gate = DeepseekV4Gate(config: config, layerIndex: 1)
         gate.weight = MLXRandom.uniform(low: 0, high: 1, [config.nRoutedExperts, config.hiddenSize])
         gate.e_score_correction_bias = zeros([config.nRoutedExperts])
 

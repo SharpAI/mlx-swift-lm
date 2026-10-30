@@ -1,4 +1,5 @@
-// Conformance gap pins, part 2: deepseek_v4 (registered, but #254 says the text path is incomplete).
+// Conformance pins, part 2: deepseek_v4 (registered, but #254 said the text path is incomplete).
+// SL-35 4.1-4.3: the compressor, indexer and tid2eid gaps have landed; their pins are plain asserts now.
 //
 // Tier 0/1 facts only: config JSON from the offline fixtures (scripts/conformance/offline/fixtures/
 // deepseek_v4*), no weights, no network. Green tests record facts; every gap is a precise test
@@ -137,35 +138,42 @@ struct ConformanceGapDeepseekV4Tests {
         // layer 1 has ratio 4 (compressor + indexer), layer 2 has ratio 128 (compressor only).
         // Layers 1 and 2 are only built once the layer-count gap above is fixed, so key off layer 1 only
         // (it exists today) for the indexer and either layer for the compressor.
-        ConformanceGap.knownIssue("DeepseekV4 has no compressor module (sanitize drops .attn.compressor.*)") {
-            ConformanceGap.expect(keys.contains { $0.hasPrefix("model.layers.1.attn.compressor.") })
+        // Compressor landed (SL-35 step 4.1): plain asserts. Ratio 4 and ratio 128 layers own one, ratio 0 none.
+        for l in [1, 2] {
+            for k in ["ape", "wkv.weight", "wgate.weight", "norm.weight"] {
+                #expect(keys.contains("model.layers.\(l).attn.compressor.\(k)"), "layer \(l) lacks compressor.\(k)")
+            }
         }
-        ConformanceGap.knownIssue("DeepseekV4 has no indexer module (sanitize drops .attn.indexer.*)") {
-            ConformanceGap.expect(keys.contains { $0.hasPrefix("model.layers.1.attn.indexer.") })
+        #expect(!keys.contains { $0.hasPrefix("model.layers.0.attn.compressor.") })
+        // Indexer landed (SL-35 step 4.2): ratio-4 layer 1 owns one (with its own compressor), ratio-128 layer 2 none.
+        for k in ["wq_b.weight", "weights_proj.weight", "compressor.ape", "compressor.wkv.weight",
+                  "compressor.wgate.weight", "compressor.norm.weight"] {
+            #expect(keys.contains("model.layers.1.attn.indexer.\(k)"), "layer 1 lacks indexer.\(k)")
         }
+        #expect(!keys.contains { $0.hasPrefix("model.layers.2.attn.indexer.") || $0.hasPrefix("model.layers.0.attn.indexer.") })
     }
 
     @Test("V4 hash-MoE layers (index < num_hash_layers) own a gate.tid2eid [vocab, top-k] table")
     func hashRoutingTable() async throws {
         let m = try await ConformanceDeepseekV4.tinyModel()
         let params = Dictionary(uniqueKeysWithValues: m.parameters().flattened())
+        // tid2eid landed (SL-35 step 4.3): plain asserts. Only layers below num_hash_layers (= 1) own one.
         let t = params["model.layers.0.ffn.gate.tid2eid"]
-        ConformanceGap.knownIssue("DeepseekV4 has no tid2eid parameter (sanitize drops it)") {
-            ConformanceGap.expect(t != nil)
-            ConformanceGap.expect(t?.shape == [64, 2])
-        }
+        #expect(t != nil)
+        #expect(t?.shape == [64, 2])
+        #expect(params["model.layers.1.ffn.gate.tid2eid"] == nil && params["model.layers.2.ffn.gate.tid2eid"] == nil)
     }
 
     @Test("V4 sanitize keeps the compressor / indexer / tid2eid tensors of a main layer")
     func sanitizeKeepsTensors() async throws {
         let m = try await ConformanceDeepseekV4.tinyModel()
-        let probe = ["model.layers.0.attn.compressor.wkv.weight", "model.layers.0.attn.indexer.wq_b.weight",
-                     "model.layers.0.ffn.gate.tid2eid"]
-        let out = m.sanitize(weights: Dictionary(uniqueKeysWithValues: probe.map { ($0, MLXArray.zeros([2, 2])) }))
-        for k in probe {
-            ConformanceGap.knownIssue("DeepseekV4.sanitize drops \(k)") {
-                ConformanceGap.expect(out[k] != nil)
-            }
-        }
+        let landed = "model.layers.0.attn.compressor.wkv.weight"  // compressor: SL-35 step 4.1
+        let landedIx = "model.layers.0.attn.indexer.wq_b.weight"  // indexer: SL-35 step 4.2
+        let landedHash = "model.layers.0.ffn.gate.tid2eid"  // tid2eid: SL-35 step 4.3
+        let out = m.sanitize(
+            weights: Dictionary(uniqueKeysWithValues: [landed, landedIx, landedHash].map { ($0, MLXArray.zeros([2, 2])) }))
+        #expect(out[landed] != nil, "sanitize dropped \(landed)")
+        #expect(out[landedIx] != nil, "sanitize dropped \(landedIx)")
+        #expect(out[landedHash] != nil, "sanitize dropped \(landedHash)")
     }
 }

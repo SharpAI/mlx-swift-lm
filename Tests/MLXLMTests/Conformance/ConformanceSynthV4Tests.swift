@@ -177,27 +177,23 @@ struct ConformanceSynthV4Tests {
         }
     }
 
-    static let missingFromOurs: [ConformanceSynthV4Layout.Group] = [.compressor, .indexer, .tid2eid]
+    /// Groups that were gaps and have landed in SL-35 (`.compressor` 4.1, `.indexer` 4.2, `.tid2eid` 4.3):
+    /// asserted plainly, and required to occur in the real layout so the assert is not vacuous.
+    static let landedGroups: [ConformanceSynthV4Layout.Group] = [.compressor, .indexer, .tid2eid]
 
     @Test("real tensors our module has no parameter for", arguments: ConformanceSynthV4Layout.Group.allCases)
     func realTensorsWithoutHome(_ g: ConformanceSynthV4Layout.Group) async throws {
         let c = try await ConformanceSynthV4Case.make()
         let keys = c.realOnly(g)
         let msg = "\(g.rawValue): \(keys.count) real tensors have no parameter, e.g. \(keys.prefix(3))"
-        // Non-vacuity (outside the wrapper): both layouts are populated, and a gap group really occurs in the
-        // real checkpoint (otherwise `keys.isEmpty` below would hold for the wrong reason).
+        // Non-vacuity: both layouts are populated, and a landed group really occurs in the real checkpoint
+        // (otherwise `keys.isEmpty` below would hold for the wrong reason).
         #expect(!c.convertedKeys.isEmpty && !c.nativeKeys.isEmpty && !c.convertedKeys.isDisjoint(with: c.nativeKeys))
-        if Self.missingFromOurs.contains(g) {
+        if Self.landedGroups.contains(g) {
             let present = c.convertedKeys.filter { ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == g }
-            #expect(!present.isEmpty, "\(g.rawValue): the real layout has no such tensor; the gap pin is vacuous")
+            #expect(!present.isEmpty, "\(g.rawValue): the real layout has no such tensor; the assert is vacuous")
         }
-        if Self.missingFromOurs.contains(g) {
-            ConformanceGap.knownIssue("DeepseekV4 lacks a parameter for real `\(g.rawValue)` tensors") {
-                ConformanceGap.expect(keys.isEmpty, "\(msg)")
-            }
-        } else {
-            #expect(keys.isEmpty, "unexplained real-only tensors: \(msg)")
-        }
+        #expect(keys.isEmpty, "unexplained real-only tensors: \(msg)")
     }
 
     @Test("parameters of our module that the real layout does not have", arguments: ConformanceSynthV4Layout.Group.allCases)
@@ -210,15 +206,9 @@ struct ConformanceSynthV4Tests {
             // Non-vacuity: our module really has gate-bias parameters (the claim is that some are surplus).
             #expect(c.nativeKeys.contains { ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == .gateBias })
         }
-        if g == .gateBias {
-            // vLLM creates e_score_correction_bias only for non-hash layers (nvidia/model.py:306-310); ours
-            // creates it on every layer and tolerates its absence via updateMissing.
-            ConformanceGap.knownIssue("DeepseekV4Gate has e_score_correction_bias on hash layers; the real checkpoint has none") {
-                ConformanceGap.expect(keys.isEmpty, "\(msg)")
-            }
-        } else {
-            #expect(keys.isEmpty, "unexplained module-only parameters: \(msg)")
-        }
+        // vLLM creates e_score_correction_bias only for non-hash layers (nvidia/model.py:306-310); since SL-35 4.3
+        // ours does the same, so no module-only parameter remains.
+        #expect(keys.isEmpty, "unexplained module-only parameters: \(msg)")
     }
 
     @Test("sanitize keeps every real tensor of the layers it builds", arguments: [ConformanceSynthV4Layout.Group.compressor, .indexer, .tid2eid])
@@ -239,8 +229,6 @@ struct ConformanceSynthV4Tests {
         }
         #expect(!inGroup.isEmpty, "\(g.rawValue): no real tensors in the built layers; nothing could be dropped")
         #expect(!kept.isEmpty && kept.contains { ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == .other })
-        ConformanceGap.knownIssue("DeepseekV4.sanitize silently drops real `\(g.rawValue)` tensors") {
-            ConformanceGap.expect(dropped.isEmpty, "\(dropped.count) dropped, e.g. \(dropped.prefix(3))")
-        }
+        #expect(dropped.isEmpty, "\(dropped.count) dropped, e.g. \(dropped.prefix(3))")
     }
 }
