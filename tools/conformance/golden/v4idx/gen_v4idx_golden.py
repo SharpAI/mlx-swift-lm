@@ -1,7 +1,7 @@
 """Generate the V4 sparse-indexer / sparse-attention golden fixtures for ConformanceV4IndexerGoldenTests.
 
 PROVENANCE
-  Maths: vLLM commit 2eae56c, transcribed in tools/conformance/golden/v4idx_ref.py with
+  Maths: vLLM commit 2eae56c, transcribed in tools/conformance/golden/v4idx/v4idx_ref.py with
     file:line citations; v4idx_crosscheck.py checks the oracle against vLLM's own torch reference code (extracted from the
     vLLM tree with `ast`, run raw in float32 and mechanically converted to float64) on >= 200 random cases each.
     Items that are inferred rather than in vLLM: I1..I6 in v4idx_ref.py's header.
@@ -11,8 +11,8 @@ PROVENANCE
 HOW TO RUN (once, then commit the outputs; tests never run python, CI is air-gapped)
     uv venv .venv-golden && uv pip install --python .venv-golden/bin/python torch numpy \\
         --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
-    .venv-golden/bin/python -I tools/conformance/golden/v4idx_crosscheck.py --vllm <vllm src>   # must print OK
-    .venv-golden/bin/python -I tools/conformance/golden/gen_v4idx_golden.py                    # rewrites Tests/.../Golden/v4idx/
+    .venv-golden/bin/python -I tools/conformance/golden/v4idx/v4idx_crosscheck.py --vllm <vllm src>   # must print OK
+    .venv-golden/bin/python -I tools/conformance/golden/v4idx/gen_v4idx_golden.py                    # rewrites Tests/.../Golden/v4idx/
   Network is needed ONLY for the one-time torch install. Output is deterministic (per-case seed = crc32(name)).
 
 FIXTURE KINDS (what the Swift test does with each)
