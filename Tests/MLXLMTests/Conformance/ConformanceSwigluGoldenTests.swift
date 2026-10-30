@@ -11,12 +11,22 @@
 //   Step silu-then-clamp   -> no Swift path exists (pinned as a gap)
 // The projections are 0/1 selection matrices, so the only arithmetic in the output is the activation
 // (a single non-zero product per dot product is exact in every dtype).
+//
+// Limits of this suite (read before trusting a green run):
+//  * The interleaved gate/up layout of GPT-OSS is injected by the selection matrices below. GPTOSS.swift
+//    sanitize (stride(by: 2) split of gate_up_proj) is NOT exercised: a gate/up swap there would not be noticed.
+//  * Tolerances are constants in this file (SwigluGolden.tolerances). MANIFEST.json repeats them and the test
+//    manifestComplete fails if the two differ, so loosening one without the other is caught.
+//  * The V4 oracle is INFERRED (vLLM 739e5945d has no DeepSeek-V4 model; no V4 reference code is in this repo
+//    or in 3rd_party). v4Dense/v4Routed therefore characterize the shipping code against an inferred formula;
+//    only the region where gate >= -limit and |up| <= limit is independent of the unknown clamp sidedness
+//    (v4RoutedGateOnly).
+//  * GPT-OSS swiglu runs in float32 for bfloat16/float16 input (see gptossDTypePromotion), so it is held to the
+//    float32 tolerance in every dtype; the bfloat16/float16 rows of the tolerance table are not used for it.
 
-import CryptoKit
+import CryptoKit  // macOS-only, like ConformanceOfflineBundleTests; CI for this repo is macos-15
 import Foundation
 import MLX
-import MLXLLM
-import MLXLMCommon
 import MLXNN
 import Testing
 
