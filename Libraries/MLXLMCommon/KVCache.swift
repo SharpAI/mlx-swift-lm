@@ -2193,10 +2193,20 @@ public class CacheList: BaseKVCache {
 
     @discardableResult
     public override func trim(_ n: Int) -> Int {
+        // SharpAI overlay (SL-37): an auxiliary child with a bounded rewind (V4CompressorStateCache) cannot follow a
+        // larger trim; clamp to it so the other children do not rewind further than it does and drift apart.
+        var n = n
+        var bounded = false
+        for cache in caches where cache is any AuxiliaryKVCache && cache.isTrimmable {
+            n = Swift.min(n, cache.maxTrimCount)
+            bounded = true
+        }
+        n = Swift.max(n, 0)
         var result = 0
         for cache in caches {
             result = cache.trim(n)
         }
+        if bounded { offset = Swift.max(0, offset - result) }
         return result
     }
 

@@ -23,6 +23,40 @@ private struct StubDownloader: Downloader {
     }
 }
 
+private final class FlagBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v: Bool?
+    var value: Bool? { lock.lock(); defer { lock.unlock() }; return v }
+    func set(_ x: Bool) { lock.lock(); v = x; lock.unlock() }
+}
+
+/// Records the `useLatest` it was called with.
+private struct RecordingDownloader: Downloader {
+    let seen: FlagBox
+    func download(
+        id: String, revision: String?, matching patterns: [String], useLatest: Bool,
+        progressHandler: @Sendable @escaping (Progress) -> Void
+    ) async throws -> URL {
+        seen.set(useLatest)
+        return URL(fileURLWithPath: "/tmp/stub-recorded")
+    }
+}
+
+/// A cache miss: the provider starts a transfer (progress strictly between 0 and total) and then returns.
+private struct TransferringDownloader: Downloader {
+    let started: FlagBox
+    func download(
+        id: String, revision: String?, matching patterns: [String], useLatest: Bool,
+        progressHandler: @Sendable @escaping (Progress) -> Void
+    ) async throws -> URL {
+        let p = Progress(totalUnitCount: 100)
+        p.completedUnitCount = 10
+        progressHandler(p)
+        started.set(true)
+        return URL(fileURLWithPath: "/tmp/stub-downloaded")
+    }
+}
+
 @Suite("ConformanceOfflineGuard")
 struct ConformanceOfflineGuardTests {
     static let on = ["SWIFTLM_OFFLINE": "1"]
@@ -32,8 +66,76 @@ struct ConformanceOfflineGuardTests {
         #expect(!SharpAIOverlay.OfflineGuard.isOffline(environment: ["SWIFTLM_OFFLINE": "0"]))
         #expect(!SharpAIOverlay.OfflineGuard.isOffline(environment: ["SWIFTLM_OFFLINE": ""]))
         #expect(SharpAIOverlay.OfflineGuard.isOffline(environment: ["SWIFTLM_OFFLINE": "1"]))
-        #expect(SharpAIOverlay.OfflineGuard.isOffline(environment: ["HF_HUB_OFFLINE": "1"]))
-        #expect(SharpAIOverlay.OfflineGuard.isOffline(environment: ["HF_HUB_OFFLINE": "TRUE"]))
+        // HF_HUB_OFFLINE is the standard Hugging Face "serve from the cache" switch, not the hard block.
+        #expect(!SharpAIOverlay.OfflineGuard.isOffline(environment: ["HF_HUB_OFFLINE": "1"]))
+        #expect(!SharpAIOverlay.OfflineGuard.isOffline(environment: ["HF_HUB_OFFLINE": "TRUE"]))
+        #expect(SharpAIOverlay.OfflineGuard.isOffline(environment: ["SWIFTLM_OFFLINE": "1", "HF_HUB_OFFLINE": "1"]))
+    }
+
+    @Test func hubOfflineEnvParsing() {
+        #expect(!SharpAIOverlay.OfflineGuard.isHubOffline(environment: [:]))
+        #expect(!SharpAIOverlay.OfflineGuard.isHubOffline(environment: ["HF_HUB_OFFLINE": "0"]))
+        #expect(SharpAIOverlay.OfflineGuard.isHubOffline(environment: ["HF_HUB_OFFLINE": "1"]))
+        #expect(SharpAIOverlay.OfflineGuard.isHubOffline(environment: ["HF_HUB_OFFLINE": "TRUE"]))
+        #expect(!SharpAIOverlay.OfflineGuard.isHubOffline(environment: ["SWIFTLM_OFFLINE": "1"]))
+    }
+
+    /// A cache hit: returns at once, reports no partial transfer.
+    @Test func hfHubOfflineServesCacheHit() async throws {
+        let counter = CallCounter()
+        let resolved = try await SharpAIOverlay.OfflineGuard.$environmentOverride.withValue(["HF_HUB_OFFLINE": "1"]) {
+            try await resolve(
+                configuration: ModelConfiguration(id: "org/model"), from: StubDownloader(counter: counter),
+                useLatest: true, progressHandler: { _ in })
+        }
+        #expect(resolved.modelDirectory.path == "/tmp/stub-org_model")
+        #expect(counter.count == 1)
+    }
+
+    /// HF_HUB_OFFLINE never revalidates against the provider, even if the caller asked for the latest.
+    @Test func hfHubOfflineForcesUseLatestOff() async throws {
+        let seen = FlagBox()
+        let stub = RecordingDownloader(seen: seen)
+        _ = try await SharpAIOverlay.OfflineGuard.$environmentOverride.withValue(["HF_HUB_OFFLINE": "1"]) {
+            try await resolve(
+                configuration: ModelConfiguration(id: "org/model"), from: stub,
+                useLatest: true, progressHandler: { _ in })
+        }
+        #expect(seen.value == false)
+    }
+
+    /// A cache miss starts a real transfer (partial progress): blocked with the typed error.
+    @Test func hfHubOfflineBlocksCacheMiss() async throws {
+        let seen = FlagBox()
+        let stub = TransferringDownloader(started: seen)
+        await SharpAIOverlay.OfflineGuard.$environmentOverride.withValue(["HF_HUB_OFFLINE": "1"]) {
+            do {
+                _ = try await resolve(
+                    configuration: ModelConfiguration(id: "org/model"), from: stub,
+                    useLatest: false, progressHandler: { _ in })
+                Issue.record("expected networkBlocked on a cache miss")
+            } catch is SharpAIOverlay.OfflineError {
+            } catch {
+                Issue.record("wrong error type: \(error)")
+            }
+        }
+    }
+
+    /// SWIFTLM_OFFLINE stays the hard block even when HF_HUB_OFFLINE is also set.
+    @Test func swiftlmOfflineWinsOverHubOffline() async throws {
+        let counter = CallCounter()
+        await SharpAIOverlay.OfflineGuard.$environmentOverride.withValue(["SWIFTLM_OFFLINE": "1", "HF_HUB_OFFLINE": "1"]) {
+            do {
+                _ = try await resolve(
+                    configuration: ModelConfiguration(id: "org/model"), from: StubDownloader(counter: counter),
+                    useLatest: false, progressHandler: { _ in })
+                Issue.record("expected networkBlocked")
+            } catch is SharpAIOverlay.OfflineError {
+            } catch {
+                Issue.record("wrong error type: \(error)")
+            }
+        }
+        #expect(counter.count == 0)
     }
 
     @Test func resolveThrowsTypedErrorWhenOffline() async throws {
