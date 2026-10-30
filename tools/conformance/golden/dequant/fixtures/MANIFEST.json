@@ -76,6 +76,12 @@
    "rtol": 0.0,
    "why": "every fp8 e4m3 value has 3 mantissa bits, exactly representable in bfloat16"
   },
+  "float32_affine_cancellation": {
+   "atol": 0.0,
+   "atol_per_max_scale": 1.7881393432617188e-06,
+   "rtol": 1.2e-07,
+   "why": "MLX affine dequantize computes q*scale + bias with bias = -zp*scale: two float32 roundings of terms up to 15*scale that cancel, so the absolute error is up to 2 * 2^-24 * 15 * max(scale) (= 15 * 2^-23 * max(scale)) even where the exact result is tiny or zero; vLLM's (q-zp)*scale has one rounding"
+  },
   "float32_exact": {
    "atol": 0.0,
    "rtol": 0.0,

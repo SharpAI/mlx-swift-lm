@@ -62,7 +62,7 @@ enum DequantGolden {
         cases(file, key).map { $0["id"] as! String }
     }
 
-    static func entry(_ file: String, _ key: String = "cases", _ id: String) -> [String: Any] {
+    static func entry(_ file: String, _ id: String, key: String = "cases") -> [String: Any] {
         cases(file, key).first { $0["id"] as? String == id }!
     }
 
@@ -80,6 +80,12 @@ enum DequantGolden {
 
     static func doubles(_ v: Any?) -> [Double] { (v as! [Any]).map(d) }
     static func ints(_ v: Any?) -> [Int] { (v as! [Any]).map { ($0 as! NSNumber).intValue } }
+
+    /// float32_affine_cancellation: atol scales with the largest scale of the case (see MANIFEST "why").
+    static func affineTolerance(maxScale: Double) -> (rtol: Double, atol: Double) {
+        let t = (manifest()["tolerances"] as! [String: [String: Any]])["float32_affine_cancellation"]!
+        return (d(t["rtol"]!), d(t["atol_per_max_scale"]!) * maxScale)
+    }
 
     static func tolerance(_ name: String) -> (rtol: Double, atol: Double) {
         let t = (manifest()["tolerances"] as! [String: [String: Any]])[name]!
@@ -112,7 +118,11 @@ enum DequantGolden {
     }
 
     /// Known (oracle != shipping) cases: id -> reason. EMPTY means shipping code agrees with the oracle everywhere.
-    static let knownGaps: [String: String] = [:]
+    static let knownGaps: [String: String] = [
+        "e8m0/0": subnormalFlush, "mxfp4/scale_byte_0": subnormalFlush, "mxfp4/scale_byte_1": subnormalFlush,
+    ]
+    static let subnormalFlush =
+        "MLX mxfp4 dequantize flushes float32 SUBNORMAL results to zero (vLLM float32 keeps them); absolute error <= 2^-126 (1.2e-38), only for scale bytes 0/1 (OPEN)"
 
     /// Either a plain #expect, or (for a recorded disagreement) a tracked ConformanceGap.
     static func check(_ key: String, _ problem: @autoclosure () -> String?, sourceLocation: SourceLocation = #_sourceLocation) {
@@ -140,13 +150,19 @@ enum DequantGolden {
         return floats(dequantized(mw, scales: ms, biases: nil, groupSize: 32, bits: 4, mode: .mxfp4, dtype: .float32))
     }
 
-    static func nvfp4Dequant(rows: Int, cols: Int, packed: [Int], scales: [Int], globalScale: Double) -> [Float] {
+    /// MLX's nvfp4 `globalScale` is the ENCODER-side per-tensor value: the kernel decodes with
+    /// `globalScale / (F8E4M3_MAX * F4E2M1_MAX)` (mlx backend/metal/kernels/fp_quantized.h:216), i.e. a multiplier m
+    /// (the one vLLM's emulation applies, nvfp4_emulation_utils.py:63) is passed as m * 448 * 6. Found by the first
+    /// run of this suite (values off by exactly 1/2688); not a defect, but a loader must convert.
+    static let mlxNvfp4GlobalScaleUnit: Double = 448 * 6
+
+    static func nvfp4Dequant(rows: Int, cols: Int, packed: [Int], scales: [Int], multiplier: Double) -> [Float] {
         let w = MLXArray(packed.map { UInt8($0) }, [rows, cols / 2]).view(dtype: .uint32)
         let s = MLXArray(scales.map { UInt8($0) }, [rows, cols / 16])
         return floats(
             dequantized(
                 w, scales: s, biases: nil, groupSize: 16, bits: 4, mode: .nvfp4,
-                globalScale: MLXArray(Float(globalScale)), dtype: .float32))
+                globalScale: MLXArray(Float(multiplier * mlxNvfp4GlobalScaleUnit)), dtype: .float32))
     }
 
     static func fp8Weight(_ bytes: [Int], _ rows: Int, _ cols: Int) -> MLXArray {
@@ -173,7 +189,7 @@ struct DequantGoldenTests {
             ((try? FileManager.default.contentsOfDirectory(atPath: G.dir.path)) ?? []).filter { $0.hasSuffix(".json") })
         #expect(onDisk == Set(files.keys).union(["MANIFEST.json"]), "fixtures on disk differ from the manifest")
         let tol = m["tolerances"] as! [String: [String: Any]]
-        for k in ["float32_exact", "float32_product", "bfloat16_values"] {
+        for k in ["float32_exact", "float32_product", "float32_affine_cancellation", "bfloat16_values"] {
             #expect((tol[k]?["why"] as? String)?.isEmpty == false, "tolerance \(k) needs a reason")
         }
         let cc = m["crosscheck"] as! [String: Any]
@@ -232,7 +248,7 @@ struct DequantGoldenTests {
         let c = G.entry("nvfp4.json", id)
         let got = G.nvfp4Dequant(
             rows: c["rows"] as! Int, cols: c["cols"] as! Int, packed: G.ints(c["packed"]), scales: G.ints(c["scales"]),
-            globalScale: G.d(c["global_scale"]!))
+            multiplier: G.d(c["global_scale"]!))
         let t = G.tolerance("float32_exact")
         G.check("nvfp4/\(id)", G.mismatch(got, G.doubles(c["expected"]), rtol: t.rtol, atol: t.atol))
     }
@@ -265,7 +281,7 @@ struct DequantGoldenTests {
     @Test("fp8 per-channel scale: fromFp8 * scale[N,1], and dequantFP8Blocks(blockSize: 1) broadcast",
         arguments: G.ids("fp8_scaled.json", "channel"))
     func fp8Channel(id: String) {
-        let c = G.entry("fp8_scaled.json", "channel", id)
+        let c = G.entry("fp8_scaled.json", id, key: "channel")
         let (n, k) = (c["rows"] as! Int, c["cols"] as! Int)
         let w = G.fp8Weight(G.ints(c["weight"]), n, k)
         let scale = MLXArray(G.doubles(c["scale"]).map { Float($0) }, [n, 1])
@@ -279,7 +295,7 @@ struct DequantGoldenTests {
 
     @Test("fp8 block scale (weight_scale_inv): dequantFP8Blocks and the FP8Linear prefill path", arguments: G.ids("fp8_scaled.json", "block"))
     func fp8Block(id: String) {
-        let c = G.entry("fp8_scaled.json", "block", id)
+        let c = G.entry("fp8_scaled.json", id, key: "block")
         let (n, k, bs) = (c["rows"] as! Int, c["cols"] as! Int, c["block"] as! Int)
         let shape = G.ints(c["scale_shape"])
         let w = G.fp8Weight(G.ints(c["weight"]), n, k)
@@ -300,7 +316,7 @@ struct DequantGoldenTests {
     @Test("fp8 ue8m0 block scales (byte -> 2^(byte-127)) through dequantFP8Blocks(ue8m0: true)",
         arguments: G.ids("fp8_scaled.json", "ue8m0_block"))
     func fp8Ue8m0(id: String) {
-        let c = G.entry("fp8_scaled.json", "ue8m0_block", id)
+        let c = G.entry("fp8_scaled.json", id, key: "ue8m0_block")
         let (n, k, bs) = (c["rows"] as! Int, c["cols"] as! Int, c["block"] as! Int)
         let w = G.fp8Weight(G.ints(c["weight"]), n, k)
         let sb = MLXArray(G.ints(c["scale_bytes"]).map { UInt8($0) }, G.ints(c["scale_shape"]))
@@ -333,7 +349,7 @@ struct DequantGoldenTests {
             zp = MLXArray(z, [n, cols])
         }
         let got = dequantized(w, scales: s, biases: -(zp * s), groupSize: g, bits: 4, mode: .affine, dtype: .float32)
-        let t = G.tolerance("float32_product")
+        let t = G.affineTolerance(maxScale: G.doubles(c["scale"]).max()!)
         G.check("int4/\(id)", G.mismatch(G.floats(got), G.doubles(c["expected"]), rtol: t.rtol, atol: t.atol))
     }
 
@@ -352,7 +368,7 @@ struct DequantGoldenTests {
         let w = weights["layer.weight"]!, s = weights["layer.scales"]!, b = weights["layer.biases"]!
         #expect(w.dtype == .uint32 && w.shape == [n, k / 8])
         let got = dequantized(w, scales: s, biases: b, groupSize: g, bits: 4, mode: .affine, dtype: .float32)  // [N, K]
-        let t = G.tolerance("float32_product")
+        let t = G.affineTolerance(maxScale: G.doubles(c["scales"]).max()!)
         G.check("awq/\(id)", G.mismatch(G.floats(got.transposed()), G.doubles(c["expected_KxN"]), rtol: t.rtol, atol: t.atol))
     }
 
@@ -422,7 +438,7 @@ struct DequantGoldenTests {
         #expect(G.mismatch(G.mxfp4Dequant(rows: rows, cols: cols, packed: packed, scales: sc), want, rtol: t.rtol, atol: t.atol) != nil)
         // 5. tolerance-based comparison also rejects a 1e-3 perturbation
         let p = G.tolerance("float32_product")
-        let ch = G.entry("fp8_scaled.json", "channel", "channel_4x8")
+        let ch = G.entry("fp8_scaled.json", "channel_4x8", key: "channel")
         var w2 = G.doubles(ch["expected"])
         w2[w2.firstIndex { $0 != 0 }!] *= 1.001
         let g2 = G.floats(
