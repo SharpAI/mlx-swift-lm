@@ -121,6 +121,17 @@ enum V4RouteGolden {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// The tolerances, pinned in this file. MANIFEST.json holds the numbers the comparator uses but is not itself
+    /// sha-pinned, so a commit could loosen a tolerance and the manifest together; with this copy that change also
+    /// has to edit the test file. Each value is derived in `why` in tools/conformance/golden/gen_v4route_golden.py.
+    static let pinnedTolerances: [String: (mode: String, rtol: Double, atol: Double)] = [
+        "route_w_fp32": ("elementwise", 5e-6, 0),
+        "route_w_bf16": ("elementwise", 4.5e-3, 0),
+        "out_fp32": ("normwise", 5e-6, 1e-9),
+        "hcmix_fp32": ("elementwise", 1e-5, 0),
+        "hcpost_bf16": ("normwise", 4e-3, 1e-9),
+    ]
+
     /// Loads and VERIFIES a fixture directory. Throws (never skips) on a missing or extra file, a sha256 that
     /// differs from the manifest, a count that does not add up, an unknown tolerance class.
     static func load(from dir: URL, toolsDir: URL = defaultToolsDirectory) throws -> Loaded {
@@ -154,6 +165,14 @@ enum V4RouteGolden {
                 throw LoadError(
                     description: "ORACLE/GENERATOR CHANGED: \(file.lastPathComponent) sha256 \(actual) != manifest \(pinned). "
                         + "Rerun tools/conformance/golden/gen_v4route_golden.py and commit the regenerated fixtures.")
+            }
+        }
+        for (cls, t) in manifest.tolerances.sorted(by: { $0.key < $1.key }) {
+            guard let pin = pinnedTolerances[cls], pin.mode == t.mode, pin.rtol == t.rtol, pin.atol == t.atol else {
+                throw LoadError(
+                    description: "TOLERANCE CHANGED: class \(cls) is (\(t.mode), rtol \(t.rtol), atol \(t.atol)) in the "
+                        + "manifest but not what the test file pins (\(String(describing: pinnedTolerances[cls]))). "
+                        + "Change both on purpose, with the derivation in the generator.")
             }
         }
         var fixtures = [Fixture]()
@@ -593,5 +612,81 @@ struct ConformanceV4RouteGoldenTests {
         d.append(contentsOf: [0x20])
         try d.write(to: victim)
         #expect(throws: V4RouteGolden.LoadError.self) { try V4RouteGolden.load(from: tmp) }
+    }
+
+    // MARK: tampering with what the manifest pins or holds
+
+    /// Copies the fixtures and the two pinned tools into a scratch directory, lets `mutate` damage the copy
+    /// (fixtures dir, tools dir), and returns the load error (nil if the damaged copy still loaded).
+    private func loadError(after mutate: (URL, URL) throws -> Void) throws -> String? {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("v4route-tamper-\(UUID().uuidString)")
+        let fixtures = root.appendingPathComponent("fixtures")
+        let tools = root.appendingPathComponent("tools")
+        try fm.createDirectory(at: tools, withIntermediateDirectories: true)
+        try fm.copyItem(at: V4RouteGolden.defaultDirectory, to: fixtures)
+        for n in ["gen_v4route_golden.py", "v4route_ref.py"] {
+            try fm.copyItem(
+                at: V4RouteGolden.defaultToolsDirectory.appendingPathComponent(n), to: tools.appendingPathComponent(n))
+        }
+        defer { try? fm.removeItem(at: root) }
+        try mutate(fixtures, tools)
+        do {
+            _ = try V4RouteGolden.load(from: fixtures, toolsDir: tools)
+            return nil
+        } catch let e as V4RouteGolden.LoadError {
+            return e.description
+        }
+    }
+
+    private func editManifest(_ dir: URL, _ edit: (inout [String: Any]) -> Void) throws {
+        let url = dir.appendingPathComponent("MANIFEST.json")
+        var m = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        edit(&m)
+        try JSONSerialization.data(withJSONObject: m).write(to: url)
+    }
+
+    @Test("an untouched copy loads (the tamper tests below start from a good state)")
+    func untouchedCopyLoads() throws {
+        #expect(try loadError { _, _ in } == nil)
+    }
+
+    @Test("a manifest whose tolerance was loosened is rejected, although every sha still matches")
+    func loosenedToleranceRejected() throws {
+        let err = try loadError { fixtures, _ in
+            try editManifest(fixtures) { m in
+                var tol = m["tolerances"] as? [String: [String: Any]] ?? [:]
+                tol["route_w_fp32"]?["rtol"] = 5e-3
+                m["tolerances"] = tol
+            }
+        }
+        #expect(err?.contains("TOLERANCE CHANGED") == true, "got: \(err ?? "loaded fine")")
+    }
+
+    @Test("an edited generator or oracle is rejected (sha256 pin)")
+    func editedToolRejected() throws {
+        for tool in ["gen_v4route_golden.py", "v4route_ref.py"] {
+            let err = try loadError { _, tools in
+                let f = tools.appendingPathComponent(tool)
+                var d = try Data(contentsOf: f)
+                d.append(contentsOf: [0x0A])
+                try d.write(to: f)
+            }
+            #expect(err?.contains("ORACLE/GENERATOR CHANGED") == true, "\(tool): \(err ?? "loaded fine")")
+        }
+    }
+
+    @Test("an extra fixture file, a missing one and a wrong count are rejected")
+    func fixtureSetMismatchRejected() throws {
+        let extra = try loadError { fixtures, _ in
+            try Data("{}".utf8).write(to: fixtures.appendingPathComponent("surprise.json"))
+        }
+        #expect(extra?.contains("fixture set differs") == true, "extra: \(extra ?? "loaded fine")")
+        let missing = try loadError { fixtures, _ in
+            try FileManager.default.removeItem(at: fixtures.appendingPathComponent("gate_fp32_renorm_scale.json"))
+        }
+        #expect(missing?.contains("fixture set differs") == true, "missing: \(missing ?? "loaded fine")")
+        let count = try loadError { fixtures, _ in try editManifest(fixtures) { $0["count"] = 49 } }
+        #expect(count?.contains("manifest count") == true, "count: \(count ?? "loaded fine")")
     }
 }
