@@ -7,6 +7,8 @@
 //   * assertions passed  -> `[gap][FIXED] <name>`  (gap closed: remove the wrapper / retire the overlay)
 //   * no issue AND no counted assertion -> `[gap][UNKNOWN] <name>` (never FIXED: an empty body or bare
 //     `#expect`, which Swift Testing cannot observe when it passes; assert via `ConformanceGap.expect`)
+// Only failures raised by `ConformanceGap.expect` (tagged `[gap-expect]`) are absorbed; any other issue
+// in the body (a throw, `Issue.record`, a bare `#expect`) is NOT a gap signature and fails the test.
 // A `[gap][SUMMARY] fixed N, open M, unknown K` line follows each report, printed inside the tracker
 // lock from the final state, so the LAST SUMMARY line of the log is authoritative (Swift Testing has
 // no suite-end hook, so there is no separate end-of-run print).
@@ -108,7 +110,18 @@ enum ConformanceGap {
         sourceLocation: SourceLocation = #_sourceLocation
     ) {
         noteAssertion()
-        #expect(condition(), comment(), sourceLocation: sourceLocation)
+        #expect(condition(), Comment(rawValue: gapTag + (comment()?.rawValue ?? "")), sourceLocation: sourceLocation)
+    }
+
+    /// Marker carried by every failure recorded through `expect`. The known-issue matcher accepts ONLY
+    /// issues that are an expectation failure carrying this marker, so a gap absorbs the assertion it
+    /// declares and nothing else: a thrown error, an `Issue.record`, a bare `#expect` or a crash-adjacent
+    /// failure inside the body is a real failure, not an OPEN gap.
+    static let gapTag = "[gap-expect] "
+
+    static func isGapIssue(_ issue: Issue) -> Bool {
+        guard case .expectationFailed = issue.kind else { return false }
+        return issue.comments.contains { $0.rawValue.hasPrefix(gapTag) }
     }
 
     static func noteAssertion() { currentCounter?.bump() }
@@ -148,11 +161,14 @@ enum ConformanceGap {
                 try withKnownIssue(
                     Comment(rawValue: name), isIntermittent: true, sourceLocation: sourceLocation,
                     { try body() },
-                    matching: { _ in saw.set(); return true })
+                    matching: { issue in
+                        guard isGapIssue(issue) else { return false }
+                        saw.set(); return true
+                    })
             }
         } catch {
-            // Unreachable: `matching` accepts every issue, including a thrown error.
-            saw.set()
+            // A thrown error is not a gap signature: `matching` rejected it, so Swift Testing has already
+            // recorded it as a real failure. Do not count it as OPEN.
         }
         let outcome: ConformanceGapOutcome =
             saw.value ? .open : (counter.count > 0 ? .fixed : .unknown)

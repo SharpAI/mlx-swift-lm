@@ -8,7 +8,8 @@ import Testing
 
 struct ConformanceGapMigrationTests {
     static let files = [
-        "ConformanceGapGdnTests.swift", "ConformanceGapSoftcapTests.swift",
+        "ConformanceGapGdnTests.swift",
+        // ConformanceGapSoftcapTests.swift left the list: the softcap gap closed and the test is a plain regression test.
         // ConformanceGapDeepseekV4Tests.swift left the list in SL-35 4.3: every gap it pinned has landed and
         // its asserts are plain, so it has no knownIssue body for the scanner to find.
         "ConformanceSynthV4Tests.swift",
@@ -18,6 +19,22 @@ struct ConformanceGapMigrationTests {
         // SL-36 V4 golden suites that carry knownIssue bodies (the compressor golden suite has none).
         "ConformanceV4IndexerGoldenTests.swift", "ConformanceV4RouteGoldenTests.swift",
     ]
+
+    /// Every test source under Tests/MLXLMTests/Conformance (recursive) whose text contains a
+    /// `ConformanceGap.knownIssue(` call, as paths relative to the Conformance directory. This file itself
+    /// (it names the marker in the scanner) and the wrapper definition are excluded.
+    static let discovered: [String] = {
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        guard let en = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil) else { return [] }
+        var out: [String] = []
+        for case let url as URL in en where url.pathExtension == "swift" {
+            let rel = String(url.path.dropFirst(dir.path.count + 1))
+            if rel == "ConformanceGapMigrationTests.swift" || rel == "GapReference/ConformanceGapSupport.swift" { continue }
+            guard let src = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            if !bodies(src).isEmpty { out.append(rel) }
+        }
+        return out.sorted()
+    }()
 
     /// Bodies of every `ConformanceGap.knownIssue(...) { ... }` call (brace matched, strings skipped naively).
     static func bodies(_ src: String) -> [String] {
@@ -55,7 +72,19 @@ struct ConformanceGapMigrationTests {
         #expect(b.count == 2 && b[0].contains("#expect(") && !b[1].contains("#expect("))
     }
 
-    @Test("no bare #expect inside a knownIssue body", arguments: files)
+    @Test("every conformance file with a knownIssue body is scanned (the hand-written list is only a minimum)")
+    func everyDiscoveredFileIsScanned() {
+        #expect(!Self.discovered.isEmpty, "discovery found no files: the directory walk is broken")
+        // The list is a minimum: each entry must exist and be discovered (a stale entry fails noBareExpect too).
+        for f in Self.files { #expect(Self.discovered.contains(f), "\(f) is listed but no knownIssue body was discovered in it") }
+        // Anything discovered but not in the list is scanned by `noBareExpect` through `scanned`.
+        for f in Self.discovered { #expect(Self.scanned.contains(f), "\(f) has knownIssue bodies but is not scanned") }
+    }
+
+    /// What `noBareExpect` runs over: the discovered files plus the minimum list.
+    static var scanned: [String] { Array(Set(discovered).union(files)).sorted() }
+
+    @Test("no bare #expect inside a knownIssue body", arguments: scanned)
     func noBareExpect(file: String) throws {
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let src = try String(contentsOf: dir.appendingPathComponent(file), encoding: .utf8)

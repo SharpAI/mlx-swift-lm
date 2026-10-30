@@ -57,16 +57,44 @@ struct ConformanceGapSupportTests {
         #expect(!r.log.lines.contains { $0.hasPrefix("[gap][WARNING]") })
     }
 
-    @Test("a throwing body counts as OPEN")
-    func throwingIsOpen() {
+    @Test("a foreign failure (throw, Issue.record, bare #expect) is NOT absorbed and is not OPEN")
+    func foreignFailuresAreNotAbsorbed() {
         struct Boom: Error {}
+        // Each body fails in a way that is not a ConformanceGap.expect failure. The OUTER non-intermittent
+        // withKnownIssue absorbs the issue that leaked out of the gap: if the gap had swallowed it, the
+        // outer wrapper would report "known issue not recorded" and this test would fail.
+        let bodies: [(String, () throws -> Void)] = [
+            ("throw", { throw Boom() }),
+            ("record", { Issue.record("foreign issue") }),
+            ("bare-expect", { #expect(1 + 1 == 3) }),
+        ]
+        for (label, body) in bodies {
+            let log = Log()
+            var fixed = true
+            withKnownIssue("leaked \(label)") {
+                fixed = ConformanceGap.track(
+                    "synthetic-foreign-\(label)", tracker: .init(), strict: true,
+                    print: { log.lines.append($0) }, onStrictViolation: { log.violations.append($0) }, body)
+            }
+            #expect(!fixed)
+            #expect(!log.lines.contains("[gap][OPEN] synthetic-foreign-\(label)"), "\(label) must not be OPEN")
+            #expect(log.violations.isEmpty)
+        }
+    }
+
+    @Test("a mixed body: the expect failure is absorbed (OPEN), a foreign failure next to it still leaks")
+    func mixedBody() {
         let log = Log()
-        let fixed = ConformanceGap.track(
-            "synthetic-throw", tracker: .init(), strict: true,
-            print: { log.lines.append($0) }, onStrictViolation: { log.violations.append($0) }
-        ) { throw Boom() }
-        #expect(!fixed)
-        #expect(log.violations.isEmpty)
+        withKnownIssue("leaked foreign issue") {
+            ConformanceGap.track(
+                "synthetic-mixed", tracker: .init(), strict: false,
+                print: { log.lines.append($0) }, onStrictViolation: { _ in }
+            ) {
+                ConformanceGap.expect(1 + 1 == 3, "synthetic gap")
+                Issue.record("foreign issue")
+            }
+        }
+        #expect(log.lines.contains("[gap][OPEN] synthetic-mixed"))
     }
 
     @Test("summary counts accumulate across gaps; a name is FIXED only if every occurrence passed")

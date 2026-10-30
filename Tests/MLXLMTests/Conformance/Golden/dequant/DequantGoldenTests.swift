@@ -103,6 +103,23 @@ enum DequantGolden {
         return c.map { $0["id"] as? String ?? "MALFORMED-ID" }
     }
 
+    /// The `byte` of every e8m0.json entry, for a parameterised test (evaluated outside any test, so unverified).
+    /// An unreadable or malformed fixture yields the sentinel -1, so the test runs once and goes red (the entry
+    /// lookup finds no byte -1) instead of the argument list trapping or silently running zero cases.
+    static var e8m0ByteArguments: [Int] {
+        guard let rows = unverified("e8m0.json")["bytes"] as? [[String: Any]], !rows.isEmpty else { return [-1] }
+        return rows.map { ($0["byte"] as? NSNumber)?.intValue ?? -1 }
+    }
+
+    /// MLXArray from fixture data. A count that does not match the shape is RECORDED (not a precondition trap in MLX);
+    /// the result is then zeros of the requested shape (or [0] for an invalid shape) so the caller's comparison fails.
+    static func shaped<T: HasDType>(_ data: [T], _ shape: [Int], sourceLocation: SourceLocation = #_sourceLocation) -> MLXArray {
+        let valid = shape.allSatisfy { $0 >= 0 }
+        if valid, shape.reduce(1, *) == data.count { return MLXArray(data, shape) }
+        GoldenKit.record("fixture array has \(data.count) elements but shape \(shape) needs \(valid ? shape.reduce(1, *) : -1)", sourceLocation: sourceLocation)
+        return MLXArray.zeros(valid ? shape : [0], dtype: T.dtype)
+    }
+
     static func entry(_ file: String, _ id: String, key: String = "cases") -> [String: Any] {
         guard let e = cases(file, key).first(where: { $0["id"] as? String == id }) else {
             GoldenKit.record("\(file): no case '\(id)' under '\(key)'")
@@ -111,20 +128,65 @@ enum DequantGolden {
         return e
     }
 
-    static func d(_ v: Any) -> Double {
+    /// Typed field readers. A malformed or missing fixture value is RECORDED as an issue of the calling test and reads
+    /// as a neutral value (0 / empty / NaN); it is never force-cast, because a trap would kill the whole test process.
+    static func d(_ v: Any?, sourceLocation: SourceLocation = #_sourceLocation) -> Double {
         if let s = v as? String {
             switch s {
             case "nan": return .nan
             case "inf": return .infinity
             case "-inf": return -.infinity
-            default: preconditionFailure("bad number token \(s)")
+            default:
+                GoldenKit.record("bad number token \(s)", sourceLocation: sourceLocation)
+                return .nan
             }
         }
-        return (v as! NSNumber).doubleValue
+        guard let n = v as? NSNumber else {
+            GoldenKit.record("fixture value is not a number: \(String(describing: v))", sourceLocation: sourceLocation)
+            return .nan
+        }
+        return n.doubleValue
     }
 
-    static func doubles(_ v: Any?) -> [Double] { (v as! [Any]).map(d) }
-    static func ints(_ v: Any?) -> [Int] { (v as! [Any]).map { ($0 as! NSNumber).intValue } }
+    static func doubles(_ v: Any?, sourceLocation: SourceLocation = #_sourceLocation) -> [Double] {
+        guard let a = v as? [Any] else {
+            GoldenKit.record("fixture value is not an array: \(String(describing: v))", sourceLocation: sourceLocation)
+            return []
+        }
+        return a.map { d($0, sourceLocation: sourceLocation) }
+    }
+
+    static func ints(_ v: Any?, sourceLocation: SourceLocation = #_sourceLocation) -> [Int] {
+        guard let a = v as? [Any] else {
+            GoldenKit.record("fixture value is not an array: \(String(describing: v))", sourceLocation: sourceLocation)
+            return []
+        }
+        return a.map { int($0, sourceLocation: sourceLocation) }
+    }
+
+    static func int(_ v: Any?, sourceLocation: SourceLocation = #_sourceLocation) -> Int {
+        guard let n = v as? NSNumber else {
+            GoldenKit.record("fixture value is not an integer: \(String(describing: v))", sourceLocation: sourceLocation)
+            return 0
+        }
+        return n.intValue
+    }
+
+    static func bool(_ v: Any?, sourceLocation: SourceLocation = #_sourceLocation) -> Bool {
+        guard let b = v as? Bool else {
+            GoldenKit.record("fixture value is not a boolean: \(String(describing: v))", sourceLocation: sourceLocation)
+            return false
+        }
+        return b
+    }
+
+    static func dict(_ v: Any?, sourceLocation: SourceLocation = #_sourceLocation) -> [String: Any] {
+        guard let m = v as? [String: Any] else {
+            GoldenKit.record("fixture value is not an object: \(String(describing: v))", sourceLocation: sourceLocation)
+            return [:]
+        }
+        return m
+    }
 
     /// float32_affine_cancellation. `scales[i]` is the scale of the group element i belongs to: the absolute
     /// tolerance of element i is atol_per_scale * scales[i] (its OWN group's scale, see MANIFEST "why").
@@ -201,13 +263,16 @@ enum DequantGolden {
 
     /// mxfp4 through the shipping checkpoint mapping and MLX dequantize.
     static func mxfp4Dequant(rows: Int, cols: Int, packed: [Int], scales: [Int]) -> [Float] {
-        let w = MLXArray(packed.map { UInt8($0) }, [rows, cols / 2])
-        let s = MLXArray(scales.map { UInt8($0) }, [rows, cols / 32])
+        let w = shaped(packed.map { UInt8($0) }, [rows, cols / 2])
+        let s = shaped(scales.map { UInt8($0) }, [rows, cols / 32])
         let mapped = SharpAIOverlay.mapMXFP4Experts(
             ["m.layers.0.ffn.experts.0.w.weight": w, "m.layers.0.ffn.experts.0.w.scale": s], expertDtype: "fp4")
         let mw = mapped["m.layers.0.ffn.experts.0.w.weight"]!
         let ms = mapped["m.layers.0.ffn.experts.0.w.scales"]!
-        precondition(mw.dtype == .uint32 && mw.shape == [rows, cols / 8])
+        guard mw.dtype == .uint32, mw.shape == [rows, cols / 8] else {
+            Issue.record("mapMXFP4Experts returned dtype \(mw.dtype) shape \(mw.shape), expected uint32 [\(rows), \(cols / 8)]")
+            return []
+        }
         return floats(dequantized(mw, scales: ms, biases: nil, groupSize: 32, bits: 4, mode: .mxfp4, dtype: .float32))
     }
 
@@ -219,7 +284,7 @@ enum DequantGolden {
 
     static func nvfp4Dequant(rows: Int, cols: Int, packed: [Int], scales: [Int], multiplier: Double) -> [Float] {
         let w = MLXArray(packed.map { UInt8($0) }, [rows, cols / 2]).view(dtype: .uint32)
-        let s = MLXArray(scales.map { UInt8($0) }, [rows, cols / 16])
+        let s = shaped(scales.map { UInt8($0) }, [rows, cols / 16])
         return floats(
             dequantized(
                 w, scales: s, biases: nil, groupSize: 16, bits: 4, mode: .nvfp4,
@@ -227,7 +292,7 @@ enum DequantGolden {
     }
 
     static func fp8Weight(_ bytes: [Int], _ rows: Int, _ cols: Int) -> MLXArray {
-        MLXArray(bytes.map { UInt8($0) }, [rows, cols])
+        shaped(bytes.map { UInt8($0) }, [rows, cols])
     }
 }
 
@@ -270,8 +335,8 @@ struct ConformanceDequantGoldenTests {
         let table = G.cases("fp4_e2m1_codes.json", "codes")
         #expect(table.count == 16)
         for e in table {
-            let c = e["code"] as! Int
-            let want = G.d(e["value"]!)
+            let c = G.int(e["code"])
+            let want = G.d(e["value"])
             // low nibble = c (element 0), high nibble = 2 (1.0, element 1); scale byte 127 = 1
             let lo = G.mxfp4Dequant(rows: 1, cols: 32, packed: [Int](repeating: c | (2 << 4), count: 16), scales: [127])
             let hi = G.mxfp4Dequant(rows: 1, cols: 32, packed: [Int](repeating: 2 | (c << 4), count: 16), scales: [127])
@@ -280,9 +345,13 @@ struct ConformanceDequantGoldenTests {
         }
     }
 
-    @Test("e8m0 scale bytes 0/1/2/126/127/128/253/254 decode to 2^(byte-127)", arguments: G.cases("e8m0.json", "bytes").map { $0["byte"] as! Int })
+    @Test("e8m0 scale bytes 0/1/2/126/127/128/253/254 decode to 2^(byte-127)", arguments: G.e8m0ByteArguments)
     func e8m0Bytes(byte: Int) {
-        let want = G.d(G.cases("e8m0.json", "bytes").first { $0["byte"] as? Int == byte }!["value"]!)
+        guard let entry = G.cases("e8m0.json", "bytes").first(where: { $0["byte"] as? Int == byte }) else {
+            Issue.record("e8m0.json has no entry for byte \(byte)")
+            return
+        }
+        let want = G.d(entry["value"])
         // every element is code 2 (= 1.0) so the output equals the decoded scale
         let got = G.mxfp4Dequant(rows: 1, cols: 32, packed: [Int](repeating: 0x22, count: 16), scales: [byte])
         G.check("e8m0/\(byte)", G.mismatch(got, [Double](repeating: want, count: 32), rtol: 0, atol: 0))
@@ -290,7 +359,7 @@ struct ConformanceDequantGoldenTests {
 
     @Test("e8m0 byte 255: vLLM's formula overflows float32 to inf (torch float8_e8m0fnu says NaN)")
     func e8m0Byte255() {
-        let sp = G.load("e8m0.json")["special"] as! [String: Any]
+        let sp = G.dict(G.load("e8m0.json")["special"])
         #expect(sp["byte"] as? Int == 255)
         #expect(sp["vllm_formula_float32"] as? String == "inf")
         let got = G.mxfp4Dequant(rows: 1, cols: 32, packed: [Int](repeating: 0x22, count: 16), scales: [255])
@@ -303,7 +372,7 @@ struct ConformanceDequantGoldenTests {
     func mxfp4(id: String) {
         let c = G.entry("mxfp4.json", id)
         guard !c.isEmpty else { return }  // entry() recorded the problem
-        let rows = c["rows"] as! Int, cols = c["cols"] as! Int
+        let rows = G.int(c["rows"]), cols = G.int(c["cols"])
         let got = G.mxfp4Dequant(rows: rows, cols: cols, packed: G.ints(c["packed"]), scales: G.ints(c["scales"]))
         let t = G.tolerance("float32_exact")
         G.check("mxfp4/\(id)", G.mismatch(got, G.doubles(c["expected"]), rtol: t.rtol, atol: t.atol))
@@ -316,8 +385,8 @@ struct ConformanceDequantGoldenTests {
         let c = G.entry("nvfp4.json", id)
         guard !c.isEmpty else { return }  // entry() recorded the problem
         let got = G.nvfp4Dequant(
-            rows: c["rows"] as! Int, cols: c["cols"] as! Int, packed: G.ints(c["packed"]), scales: G.ints(c["scales"]),
-            multiplier: G.d(c["global_scale"]!))
+            rows: G.int(c["rows"]), cols: G.int(c["cols"]), packed: G.ints(c["packed"]), scales: G.ints(c["scales"]),
+            multiplier: G.d(c["global_scale"]))
         let t = G.tolerance("float32_exact")
         G.check("nvfp4/\(id)", G.mismatch(got, G.doubles(c["expected"]), rtol: t.rtol, atol: t.atol))
     }
@@ -352,9 +421,9 @@ struct ConformanceDequantGoldenTests {
     func fp8Channel(id: String) {
         let c = G.entry("fp8_scaled.json", id, key: "channel")
         guard !c.isEmpty else { return }  // entry() recorded the problem
-        let (n, k) = (c["rows"] as! Int, c["cols"] as! Int)
+        let (n, k) = (G.int(c["rows"]), G.int(c["cols"]))
         let w = G.fp8Weight(G.ints(c["weight"]), n, k)
-        let scale = MLXArray(G.doubles(c["scale"]).map { Float($0) }, [n, 1])
+        let scale = G.shaped(G.doubles(c["scale"]).map { Float($0) }, [n, 1])
         let want = G.doubles(c["expected"])
         let t = G.tolerance("float32_product")
         G.check("fp8_channel/\(id)/fromFp8*scale", G.mismatch(G.floats(MLXFast.fromFp8(w, dtype: .float32) * scale), want, rtol: t.rtol, atol: t.atol))
@@ -367,10 +436,10 @@ struct ConformanceDequantGoldenTests {
     func fp8Block(id: String) {
         let c = G.entry("fp8_scaled.json", id, key: "block")
         guard !c.isEmpty else { return }  // entry() recorded the problem
-        let (n, k, bs) = (c["rows"] as! Int, c["cols"] as! Int, c["block"] as! Int)
+        let (n, k, bs) = (G.int(c["rows"]), G.int(c["cols"]), G.int(c["block"]))
         let shape = G.ints(c["scale_shape"])
         let w = G.fp8Weight(G.ints(c["weight"]), n, k)
-        let scale = MLXArray(G.doubles(c["scale"]).map { Float($0) }, shape)
+        let scale = G.shaped(G.doubles(c["scale"]).map { Float($0) }, shape)
         let want = G.doubles(c["expected"])
         let t = G.tolerance("float32_product")
         let deq = SharpAIOverlay.dequantFP8Blocks(
@@ -392,7 +461,7 @@ struct ConformanceDequantGoldenTests {
         let weight: [Int], scale: [Double], shape: [Int], want: [Double]
         init(_ id: String, cropped: Bool) {
             let c = G.entry("fp8_scaled.json", id, key: "block")
-            let (fn, fk, bs) = (c["rows"] as! Int, c["cols"] as! Int, c["block"] as! Int)
+            let (fn, fk, bs) = (G.int(c["rows"]), G.int(c["cols"]), G.int(c["block"]))
             let (n, k) = cropped ? (fn - (bs - 1), fk - 1) : (fn, fk)
             let w = G.ints(c["weight"]), e = G.doubles(c["expected"])
             let keep = (0 ..< n).flatMap { r in (0 ..< k).map { r * fk + $0 } }
@@ -422,6 +491,12 @@ struct ConformanceDequantGoldenTests {
 
     static func checkDecode(_ key: String, _ b: BlockCase) {
         guard fp8DecodeEnabled else {
+            // PRECISE MEANING OF THIS OPEN GAP: it is OPEN because the decode comparison was NOT EXECUTED in this run
+            // (DEQUANT_GOLDEN_FP8_DECODE unset), not because a decode result was measured wrong. The reason is that
+            // running it hits a fatal, uncatchable Metal compile failure of FP8Linear's kernel. It therefore reports
+            // [gap][OPEN] on every default run, can never become FIXED by itself, and says nothing about decode
+            // correctness. With the variable set the comparison below runs for real (and crashes today).
+            // Retire it when the kernel compiles: delete this branch and run the comparison unconditionally.
             ConformanceGap.knownIssue(
                 "FP8Linear single-token decode cannot run: its Metal kernel source is a complete kernel passed as a metalKernel BODY and fails to compile (fatal); set DEQUANT_GOLDEN_FP8_DECODE=1 to execute (OPEN)"
             ) {
@@ -472,9 +547,9 @@ struct ConformanceDequantGoldenTests {
     func fp8Ue8m0(id: String) {
         let c = G.entry("fp8_scaled.json", id, key: "ue8m0_block")
         guard !c.isEmpty else { return }  // entry() recorded the problem
-        let (n, k, bs) = (c["rows"] as! Int, c["cols"] as! Int, c["block"] as! Int)
+        let (n, k, bs) = (G.int(c["rows"]), G.int(c["cols"]), G.int(c["block"]))
         let w = G.fp8Weight(G.ints(c["weight"]), n, k)
-        let sb = MLXArray(G.ints(c["scale_bytes"]).map { UInt8($0) }, G.ints(c["scale_shape"]))
+        let sb = G.shaped(G.ints(c["scale_bytes"]).map { UInt8($0) }, G.ints(c["scale_shape"]))
         let got = SharpAIOverlay.dequantFP8Blocks(
             weight: MLXFast.fromFp8(w, dtype: .float32), scaleInv: sb, blockSize: bs, ue8m0: true)
         let t = G.tolerance("float32_exact")
@@ -487,9 +562,13 @@ struct ConformanceDequantGoldenTests {
         let e8 = G.load("e8m0.json")
         let want: Double
         if byte == 255 {
-            want = G.d((e8["special"] as! [String: Any])["vllm_formula_float32"]!)
+            want = G.d(G.dict(e8["special"])["vllm_formula_float32"])
         } else {
-            want = G.d((e8["bytes"] as! [[String: Any]]).first { $0["byte"] as? Int == byte }!["value"]!)
+            guard let entry = (e8["bytes"] as? [[String: Any]])?.first(where: { $0["byte"] as? Int == byte }) else {
+                Issue.record("e8m0.json has no entry for byte \(byte)")
+                return
+            }
+            want = G.d(entry["value"])
         }
         let w = G.fp8Weight([0x38], 1, 1)  // e4m3 0x38 = 1.0, so the result is the decoded scale
         let sb = MLXArray([UInt8(byte)], [1, 1])
@@ -514,18 +593,23 @@ struct ConformanceDequantGoldenTests {
 
     /// Row-major [n, k] result of the int4 case through MLX affine, and the scale of each element's group.
     static func int4Dequant(_ c: [String: Any]) -> (got: [Float], scales: [Double]) {
-        let (n, k, g) = (c["rows"] as! Int, c["cols"] as! Int, c["group"] as! Int)
+        let (n, k, g) = (G.int(c["rows"]), G.int(c["cols"]), G.int(c["group"]))
+        // Malformed dimensions are an issue, not a divide-by-zero / shape trap; the caller's comparison then fails on the empty result.
+        guard n > 0, k > 0, g > 0, k % 8 == 0, k % g == 0 else {
+            Issue.record("int4 case has unusable dimensions rows=\(n) cols=\(k) group=\(g)")
+            return ([], [])
+        }
         let words = G.ints(c["weight_packed"]).map { UInt32(truncatingIfNeeded: $0) }
-        let w = MLXArray(words, [n, k / 8])
-        let s = MLXArray(G.doubles(c["scale"]).map { Float($0) }, [n, k / g])
+        let w = G.shaped(words, [n, k / 8])
+        let s = G.shaped(G.doubles(c["scale"]).map { Float($0) }, [n, k / g])
         var zp = MLXArray.ones([n, k / g], dtype: .float32) * MLXArray(Float(8))  // uint4b8: symmetric zero point is 8
-        if !(c["symmetric"] as! Bool) {
+        if !(G.bool(c["symmetric"])) {
             // zero point nibbles are packed along dim 0 (dim-0 packing is stated in compressed_tensors_wNa16.py:158-183, see dequant_ref.py I7); unpack in test code
             let zw = G.ints(c["zero_packed"]).map { UInt32(truncatingIfNeeded: $0) }
             let cols = k / g
             var z = [Float](repeating: 0, count: n * cols)
             for r in 0 ..< n { for col in 0 ..< cols { z[r * cols + col] = Float((zw[(r / 8) * cols + col] >> UInt32(4 * (r % 8))) & 0xF) } }
-            zp = MLXArray(z, [n, cols])
+            zp = G.shaped(z, [n, cols])
         }
         let got = dequantized(w, scales: s, biases: -(zp * s), groupSize: g, bits: 4, mode: .affine, dtype: .float32)
         let sc = G.doubles(c["scale"])
@@ -543,11 +627,15 @@ struct ConformanceDequantGoldenTests {
 
     /// Row-major [K, N] result of the AWQ case through convertAutoAWQ + MLX affine, and the scale of each element's group.
     static func awqDequant(_ c: [String: Any]) -> (got: [Float], scales: [Double]) {
-        let (k, n, g) = (c["in_features"] as! Int, c["out_features"] as! Int, c["group"] as! Int)
+        let (k, n, g) = (G.int(c["in_features"]), G.int(c["out_features"]), G.int(c["group"]))
+        guard n > 0, k > 0, g > 0, k % 8 == 0, n % 8 == 0 else {
+            Issue.record("AWQ case has unusable dimensions in=\(k) out=\(n) group=\(g)")
+            return ([], [])
+        }
         var weights: [String: MLXArray] = [
-            "layer.qweight": MLXArray(G.ints(c["qweight"]).map { Int32(truncatingIfNeeded: $0) }, G.ints(c["qweight_shape"])),
-            "layer.qzeros": MLXArray(G.ints(c["qzeros"]).map { Int32(truncatingIfNeeded: $0) }, G.ints(c["qzeros_shape"])),
-            "layer.scales": MLXArray(G.doubles(c["scales"]).map { Float($0) }, G.ints(c["scales_shape"])),
+            "layer.qweight": G.shaped(G.ints(c["qweight"]).map { Int32(truncatingIfNeeded: $0) }, G.ints(c["qweight_shape"])),
+            "layer.qzeros": G.shaped(G.ints(c["qzeros"]).map { Int32(truncatingIfNeeded: $0) }, G.ints(c["qzeros_shape"])),
+            "layer.scales": G.shaped(G.doubles(c["scales"]).map { Float($0) }, G.ints(c["scales_shape"])),
             "other.theta": MLXArray.zeros([1], dtype: .float32),  // fixes the checkpoint float dtype (float32)
         ]
         convertAutoAWQ(&weights, groupSize: g)
@@ -718,7 +806,7 @@ struct ConformanceDequantGoldenTests {
         for id in G.ids("int4_pack_quantized.json") {
             let c = G.entry("int4_pack_quantized.json", id)
             guard !c.isEmpty else { continue }  // entry() recorded the problem
-            guard [32, 64].contains(c["group"] as! Int) else { continue }
+            guard [32, 64].contains(G.int(c["group"])) else { continue }
             let (got, scales) = Self.int4Dequant(c)
             out.append(("int4/\(id)", got, scales, G.doubles(c["expected"])))
         }
@@ -735,7 +823,7 @@ struct ConformanceDequantGoldenTests {
     func mutationsFail() {
         let c = G.entry("mxfp4.json", "all_bytes_unit_scale")
         guard !c.isEmpty else { return }  // entry() recorded the problem
-        let rows = c["rows"] as! Int, cols = c["cols"] as! Int
+        let rows = G.int(c["rows"]), cols = G.int(c["cols"])
         let packed = G.ints(c["packed"]), scales = G.ints(c["scales"])
         let want = G.doubles(c["expected"])
         let got = G.mxfp4Dequant(rows: rows, cols: cols, packed: packed, scales: scales)
@@ -743,12 +831,19 @@ struct ConformanceDequantGoldenTests {
         #expect(G.mismatch(got, want, rtol: t.rtol, atol: t.atol) == nil, "baseline must pass")
         // 1. one golden value nudged by 1e-6 relative (exact tolerance: must fail)
         var bumped = want
-        let i = bumped.firstIndex { $0 != 0 }!
+        guard let i = bumped.firstIndex(where: { $0 != 0 }) else {
+            Issue.record("all_bytes_unit_scale has no non-zero golden value to perturb")
+            return
+        }
         bumped[i] *= 1 + 1e-6
         #expect(G.mismatch(got, bumped, rtol: t.rtol, atol: t.atol) != nil)
         // 2. a zero golden value made non-zero
         var z = want
-        z[z.firstIndex { $0 == 0 }!] = 0.25
+        guard let zi = z.firstIndex(where: { $0 == 0 }) else {
+            Issue.record("all_bytes_unit_scale has no zero golden value to perturb")
+            return
+        }
+        z[zi] = 0.25
         #expect(G.mismatch(got, z, rtol: t.rtol, atol: t.atol) != nil)
         // 3. nibble order swapped in the INPUT: the real path then disagrees with the golden
         let swapped = packed.map { (($0 & 0xF) << 4) | ($0 >> 4) }
@@ -763,7 +858,11 @@ struct ConformanceDequantGoldenTests {
         let ch = G.entry("fp8_scaled.json", "channel_4x8", key: "channel")
         guard !ch.isEmpty else { return }  // entry() recorded the problem
         var w2 = G.doubles(ch["expected"])
-        w2[w2.firstIndex { $0 != 0 }!] *= 1.001
+        guard let wi = w2.firstIndex(where: { $0 != 0 }) else {
+            Issue.record("fp8 channel golden has no non-zero value to perturb")
+            return
+        }
+        w2[wi] *= 1.001
         let g2 = G.floats(
             MLXFast.fromFp8(G.fp8Weight(G.ints(ch["weight"]), 4, 8), dtype: .float32)
                 * MLXArray(G.doubles(ch["scale"]).map { Float($0) }, [4, 1]))

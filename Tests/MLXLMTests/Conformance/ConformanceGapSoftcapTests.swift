@@ -1,14 +1,16 @@
-// Conformance gap pins, part 1: Rnj1 / gemma3_text `final_logit_softcapping` (#254 section 2).
+// Regression test: Gemma3Text / Rnj1 `final_logit_softcapping` (#254 section 2).
 //
 // Spec: with `final_logit_softcapping = cap` the model's logits must equal
 // `cap * tanh(unbounded_logits / cap)`, where `unbounded_logits` are what the SAME weights produce
 // without the key. This is stricter than ConformanceForwardTests.gemma3TextSoftcap (which only checks
 // |logit| <= cap): it also catches a wrong formula (clipping instead of tanh, a missing 1/cap, ...).
+// The expected value comes from the independent reference `SharpAIOverlayGapReference.tanhSoftcap`,
+// and the head is scaled so the unbounded logits reach ~2*cap (tanh clearly non-linear).
 //
-// Known gap: `Gemma3TextConfiguration` does not decode the key and the model ends in a bare
-// `lmHead`. The wrapper is `isIntermittent`, so the test is green before AND after the fix and an
-// upstream sync that adds softcapping is never blocked. Delete the wrapper in the PR that
-// implements it. upstream-watch: `final_logit_softcapping` in Gemma3Text.swift (mlx-swift-lm).
+// History: this was a known-gap pin while `Gemma3TextConfiguration` did not decode the key. Gemma3Text.swift
+// now decodes it and applies it after `lmHead`, so the gap is closed: the assertions below are plain and
+// a softcap regression FAILS this test (no ConformanceGap wrapper, nothing to retire under CONFORMANCE_STRICT).
+// upstream-watch: `final_logit_softcapping` in Gemma3Text.swift (mlx-swift-lm).
 
 import Foundation
 import MLX
@@ -48,13 +50,11 @@ struct ConformanceGapSoftcapTests {
         let actual = try ConformanceBuild.logits(capped, tokens: tokens).asType(.float32)
         let expected = Ref.tanhSoftcap(unbounded, cap: cap)
 
-        // Precondition of the test itself (outside the known-issue): the case is discriminating.
+        // Precondition of the test itself: the case is discriminating.
         #expect(abs(unbounded).max().item(Float.self) > 1.5 * cap, "unbounded logits must exceed the cap")
         #expect(abs(expected).max().item(Float.self) <= cap + 1e-4)
 
         let maxDiff = abs(actual - expected).max().item(Float.self)
-        ConformanceGap.knownIssue("Gemma3TextConfiguration ignores final_logit_softcapping") {
-            ConformanceGap.expect(maxDiff <= 1e-3, "max |model - cap*tanh(unbounded/cap)| = \(maxDiff)")
-        }
+        #expect(maxDiff <= 1e-3, "max |model - cap*tanh(unbounded/cap)| = \(maxDiff)")
     }
 }
