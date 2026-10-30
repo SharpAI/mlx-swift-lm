@@ -20,7 +20,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dequant_ref as R  # noqa: E402
 
-VLLM_DEFAULT = "/Users/simba/SwiftLM/3rd_party/vllm"
+VLLM_DEFAULT = os.environ.get("VLLM_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "3rd_party", "vllm")
 Q = "vllm/model_executor/layers/quantization/utils/"
 
 # STUBS (the only non-vLLM code that runs): scalar_types.float4_e2m1f.max() (6.0, the E2M1 maximum);

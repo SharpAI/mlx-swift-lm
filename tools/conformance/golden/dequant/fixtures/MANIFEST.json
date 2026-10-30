@@ -95,8 +95,8 @@
  },
  "tools": {
   "dequant_crosscheck.py": {
-   "bytes": 14152,
-   "sha256": "91c9dad164e48ceaef0e4f0b44e4d55ab54e1a76822dc02fe887ec830e188309"
+   "bytes": 14247,
+   "sha256": "04c635f7f19a02d595c0b449a498023a0343d3170dee40e5658b60ae78378db0"
   },
   "dequant_ref.py": {
    "bytes": 11130,
