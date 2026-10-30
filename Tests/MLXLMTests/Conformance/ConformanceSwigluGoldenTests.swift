@@ -416,6 +416,39 @@ struct ConformanceSwigluGoldenTests {
         #expect(r.nonzero > 0)
     }
 
+    /// Elements where the unknown V4 clamp sidedness cannot matter: gate >= -limit (both gate readings agree) and |up| <= limit.
+    /// float16 only: the routed path does not clamp up, so a huge up in ANOTHER column of the row makes that hidden value overflow
+    /// (|silu(clamp(gate))| <= limit, so limit * |up| > 65504 is a sufficient overflow test); the down projection then computes
+    /// 0 * inf = NaN and poisons the whole row. Those rows are symptoms of the up gap (v4Routed), not of the gate path.
+    static func rowOverflowsFloat16(_ c: S.Case, _ i: Int) -> Bool {
+        guard c.dtype == "float16" else { return false }
+        let base = (i / c.d) * 2 * c.d + c.d   // chunk layout: up of column k is x[base + k]
+        return (0 ..< c.d).contains { c.limit * abs(c.x[base + $0]) > 65504 }
+    }
+
+    static let v4Independent: @Sendable (S.Case, String, Int) -> Bool = { c, l, i in
+        let gu = S.gateUp(c, layout: l, i)
+        return gu.gate >= -c.limit && abs(gu.up) <= c.limit && !rowOverflowsFloat16(c, i)
+    }
+
+    @Test("V4 routed experts: silu(clamp(gate)) * up is exact in the region independent of the inferred oracle")
+    func v4RoutedGateOnly() throws {
+        let f = try S.load("v4_clamped.json")
+        var region = 0, negativeGates = 0, disagree = 0
+        for c in f.cases {
+            let alt = try #require(c.goldenGateMaxOnly)
+            for i in 0 ..< c.golden.count where Self.v4Independent(c, f.layout, i) {
+                region += 1
+                if S.gateUp(c, layout: f.layout, i).gate < 0 { negativeGates += 1 }
+                if c.golden[i] != alt[i] { disagree += 1 }
+            }
+        }
+        #expect(disagree == 0, "the two gate-clamp readings differ inside the region meant to be independent of them")
+        #expect(region > 0 && negativeGates > 0, "region \(region), negative gates \(negativeGates)")
+        let r = try Self.check("v4_clamped.json", label: "V4 routed gate-only", include: Self.v4Independent) { c, l in try S.viaV4Routed(c, layout: l) }
+        #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
+    }
+
     @Test("V4 routed experts (DeepseekV4MoE.switchMLP): up must be clamped too (oracle INFERRED)")
     func v4Routed() throws {
         let r = try Self.check("v4_clamped.json", label: "V4 routed") { c, l in try S.viaV4Routed(c, layout: l) }
