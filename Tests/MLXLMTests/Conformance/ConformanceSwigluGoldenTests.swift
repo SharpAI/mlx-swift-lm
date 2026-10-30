@@ -383,10 +383,16 @@ struct ConformanceSwigluGoldenTests {
         // Always-on classification of the out-of-tolerance elements (the evidence behind the text above).
         let zeroed = a.bad.filter { $0.out == 0 }
         print("[swiglu][fp16-silu] bad=\(a.bad.count) zero-output=\(zeroed.count) max gate of bad=\(a.bad.map(\.gate).max() ?? 0) max gate of zero-output=\(zeroed.map(\.gate).max() ?? 0)")
-        #expect(!a.bad.isEmpty, "the gap went away: remove the knownIssue")
-        #expect(a.bad.allSatisfy { $0.gate < Self.fp16SigmoidSubnormalGate }, "bad element with sigmoid still in float16's normal range: \(a.bad.filter { $0.gate >= Self.fp16SigmoidSubnormalGate }.prefix(3))")
-        #expect(zeroed.allSatisfy { $0.gate < Self.fp16SigmoidZeroGate }, "zero output where sigmoid(gate) is representable: \(zeroed.filter { $0.gate >= Self.fp16SigmoidZeroGate }.prefix(3))")
-        #expect(a.bad.count == b.bad.count && a.bad.count == d.bad.count, "the three silu paths fail on different elements")
+        // Non-vacuity (independent of the gap): the float16 cases really were compared.
+        #expect(a.compared > 0 && b.compared > 0 && d.compared > 0, "no float16 element was compared")
+        // The classification below describes the gap while it EXISTS, so it is asserted only then. Nothing here
+        // asserts that the gap still exists: once the float16 path is fixed `a.bad` is empty, this test stays green
+        // and the gap wrapper reports [gap][FIXED] (a failure under CONFORMANCE_STRICT=1).
+        if !a.bad.isEmpty && !b.bad.isEmpty && !d.bad.isEmpty {  // a partly fixed set is still an open gap: only the full shape is pinned
+            #expect(a.bad.allSatisfy { $0.gate < Self.fp16SigmoidSubnormalGate }, "bad element with sigmoid still in float16's normal range: \(a.bad.filter { $0.gate >= Self.fp16SigmoidSubnormalGate }.prefix(3))")
+            #expect(zeroed.allSatisfy { $0.gate < Self.fp16SigmoidZeroGate }, "zero output where sigmoid(gate) is representable: \(zeroed.filter { $0.gate >= Self.fp16SigmoidZeroGate }.prefix(3))")
+            #expect(a.bad.count == b.bad.count && a.bad.count == d.bad.count, "the three silu paths fail on different elements")
+        }
         ConformanceGap.knownIssue("float16 silu(gate)*up misses rtol 2e-3 / atol 1e-7 for strongly negative gates (compiledSiluProduct, SwitchGLU, DeepseekV4Expert limit 0)") {
             ConformanceGap.expect(a.failures.isEmpty, "compiledSiluProduct: \(a.failures.prefix(2))")
             ConformanceGap.expect(b.failures.isEmpty, "SwitchGLU: \(b.failures.prefix(2))")
@@ -446,8 +452,11 @@ struct ConformanceSwigluGoldenTests {
         let routed = try Self.check("v4_clamped.json", label: "V4 routed fp16", golden: \.goldenGateMaxOnly, only: only) { c, l in try S.viaV4Routed(c, layout: l) }
         // Classification (plain asserts): every out-of-tolerance element has a gate where sigmoid is a float16 subnormal.
         for (name, r) in [("dense", dense), ("routed", routed)] {
-            #expect(!r.bad.isEmpty, "\(name): the gap went away: remove the knownIssue")
-            #expect(r.bad.allSatisfy { $0.gate < Self.fp16SigmoidSubnormalGate }, "\(name): bad element with sigmoid in float16's normal range: \(r.bad.filter { $0.gate >= Self.fp16SigmoidSubnormalGate }.prefix(3))")
+            #expect(r.compared > 0, "\(name): no float16 element was compared")
+            // Asserted only while the gap exists (see siluFloat16Gap): a fixed gap leaves `bad` empty and this green.
+            if !r.bad.isEmpty {
+                #expect(r.bad.allSatisfy { $0.gate < Self.fp16SigmoidSubnormalGate }, "\(name): bad element with sigmoid in float16's normal range: \(r.bad.filter { $0.gate >= Self.fp16SigmoidSubnormalGate }.prefix(3))")
+            }
         }
         ConformanceGap.knownIssue("V4 float16 silu(min(gate, limit))*clamp(up) misses rtol 2e-3 / atol 1e-7 for gates below -9.7 (DeepseekV4Expert, DeepseekV4MoE.switchMLP); the max-only gate clamp no longer hides the float16 sigmoid rounding") {
             ConformanceGap.expect(dense.failures.isEmpty, "DeepseekV4Expert: \(dense.failures.prefix(2))")
