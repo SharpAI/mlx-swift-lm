@@ -31,12 +31,12 @@ cache, or a SwiftPM mirror (`swift package config set-mirror`) pointing at an in
    of the SwiftPM remote fail inside. Each inside-sandbox probe has an outside control and must fail with the sandbox's own error (EPERM / curl exit 7), not just any failure; with no uplink the external probes are reported INCONCLUSIVE and the loopback probes carry the proof. Any miss gives `EXIT=70` and nothing else runs.
 1. `swift package resolve` into a fresh scratch dir, inside the sandbox; fails (naming the URL) if a dependency
    is not in the cache; also fails (71) if a line says Fetching without `from cache`.
-2. `swift build --build-tests` into the fresh scratch dir (default `$TMPDIR/swiftlm-blocked-build`), inside the
+2. `swift build --build-tests` into the fresh scratch dir (default `${RUNNER_TEMP:-$TMPDIR}/swiftlm-blocked-build`), inside the
    sandbox. `--disable-sandbox` is required because SwiftPM's own sandbox cannot nest.
 3. `swift test --skip-build --filter <f>` per filter (default `ConformanceOfflineGuard`,
    `ConformanceOfflineBundleTests`) inside the sandbox with `SWIFTLM_OFFLINE=1 HF_HUB_OFFLINE=1`.
 
-Stage 3 fails with `EXIT=72` if a filter matched zero tests (a vacuous pass). `SCRATCH` is `rm -rf`'d, so it is validated first (`EXIT=64`): it must be strictly inside the session scratchpad or a `swiftlm-blocked*` temp dir, never `/`, HOME, the repo or a parent of it.
+Stage 3 fails with `EXIT=72` if a filter matched zero tests (a vacuous pass). `SCRATCH` is `rm -rf`'d, so it is validated first (`EXIT=64`): it must be a `swiftlm-blocked*` dir under `$RUNNER_TEMP` (else `$TMPDIR`, else `/tmp`) or strictly inside an explicit `SCRATCH_ROOT` the caller names (empty by default, no personal path is baked in), never `/`, HOME, the repo or a parent of it. `run-blocked.sh --validate-scratch` runs only this check (used by `scripts/conformance/test-scripts.sh`).
 
 `LOCK_BUILD` / `LOCK_GPU` env vars take an optional command prefix (a lock wrapper) for shared machines.
 

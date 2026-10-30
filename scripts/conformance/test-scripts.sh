@@ -127,4 +127,20 @@ for t in test-mlx-swift-shadow.sh test-run-periodic.sh test-shadow-check.sh; do
     check "$t: all checks pass (exit $s)" "$s"
 done
 
+# 8. run-blocked.sh SCRATCH validation (it rm -rf's SCRATCH): no personal path baked in, root derived from RUNNER_TEMP /
+#    TMPDIR, and the rm -rf safety rules still hold. `--validate-scratch` runs only the validation (no sandbox).
+rb="$here/offline-build/run-blocked.sh"
+vs() { env -u SCRATCH_ROOT "$@" bash "$rb" --validate-scratch >/dev/null 2>&1; }
+mkdir -p "$tmp/rt" "$tmp/tmpdir"; rt=$(cd "$tmp/rt" && pwd -P); td=$(cd "$tmp/tmpdir" && pwd -P)
+! grep -q "claude-501\|/scratchpad" "$rb"; check "run-blocked: no personal scratchpad path in the script" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$rt/swiftlm-blocked-build"; check "run-blocked: SCRATCH under RUNNER_TEMP/swiftlm-blocked* is accepted" $?
+vs -u RUNNER_TEMP TMPDIR="$td" SCRATCH="$td/swiftlm-blocked-build"; check "run-blocked: SCRATCH under TMPDIR/swiftlm-blocked* is accepted" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$rt/other-dir"; [ $? -ne 0 ]; check "run-blocked: an arbitrary dir under RUNNER_TEMP is refused" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$rt"; [ $? -ne 0 ]; check "run-blocked: RUNNER_TEMP itself is refused" $?
+vs RUNNER_TEMP="$rt" SCRATCH="/"; [ $? -ne 0 ]; check "run-blocked: / is refused" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$HOME"; [ $? -ne 0 ]; check "run-blocked: HOME is refused" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$here/../../swiftlm-blocked-x"; [ $? -ne 0 ]; check "run-blocked: a path with .. is refused" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$rt/anything" SCRATCH_ROOT="$rt"; check "run-blocked: an explicit SCRATCH_ROOT still allows a dir strictly inside it" $?
+env RUNNER_TEMP="$rt" SCRATCH="$rt/anything" SCRATCH_ROOT="" bash "$rb" --validate-scratch >/dev/null 2>&1; [ $? -ne 0 ]; check "run-blocked: an empty SCRATCH_ROOT is not treated as the cwd" $?
+
 exit "$fail"
