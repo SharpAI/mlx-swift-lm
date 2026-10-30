@@ -153,6 +153,7 @@ cl 'Fetched https://github.com/apple/swift-numerics from cache (0.41s)'; check "
 cl 'Fetching https://github.com/apple/swift-numerics (cached)'; check "resolve-log: a differently worded cache hit passes" $?
 cl 'Computing version for https://github.com/apple/swift-numerics'; check "resolve-log: 'Computing version' is not a fetch" $?
 cl 'Fetching https://github.com/apple/swift-numerics'; [ $? -eq 71 ]; check "resolve-log: a bare 'Fetching https' is flagged (71)" $?
+cl 'Fetching https://github.com/example/swift-cache'; [ $? -eq 71 ]; check "resolve-log: a bare fetch of a URL containing 'cache' is flagged (71)" $?
 cl 'Updating https://github.com/swiftlang/swift-syntax.git'; [ $? -eq 71 ]; check "resolve-log: a bare 'Updating https' is flagged (71)" $?
 cl 'Cloning https://github.com/swiftlang/swift-syntax.git'; [ $? -eq 71 ]; check "resolve-log: a bare 'Cloning https' is flagged (71)" $?
 cl '[1/1] Fetching https://github.com/apple/swift-numerics'; [ $? -eq 71 ]; check "resolve-log: a progress-prefixed fetch is flagged (71)" $?
