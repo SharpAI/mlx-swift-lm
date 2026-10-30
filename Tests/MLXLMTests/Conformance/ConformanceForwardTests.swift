@@ -56,8 +56,7 @@ struct ConformanceForwardTests {
     }
 
     /// Tier 2: `final_logit_softcapping` (Rnj1 and other Gemma3-text derivatives) must bound the
-    /// logits. SURVEY FINDING, confirmed by reading `Gemma3Text.swift` (the configuration has no
-    /// such key and `callAsFunction` ends with a bare `lmHead`); this test makes it runnable.
+    /// logits (tanh softcap applied after `lmHead`).
     @Test("gemma3_text honours final_logit_softcapping")
     func gemma3TextSoftcap() async throws {
         let cap = 5.0
@@ -70,10 +69,6 @@ struct ConformanceForwardTests {
         let logits = try ConformanceBuild.logits(model, tokens: [1, 2, 3, 4]).asType(.float32)
         let maxAbs = abs(logits).max().item(Float.self)
 
-        // KNOWN GAP: remove this wrapper in the PR that adds softcapping. `isIntermittent` keeps the
-        // test green on BOTH sides, so an upstream sync that fixes softcapping is never blocked by it.
-        withKnownIssue("Gemma3TextConfiguration ignores final_logit_softcapping", isIntermittent: true) {
-            #expect(maxAbs <= Float(cap) + 1e-3, "max |logit| = \(maxAbs), cap = \(cap)")
-        }
+        #expect(maxAbs <= Float(cap) + 1e-3, "max |logit| = \(maxAbs), cap = \(cap)")
     }
 }
