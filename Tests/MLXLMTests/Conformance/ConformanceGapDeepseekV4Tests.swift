@@ -127,9 +127,7 @@ struct ConformanceGapDeepseekV4Tests {
         let m = try await ConformanceDeepseekV4.tinyModel()
         // tiny config: num_hidden_layers = 3, num_nextn_predict_layers = 1.
         let built = m.model.layers.count
-        ConformanceGap.knownIssue("DeepseekV4 builds num_hidden_layers - num_nextn_predict_layers main layers") {
-            ConformanceGap.expect(built == 3, "built \(built) layers, spec says 3 (compress_ratios has 4 = 3 + 1 MTP)")
-        }
+        #expect(built == 3, "built \(built) layers, spec says 3 (compress_ratios has 4 = 3 + 1 MTP)")
     }
 
     @Test("V4 attention layers with compress_ratio > 1 own a compressor; ratio-4 layers also an indexer")

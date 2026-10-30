@@ -177,7 +177,7 @@ struct ConformanceSynthV4Tests {
         }
     }
 
-    static let missingFromOurs: [ConformanceSynthV4Layout.Group] = [.compressor, .indexer, .tid2eid, .extraMainLayer]
+    static let missingFromOurs: [ConformanceSynthV4Layout.Group] = [.compressor, .indexer, .tid2eid]
 
     @Test("real tensors our module has no parameter for", arguments: ConformanceSynthV4Layout.Group.allCases)
     func realTensorsWithoutHome(_ g: ConformanceSynthV4Layout.Group) async throws {

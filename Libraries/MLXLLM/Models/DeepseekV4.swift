@@ -731,7 +731,8 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
         self._embedTokens.wrappedValue = Embedding(
             embeddingCount: config.vocabSize, dimensions: config.hiddenSize)
         let retainMTP = MTPConfig.retainMTPWeights && config.numNextnPredictLayers > 0
-        let totalCount = config.numHiddenLayers - (retainMTP ? 0 : config.numNextnPredictLayers)
+        // MTP blocks live at index num_hidden_layers.. (outside the main count)
+        let totalCount = config.numHiddenLayers + (retainMTP ? config.numNextnPredictLayers : 0)
         self.layers = (0 ..< totalCount).map {
             _ in DeepseekV4Block(config: config)
         }
@@ -791,7 +792,7 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
 
     public init(_ args: DeepseekV4Configuration) {
         self.args = args
-        self.kvHeads = Array(repeating: 1, count: args.numHiddenLayers - args.numNextnPredictLayers)
+        self.kvHeads = Array(repeating: 1, count: args.numHiddenLayers)
         self.model = DeepseekV4ModelInner(config: args)
         self._lmHead.wrappedValue = Linear(args.hiddenSize, args.vocabSize, bias: false)
     }
@@ -829,7 +830,7 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
 
         // 2. Stack per-expert weights into SwitchGLU format (for non-pre-stacked checkpoints)
         // MLX quantized checkpoints already have stacked weights; this is a no-op for them.
-        let mainLayerCount = args.numHiddenLayers - args.numNextnPredictLayers
+        let mainLayerCount = args.numHiddenLayers
         for l in 0 ..< mainLayerCount {
             let prefix = "model.layers.\(l)"
             for projName in ["gate_proj", "down_proj", "up_proj"] {
@@ -852,7 +853,7 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
 
         // 3. Filter out MTP (multi-token prediction) layers and rotary_emb keys
         // Also drop compressor/indexer sub-module keys (not yet implemented)
-        let numMainLayers = args.numHiddenLayers - args.numNextnPredictLayers
+        let numMainLayers = args.numHiddenLayers
         var finalWeights = [String: MLXArray]()
         for (key, value) in newWeights {
             // Drop rotary embedding precomputed frequencies
