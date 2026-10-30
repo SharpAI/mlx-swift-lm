@@ -12,6 +12,9 @@
 // After that throw: the base download task is cancelled. A provider that ignores cancellation may keep running
 // and may keep writing into the cache, but no further callback reaches the caller: progress is no longer
 // forwarded to the caller's `progressHandler` once the call has produced its outcome.
+// The first outcome wins: if the caller is cancelled before the base download finishes, the error is
+// `CancellationError`, even if the base would have thrown something else, and an outcome recorded first is
+// never replaced by a later miss or cancellation.
 //
 // Limits, stated precisely: cache-hit detection is this progress heuristic, nothing more. (a) A provider that
 // reports no progress for a miss is not detected. (b) The HubClient cached-snapshot fast path may not match
