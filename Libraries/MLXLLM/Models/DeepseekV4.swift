@@ -367,14 +367,20 @@ class DeepseekV4Attention: Module {
                 eps: config.rmsNormEps)
             : nil
 
-        // RoPE using compress_rope_theta (used for most layers with compress_ratio != 0)
-        // We use a single rope config as a simplification
-        let ropeBase = config.compressRopeTheta
+        // vLLM common/rope.py:30-56: layers with compress_ratio <= 1 use rope_theta and plain RoPE;
+        // compressed layers use compress_rope_theta with YaRN, and force mscale = 0 so that
+        // position 0 stays the identity (deepseek_scaling_rope.py:52-55,110-111).
+        let ropeBase = ratio > 1 ? config.compressRopeTheta : config.ropeTheta
+        var ropeScaling: [String: StringOrNumber]? = ratio > 1 ? config.ropeScaling : nil
+        if ropeScaling != nil {
+            ropeScaling?["mscale"] = .float(0)
+            ropeScaling?["mscale_all_dim"] = .float(0)
+        }
         self.rope = initializeRope(
             dims: config.qkRopeHeadDim,
             base: ropeBase,
             traditional: true,
-            scalingConfig: config.ropeScaling,
+            scalingConfig: ropeScaling,
             maxPositionEmbeddings: config.maxPositionEmbeddings
         )
     }

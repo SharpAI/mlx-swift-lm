@@ -783,7 +783,7 @@ struct ConformanceV4IndexerGoldenTests {
 
     // MARK: RoPE of the sliding-window layers and YaRN magnitude (gaps)
 
-    @Test("gap: ratio-0 (sliding-window) layers rotate with rope_theta and plain RoPE, not compress_rope_theta", arguments: G.ropeIDs)
+    @Test("ratio-0 (sliding-window) layers rotate with rope_theta and plain RoPE, not compress_rope_theta", arguments: G.ropeIDs)
     func ropeSlidingLayer(_ id: G.CaseID) throws {
         let (f, tol) = try G.fixture(id)
         let theta = try G.req(f.theta, "theta")
@@ -793,15 +793,13 @@ struct ConformanceV4IndexerGoldenTests {
         let rd = try G.req(f.ropeDim, "ropeDim"), L = try G.req(f.L, "L"), off = try G.req(f.offset, "offset")
         let x = MLXArray(try G.floats(f.inputs?.x, "x"), [1, 1, L, rd])
         let want = try G.req(f.outputs.out, "out")
-        ConformanceGap.knownIssue("DeepseekV4Attention uses compress_rope_theta for every layer; vLLM uses rope_theta where compress_ratio <= 1 (common/rope.py:42-44)") {
-            let y = attn.rope(x, offset: off)
-            eval(y)
-            let c = G.check(y.asArray(Float.self), want, tol: tol.y)
-            ConformanceGap.expect(c.ok, "\(f.name): ratio-0 layer rope max|d|=\(c.maxAbsError) = \(c.ratio)x the allowed error")
-        }
+        let y = attn.rope(x, offset: off)
+        eval(y)
+        let c = G.check(y.asArray(Float.self), want, tol: tol.y)
+        #expect(c.ok, "\(f.name): ratio-0 layer rope max|d|=\(c.maxAbsError) = \(c.ratio)x the allowed error (vLLM common/rope.py:42-44: rope_theta, plain RoPE)")
     }
 
-    @Test("gap: YaRN must not rescale the rotated channels (vLLM forces mscale 0, so position 0 is the identity)")
+    @Test("YaRN must not rescale the rotated channels (vLLM forces mscale 0, so position 0 is the identity)")
     func yarnMscale() throws {
         let flash = try ConformanceDeepseekV4.flashObject()
         let cfg = try G.tinyConfig { o in
@@ -817,9 +815,7 @@ struct ConformanceV4IndexerGoldenTests {
         let first = y[0, 0, 0, 0...].asArray(Float.self)  // position 0: cos = 1, sin = 0
         let err = first.map { abs($0 - Float(1)) }.max() ?? 0
         print("V4IDX-GOLDEN yarn position-0 probe: |rope(1) - 1| = \(err)")
-        ConformanceGap.knownIssue("YarnRoPE scales cos/sin by yarnGetMscale(16, 1) / yarnGetMscale(16, 0) = 1.277 when rope_scaling has no mscale key; vLLM sets mscale = 0 (common/rope.py:55-56)") {
-            ConformanceGap.expect(err < Float(1e-6), "position 0 is not the identity: |rope(1) - 1| = \(err)")
-        }
+        #expect(err < Float(1e-6), "position 0 is not the identity: |rope(1) - 1| = \(err) (vLLM common/rope.py:55-56 forces mscale 0)")
     }
 
     // MARK: attention sink
