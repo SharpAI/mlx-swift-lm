@@ -95,16 +95,16 @@
  },
  "tools": {
   "dequant_crosscheck.py": {
-   "bytes": 14247,
-   "sha256": "04c635f7f19a02d595c0b449a498023a0343d3170dee40e5658b60ae78378db0"
+   "bytes": 14800,
+   "sha256": "7505769599c1f91aebbc35e20ad81f80a7592dca098750988118d4a330faf34f"
   },
   "dequant_ref.py": {
    "bytes": 11130,
    "sha256": "0b4e3bf17b617f9edb18bdcf4a640d58a7410e195eb3330003f8d812d660a637"
   },
   "gen_dequant_golden.py": {
-   "bytes": 18387,
-   "sha256": "0c9ab7ae1ccab4c760377e40aafa370f2009d1fbfe761230275a6296a3232386"
+   "bytes": 18516,
+   "sha256": "66578fc9739dcf0ec8785618a10e20a1f70d41022b6fab409132bb44aa8fff19"
   }
  },
  "torch_version": "2.15.0",

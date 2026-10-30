@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the dequant golden fixtures + MANIFEST.json (run once, outputs are committed; tests never run Python).
 
-  python gen_dequant_golden.py [--vllm DIR] [--out DIR]
+  VLLM_ROOT=<vLLM checkout at 739e5945d> python gen_dequant_golden.py [--vllm DIR] [--out DIR]
 
 Runs the cross-check against vLLM's own reference code first (dequant_crosscheck.py) and refuses to write anything if it
 fails. Fixtures are JSON, deterministic (fixed seeds). Non-finite numbers are the strings "nan" / "inf" / "-inf".
@@ -272,9 +272,10 @@ TOL = {
 def main():
     global VLLM_DIR
     ap = argparse.ArgumentParser()
-    ap.add_argument("--vllm", default=CC.VLLM_DEFAULT)
+    ap.add_argument("--vllm", default=None, help="vLLM checkout root (commit 739e5945d); or set VLLM_ROOT")
     ap.add_argument("--out", default=os.path.join(HERE, "fixtures"))
     a = ap.parse_args()
+    a.vllm = CC.resolve_vllm(a.vllm)
     VLLM_DIR = a.vllm
     head = subprocess.run(["git", "-C", a.vllm, "rev-parse", "--short=9", "HEAD"], capture_output=True, text=True).stdout.strip()
     assert head == VLLM_COMMIT, f"vLLM checkout is {head}, expected {VLLM_COMMIT}"

@@ -1,6 +1,6 @@
 """Cross-check of v4idx_ref.py against vLLM's OWN torch reference code. Run (once, before generating):
 
-    <venv>/bin/python -I tools/conformance/golden/v4idx_crosscheck.py --vllm <vllm src root>
+    <venv>/bin/python -I tools/conformance/golden/v4idx_crosscheck.py --vllm <vLLM root> (or VLLM_ROOT=<vLLM root>)
 
 Exit code 0 only when every comparison agrees to 1e-10 relative (normwise, max|a-b| / max|b|) or, for the raw float32
 vLLM code, to the float32 bound stated next to it. The vLLM functions are NOT retyped: they are extracted with `ast` from the
@@ -84,10 +84,12 @@ def gen(seed):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--vllm", default=None, help="vLLM source root (the `src` directory)")
+    ap.add_argument("--vllm", default=None, help="vLLM checkout root (commit 2eae56c; the directory that contains vllm/ and "
+                                                 "tests/); or set VLLM_ROOT")
     a = ap.parse_args()
-    root = a.vllm or os.environ.get("VLLM_SRC")
-    assert root and os.path.isdir(root), "pass --vllm <vllm src root>"
+    root = a.vllm or os.environ.get("VLLM_ROOT")
+    if not root or not os.path.isdir(os.path.join(root, "vllm")):
+        ap.error("need a vLLM checkout: pass --vllm <root> or set VLLM_ROOT (the directory that contains vllm/)")
     kern = os.path.join(root, "tests/kernels/test_deepseek_v4_cpu_kernels.py")
     swa = os.path.join(root, "tests/v1/attention/test_deepseek_v4_swa_visible.py")
     cpu = os.path.join(root, "vllm/models/deepseek_v4/cpu/cpu_sparse.py")

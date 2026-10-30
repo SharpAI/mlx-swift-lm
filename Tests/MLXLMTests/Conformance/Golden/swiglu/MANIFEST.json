@@ -21,7 +21,7 @@
   "command": "VLLM_ROOT=<vLLM checkout at 739e5945d> venv/bin/python -I tools/conformance/golden/swiglu/generate.py",
   "scripts": {
    "generate.py": "0453633a5e85dcbe6edcb3ca1218957de6bc4f65b3185e22624e127f3f27ed49",
-   "swiglu_ref.py": "f2573313e6355b73c7ff1d4a99a8a3ff56ea409cb3474f349ba99aaa2d60667d"
+   "swiglu_ref.py": "350de0bab3ad43cc93a1d43cf1717416680bc3ad65b30479b0448dbda593d03c"
   }
  },
  "numpy": "2.5.4",

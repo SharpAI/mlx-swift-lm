@@ -70,8 +70,9 @@ def crosscheck(n_cases=400, seed=1234, vllm_root=None):
     (importing vllm needs CUDA-era deps). Returns max relative disagreement per op."""
     import ast, os, types
     vllm_root = vllm_root or os.environ.get("VLLM_ROOT")
-    if not vllm_root:
-        raise SystemExit("set VLLM_ROOT to a vLLM checkout at commit 739e5945d (the directory that contains vllm/)")
+    if not vllm_root or not os.path.isdir(os.path.join(vllm_root, "vllm")):
+        raise SystemExit("need a vLLM checkout at commit 739e5945d: set VLLM_ROOT to the directory that contains vllm/ "
+                         f"(got {vllm_root!r}). There is no default path.")
     src_path = os.path.join(vllm_root, "vllm/model_executor/layers/activation.py")
     tree = ast.parse(open(src_path).read())
     fns = {}
