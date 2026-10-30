@@ -176,4 +176,23 @@ struct ConformanceGapDeepseekV4Tests {
         #expect(out[landedIx] != nil, "sanitize dropped \(landedIx)")
         #expect(out[landedHash] != nil, "sanitize dropped \(landedHash)")
     }
+
+    // MARK: known gap -- cached decode
+
+    /// The compressor / indexer act only in the full-sequence forward (`cache == nil`); with a KV cache a
+    /// layer keeps its local-only attention, so real generation does not use them yet. Needs a
+    /// compressor/indexer state cache (pending block, previous block, compressed history).
+    @Test("V4 cached forward matches the uncached forward (compressor / indexer state is cached)")
+    func cachedForwardUsesCompressor() async throws {
+        let m = try await ConformanceDeepseekV4.tinyModel()
+        eval(m)
+        let tokens = MLXArray(Array(0 ..< 16)).reshaped(1, 16)
+        let plain = m(tokens, cache: nil)
+        let cache = try m.newCache(parameters: nil)
+        let cached = m(tokens, cache: cache)
+        eval(plain, cached)
+        ConformanceGap.knownIssue("V4 compressor/indexer do not run with a KV cache (decode path)") {
+            ConformanceGap.expect(abs(plain - cached).max().item(Float.self) < 1e-4)
+        }
+    }
 }

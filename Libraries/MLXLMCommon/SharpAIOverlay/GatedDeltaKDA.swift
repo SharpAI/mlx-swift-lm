@@ -118,7 +118,8 @@ public enum SharpAIOverlayGatedDeltaKDA {
     ///
     /// Falls back to the op composition (`gatedDeltaOps`, which accepts a rank-4 gate) when the kernel
     /// cannot run: CPU stream, `useKernel == false` (training; the kernel has no gradient),
-    /// `Dk % 32 != 0` (the kernel splits Dk over 32 lanes and would truncate), or `T == 0`.
+    /// `Dk % 32 != 0` (the kernel splits Dk over 32 lanes and would truncate), `Dv % 4 != 0` (the
+    /// threadgroup is 4 rows of Dv), or `T == 0`.
     public static func update(
         q: MLXArray, k: MLXArray, v: MLXArray, g: MLXArray, beta: MLXArray,
         state: MLXArray? = nil, mask: MLXArray? = nil, useKernel: Bool = true
@@ -134,8 +135,11 @@ public enum SharpAIOverlayGatedDeltaKDA {
 
         let g = g.asType(.float32), beta = beta.asType(.float32)
         let isCPU = Device.defaultDevice().deviceType == .cpu
-        guard !isCPU, useKernel, Dk % 32 == 0 else {
-            return gatedDeltaOps(q: q, k: k, v: v, g: g, beta: beta, state: state, mask: mask)
+        guard !isCPU, useKernel, Dk % 32 == 0, Dv % 4 == 0 else {
+            let (y, st) = gatedDeltaOps(q: q, k: k, v: v, g: g, beta: beta, state: state, mask: mask)
+            // The kernel returns y = 0 on masked steps; make the fallback agree.
+            guard let mask else { return (y, st) }
+            return (which(mask.expandedDimensions(axes: [-1, -2]), y, MLXArray.zeros(like: y)), st)
         }
 
         var inputs: [MLXArray] = [q, k, v, g, beta, state, MLXArray(T)]

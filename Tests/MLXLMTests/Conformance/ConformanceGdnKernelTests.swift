@@ -150,6 +150,19 @@ struct ConformanceGdnKernelTests {
         #expect(abs(r.y).max().item(Float.self) == 0)
     }
 
+    @Test("masked step: the op-composition fallback also writes y = 0 and keeps the state")
+    func maskedStepFallback() {
+        let c = G.makeCase(T: 4, Hk: 2, Hv: 4, Dk: 32, Dv: 8, perKey: true, seed: 8)
+        let st = G.randomState(B: 1, Hv: 4, Dv: 8, Dk: 32, seed: 9)
+        let mask = MLXArray([false, true, false, false]).reshaped(1, 4)
+        let r = KDA.update(
+            q: c.q, k: c.k, v: c.v, g: exp(c.logDecay), beta: c.beta, state: st, mask: mask, useKernel: false)
+        let k = KDA.update(q: c.q, k: c.k, v: c.v, g: exp(c.logDecay), beta: c.beta, state: st, mask: mask)
+        eval(r.y, r.state, k.y, k.state)
+        #expect(abs(r.y[0..., 0]).max().item(Float.self) == 0, "masked step 0 must give y = 0")
+        #expect(G.maxDiff(r.y, k.y) < 1e-4 && G.maxDiff(r.state, k.state) < 1e-4)
+    }
+
     @Test("rollback: state after the first k tokens == reference slot k-1 (kernel run on the prefix)")
     func rollbackPrefix() {
         let c = G.makeCase(T: 6, Hk: 2, Hv: 4, Dk: 32, Dv: 8, perKey: true, seed: 21)
