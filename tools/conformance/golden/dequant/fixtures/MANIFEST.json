@@ -1,0 +1,112 @@
+{
+ "crosscheck": {
+  "fp8_scaled_dequantize": {
+   "cases": 480,
+   "explanation": "vLLM multiplies in float32 (single rounding, <= 2^-24); reference is float64",
+   "max_rel_block": 5.958623319668224e-08,
+   "max_rel_channel": 5.9418963348244324e-08
+  },
+  "fp8_tables_vs_torch_dtypes": {
+   "e4m3fn": 256,
+   "e5m2": 256,
+   "e8m0fnu": 255
+  },
+  "int4": {
+   "cases_each": 240,
+   "max_rel_asym": 0.0,
+   "max_rel_awq": 0.0,
+   "max_rel_sym": 0.0,
+   "note": "bit-exact after one float32 cast; also pack/unpack round trip equals vLLM's"
+  },
+  "mxfp8_e8m0_decode": {
+   "cases": 240,
+   "max_rel": 0.0,
+   "note": "bf16 output of vLLM equals float64 reference rounded to bf16"
+  },
+  "nvfp4": {
+   "cases": 481,
+   "explanation_any_gs": "vLLM float32 double rounding (<= 2*2^-24); reference is float64",
+   "max_rel_any_gs": 1.0018940950995585e-07,
+   "max_rel_exact_gs": 0.0
+  }
+ },
+ "files": {
+  "awq_int4.json": {
+   "bytes": 73792,
+   "sha256": "f4ab9222b84eab8f8c09f4735d900b06ea46a16c169bc2d1d9cf7fbc305f945a"
+  },
+  "e8m0.json": {
+   "bytes": 583,
+   "sha256": "d3dfe1e6b5d4a73fbdc09d81500000ca463f9efb572d24720cf19ecd0f3c40aa"
+  },
+  "fp4_e2m1_codes.json": {
+   "bytes": 496,
+   "sha256": "94653f6333542f4a9590e327e0c5c3b7c8aaa1ad75318682fcf88f98b8a02292"
+  },
+  "fp8_codes.json": {
+   "bytes": 4388,
+   "sha256": "367dcd4d9e3ebda39712d43f1c31c9034198625421fcb030c739ae5119da44a3"
+  },
+  "fp8_scaled.json": {
+   "bytes": 14018,
+   "sha256": "3f27a48026d80eafb9351a87a6d81ef417ac6ac785ef3e37e72004cf491cb9e0"
+  },
+  "int4_pack_quantized.json": {
+   "bytes": 27408,
+   "sha256": "2c53c730fdc85f7e92a82277d1e91dfbd39bef1eedfe995b9c50a1119dced803"
+  },
+  "mxfp4.json": {
+   "bytes": 31386,
+   "sha256": "763682b1efe00debd85df61d6176cd1c69aae2e55ae5950f53dfa22c1ba2d300"
+  },
+  "nvfp4.json": {
+   "bytes": 19354,
+   "sha256": "c8587784b85bc140b49d045739685696e07a4f40de4909c1d886537b2746cff1"
+  }
+ },
+ "generator": "tools/conformance/golden/dequant/gen_dequant_golden.py",
+ "numpy_version": "2.5.4",
+ "reference": [
+  "dequant_ref.py",
+  "dequant_crosscheck.py"
+ ],
+ "tolerances": {
+  "bfloat16_values": {
+   "atol": 0.0,
+   "rtol": 0.0,
+   "why": "every fp8 e4m3 value has 3 mantissa bits, exactly representable in bfloat16"
+  },
+  "float32_affine_cancellation": {
+   "atol": 0.0,
+   "atol_per_scale": 1.7881393432617188e-06,
+   "rtol": 1.2e-07,
+   "why": "MLX affine dequantize computes q*scale + bias with bias = -zp*scale: two float32 roundings of terms up to 15*scale that cancel, so the absolute error is up to 2 * 2^-24 * 15 * scale (= 15 * 2^-23 * scale, the scale of the element's OWN group) even where the exact result is tiny or zero; vLLM's (q-zp)*scale has one rounding"
+  },
+  "float32_exact": {
+   "atol": 0.0,
+   "rtol": 0.0,
+   "why": "mxfp4 / nvfp4 (exactly representable global scales) / int4 / awq: every product is a small-mantissa value times a power of two or a short-mantissa float32; the float32 result is exact, so equality is required"
+  },
+  "float32_product": {
+   "atol": 0.0,
+   "rtol": 0.0,
+   "why": "fp8 * float32 scale: the fp8 value has <= 4 significant bits, so the product has <= 28 bits and is exact in float64; Float(float64 product) and MLX's float32 multiply are the same single correctly rounded result. The matmul-by-identity route only adds exact zeros. Equality is required: a 1-ulp bug must fail"
+  }
+ },
+ "tools": {
+  "dequant_crosscheck.py": {
+   "bytes": 14152,
+   "sha256": "91c9dad164e48ceaef0e4f0b44e4d55ab54e1a76822dc02fe887ec830e188309"
+  },
+  "dequant_ref.py": {
+   "bytes": 11130,
+   "sha256": "0b4e3bf17b617f9edb18bdcf4a640d58a7410e195eb3330003f8d812d660a637"
+  },
+  "gen_dequant_golden.py": {
+   "bytes": 18387,
+   "sha256": "0c9ab7ae1ccab4c760377e40aafa370f2009d1fbfe761230275a6296a3232386"
+  }
+ },
+ "torch_version": "2.15.0",
+ "vllm_commit": "739e5945d"
+}
