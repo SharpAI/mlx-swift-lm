@@ -125,8 +125,11 @@ struct ConformanceGapQuantMatmulTests {
         // vllm/models/muse_spark/nvidia/model.py:1836 raises NotImplementedError for enabled GDN2 layers, so the
         // gate/beta parametrisation, the low-rank projection shapes and the checkpoint tensor names are not
         // available. The GDN recurrence itself is covered by ConformanceGapGdnReferenceTests (scalar and per-key gates).
-        withKnownIssue("GDN2 low-rank projection / gate parametrisation is not in any source in the research docs") {
-            Issue.record("unknown: GDN2 projection shapes, gate and beta parametrisation, weight names")
+        // Tracked like every other gap: reported as [gap][OPEN] in the run summary and scanned by
+        // ConformanceGapMigrationTests. It is a placeholder for MISSING SOURCES, not a probe of the code, so
+        // it cannot turn FIXED by itself: replace the body with a real comparison when the maths is published.
+        ConformanceGap.knownIssue("GDN2 low-rank projection / gate parametrisation is not in any source in the research docs") {
+            ConformanceGap.expect(false, "unknown: GDN2 projection shapes, gate and beta parametrisation, weight names")
         }
     }
 }
