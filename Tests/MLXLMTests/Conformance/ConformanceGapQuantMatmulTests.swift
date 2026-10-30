@@ -48,7 +48,7 @@ struct ConformanceGapQuantMatmulTests {
         let x = MLXArray([Float](arrayLiteral: 2, 1, 0.5, -2, 0, 0, 0, 0), [2, 4])
         let (q, s) = Ref.int8QuantPerToken(x)
         #expect(q.asArray(Int8.self) == [127, 64, 32, -127, 0, 0, 0, 0])
-        #expect(s.asArray(Float.self) == [2.0 / 127, 0])
+        #expect(s.asArray(Float.self) == [Float(2) / 127, 0])
     }
 
     @Test("int8 W8A8 == integer oracle on random data (K = 96, 2 chunks of 48 and the default chunk)")
