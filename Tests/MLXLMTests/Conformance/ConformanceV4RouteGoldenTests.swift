@@ -359,9 +359,19 @@ enum V4RouteGolden {
         // sort each token's (id, weight) pairs by id: the order inside the top-k is not part of the contract.
         var sortedIds: [Int32] = [], sortedW: [Float] = []
         for row in 0 ..< gi.count / k {
-            let pairs = (0 ..< k).map { (gi[row * k + $0], gw[row * k + $0]) }.sorted { $0.0 < $1.0 }
-            sortedIds += pairs.map { $0.0 }
-            sortedW += pairs.map { $0.1 }
+            // explicit types and a plain loop: the map-to-tuple + sorted chain made the older CI compiler give up
+            // ("unable to type-check this expression in reasonable time", CI run 41009617406).
+            var pairs: [(id: Int32, w: Float)] = []
+            for j in 0 ..< k {
+                let id: Int32 = gi[row * k + j]
+                let weight: Float = gw[row * k + j]
+                pairs.append((id: id, w: weight))
+            }
+            pairs.sort { (a: (id: Int32, w: Float), b: (id: Int32, w: Float)) -> Bool in a.id < b.id }
+            for pair in pairs {
+                sortedIds.append(pair.id)
+                sortedW.append(pair.w)
+            }
         }
         var out: [String] = []
         let wantI = wantIds.data.map { Int32($0) }
