@@ -176,6 +176,11 @@ enum SwigluGolden {
     }
 
     static func viaGPTOSS(_ c: Case, layout: String) -> [Float] {
+        floats(gptossRaw(c, layout: layout)[.ellipsis, ..<c.d])
+    }
+
+    /// GPT-OSS SwiGLUSwitchGLU output [1, rows, 2d] with its own dtype (not cast), so dtype promotion is observable.
+    static func gptossRaw(_ c: Case, layout: String) -> MLXArray {
         let dt = dtype(c.dtype), s = selections(layout: layout, d: c.d, dt: dt)
         let m = SwiGLUSwitchGLU(inputDims: 2 * c.d, hiddenDims: c.d, numExperts: 1)
         m.update(parameters: ModuleParameters.unflattened([
@@ -185,7 +190,7 @@ enum SwigluGolden {
         ]))
         let x = input(c, dt: dt).expandedDimensions(axis: 0)
         let idx = MLXArray.zeros([1, c.rows, 1], dtype: .int32)
-        return floats(m(x, idx).squeezed(axis: -2)[.ellipsis, ..<c.d])
+        return m(x, idx).squeezed(axis: -2)
     }
 
     static func viaV4Dense(_ c: Case, layout: String, limit: Float) -> [Float] {
@@ -369,6 +374,22 @@ struct ConformanceSwigluGoldenTests {
         #expect(r.compared == 1)
         ConformanceGap.knownIssue("GPT-OSS swiglu float32 5x129: one tail value is 2.3e-6 relative off (budget 2e-6)") {
             ConformanceGap.expect(r.failures.isEmpty, "\(r.failures)")
+        }
+    }
+
+    @Test("GPT-OSS swiglu keeps the activation dtype (float32 holds; bfloat16/float16 are promoted to float32: gap)")
+    func gptossDTypePromotion() throws {
+        let f = try S.load("swigluoai_and_mul.json")
+        var promoted: [String] = []
+        for name in ["float32", "bfloat16", "float16"] {
+            let c = try #require(f.cases.first { $0.dtype == name })
+            let out = S.gptossRaw(c, layout: f.layout)
+            if name == "float32" { #expect(out.dtype == .float32) } else if out.dtype != S.dtype(name) { promoted.append("\(name) -> \(out.dtype)") }
+        }
+        // swiglu() in GPTOSS.swift clips with MLXArray(limit), a strongly typed float32 array, which promotes the activation.
+        // Whether that is intended is not established; mlx-lm's Python port clips with a Python scalar (not verified here).
+        ConformanceGap.knownIssue("GPT-OSS swiglu promotes bfloat16/float16 activations to float32 (clip with MLXArray(limit)); output dtype != input dtype") {
+            ConformanceGap.expect(promoted.isEmpty, "\(promoted)")
         }
     }
 
