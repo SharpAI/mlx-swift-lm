@@ -233,5 +233,19 @@ class LoadGenTests(unittest.TestCase):
         self.assertEqual(os.path.realpath(D.load_gen(None).kda_ref.__file__), os.path.realpath(pinned))  # mutated oracle does not leak
 
 
+class HygieneTests(unittest.TestCase):
+    def test_no_duplicate_or_unused_imports_in_kda_diff(self):
+        import ast
+        src = open(os.path.join(HERE, "kda_diff.py")).read()
+        tree = ast.parse(src)
+        seen = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                seen += [a.asname or a.name for a in node.names]
+        self.assertEqual(sorted(n for n in set(seen) if seen.count(n) > 1), [], "duplicate imports")
+        used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        self.assertEqual([n for n in set(seen) if n.split(".")[0] not in used], [], "unused imports")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

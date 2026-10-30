@@ -35,7 +35,6 @@ import os
 import shlex
 import shutil
 import subprocess
-import subprocess
 import sys
 import zlib
 
@@ -90,7 +89,7 @@ def check(got, want, tol, mode):
     bad = Check(float("inf"), float("inf"), float("inf"), 0)
     if len(got) != len(want) or len(want) == 0:
         return bad
-    g = np.asarray([float(x) for x in got], dtype=np.float32).astype(np.float64)  # Swift Float values (D: "NaN" strings ok)
+    g = np.asarray([float(x) for x in got], dtype=np.float32).astype(np.float64)  # Swift Float values; non-finite ones arrive as the strings "NaN" / "Infinity"
     w = np.asarray(want, dtype=np.float64)
     d = np.abs(g - w)
     if np.isnan(d).any():
