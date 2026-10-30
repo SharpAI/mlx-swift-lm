@@ -71,4 +71,28 @@ struct ConformanceForwardTests {
 
         #expect(maxAbs <= Float(cap) + 1e-3, "max |logit| = \(maxAbs), cap = \(cap)")
     }
+
+    /// The cap is `cap * tanh(raw / cap)`, not a clamp: same weights built without the key give the
+    /// raw logits, and the capped model must equal the formula applied to them.
+    @Test("gemma3_text softcap equals cap * tanh(raw / cap) of the uncapped logits")
+    func gemma3TextSoftcapFormula() async throws {
+        let cap: Float = 5
+        let raw = try #require(
+            try await ConformanceBuild.llm(Self.gemma3TextJSON(softcap: nil), modelType: "gemma3_text") as? Gemma3TextModel)
+        let capped = try #require(
+            try await ConformanceBuild.llm(Self.gemma3TextJSON(softcap: Double(cap)), modelType: "gemma3_text") as? Gemma3TextModel)
+        // Same weights in both; scale the head so some raw logits exceed the cap and some stay below.
+        let params = raw.parameters()
+        raw.update(parameters: params)
+        capped.update(parameters: params)
+        let scaled = ModuleParameters.unflattened([("lm_head.weight", raw.lmHead.weight * 40)])
+        raw.update(parameters: scaled)
+        capped.update(parameters: scaled)
+        eval(raw, capped)
+        let r = try ConformanceBuild.logits(raw, tokens: [1, 2, 3, 4]).asType(.float32)
+        let c = try ConformanceBuild.logits(capped, tokens: [1, 2, 3, 4]).asType(.float32)
+        let want = tanh(r / cap) * cap
+        #expect(abs(r).max().item(Float.self) > cap, "raw logits must exceed the cap for the test to bite")
+        #expect(abs(c - want).max().item(Float.self) < 1e-3)
+    }
 }

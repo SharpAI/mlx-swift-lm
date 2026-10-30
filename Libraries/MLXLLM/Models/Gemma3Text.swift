@@ -449,7 +449,7 @@ public class Gemma3TextModel: Module, LLMModel {
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]? = nil) -> MLXArray {
         var out = model(inputs, mask: nil, cache: cache)
         out = lmHead(out)
-        if let cap = config.finalLogitSoftcapping {
+        if let cap = config.finalLogitSoftcapping, cap > 0 {
             out = tanh(out / cap) * cap
         }
         return out
