@@ -91,9 +91,13 @@ enum SwigluGolden {
         let m = try manifest()
         let want = try #require(m.files[name], "\(name) is not in MANIFEST.json")
         let got = sha256(data)
-        #expect(got == want.sha256, "\(name): sha256 \(got) != manifest \(want.sha256)")
+        guard got == want.sha256 else {
+            throw GoldenKit.LoadError(description: "FIXTURE CHANGED: \(name): sha256 \(got) != manifest \(want.sha256)")
+        }
         let f = try GoldenKit.decode(File.self, from: data, name: name)
-        #expect(f.cases.count == want.cases, "\(name): \(f.cases.count) cases != manifest \(want.cases)")
+        guard f.cases.count == want.cases else {
+            throw GoldenKit.LoadError(description: "FIXTURE CHANGED: \(name): \(f.cases.count) cases != manifest \(want.cases)")
+        }
         return f
     }
 
