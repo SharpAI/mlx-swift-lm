@@ -399,48 +399,26 @@ public class EvalTests: XCTestCase {
         let rawKVBytes = keys.nbytes + values.nbytes
         let compactBytes = cache.state.reduce(0) { $0 + $1.nbytes }
 
-        let decodeQuery = MLXRandom.normal([1, 32, 1, 128]).asType(.float16)
-        let decodeKey = MLXRandom.normal([1, 8, 1, 128]).asType(.float16)
-        let decodeValue = MLXRandom.normal([1, 8, 1, 128]).asType(.float16)
-
-        // Untimed warm-up of the first-decode kernels. The first decode step is the first
-        // place the raw-tail attention (a [1, K] x [K, 1] and a [1, 1] x [1, K] fp16
-        // batched matmul, i.e. the gemv family) runs, because the 32K ingest ends exactly on
-        // a tile boundary and leaves no raw tail. Since mlx 0.32 those gemv kernels are
-        // JIT-compiled from source (not shipped in the metallib), so on a cold Metal shader
-        // cache (a fresh CI VM) the first call pays a one-time compile of ~0.1 s per kernel
-        // library. That is process-level start-up cost, not decode latency. Exercise the
-        // same dtype / head layout on a small throwaway cache so the timed region below
-        // measures steady-state per-layer decode (the thing the bound guards: no prompt-sized
-        // spare capacity or unbounded normalization graph on the decode path).
-        do {
-            let warmCache = VarianceNormalizedKVCache(
-                tileSize: 128, keyBits: 4, valueBits: 2, sinkhornIterations: 8)
-            let warmKeys = MLXRandom.normal([1, 8, 128, 128]).asType(.float16)
-            let warmValues = MLXRandom.normal([1, 8, 128, 128]).asType(.float16)
-            eval(
-                warmCache.updateAndAttend(
-                    queries: queries, keys: warmKeys, values: warmValues,
-                    scale: 1 / sqrt(Float(128))))
-            eval(
-                warmCache.updateAndAttend(
-                    queries: decodeQuery, keys: decodeKey, values: decodeValue,
-                    scale: 1 / sqrt(Float(128))))
+        func decodeStep() -> TimeInterval {
+            let query = MLXRandom.normal([1, 32, 1, 128]).asType(.float16)
+            let key = MLXRandom.normal([1, 8, 1, 128]).asType(.float16)
+            let value = MLXRandom.normal([1, 8, 1, 128]).asType(.float16)
+            eval(query, key, value)
+            let start = Date.timeIntervalSinceReferenceDate
+            let output = cache.updateAndAttend(
+                queries: query, keys: key, values: value, scale: 1 / sqrt(Float(128)))
+            eval(output)
+            return Date.timeIntervalSinceReferenceDate - start
         }
-
-        let decodeStart = Date.timeIntervalSinceReferenceDate
-        let decodeOutput = cache.updateAndAttend(
-            queries: decodeQuery,
-            keys: decodeKey,
-            values: decodeValue,
-            scale: 1 / sqrt(Float(128)))
-        eval(decodeOutput)
-        let decodeElapsed = Date.timeIntervalSinceReferenceDate - decodeStart
+        // A step that first uses a kernel variant also builds its Metal pipeline, about 0.2 s
+        // on a cold shader cache. Assert on the fastest step, which times only the decode.
+        let decodeTimes = (0 ..< 8).map { _ in decodeStep() }
+        let decodeElapsed = decodeTimes.min()!
 
         print(
             "KVarN 32K ingest/decode smoke: elapsed=\(elapsed)s, raw=\(rawKVBytes) bytes, "
                 + "compact=\(compactBytes) bytes, peak workspace=\(peakWorkspaceBytes) bytes, "
-                + "one-layer decode=\(decodeElapsed)s")
+                + "one-layer decode=\(decodeTimes)s")
 
         XCTAssertEqual(output.shape, [1, 32, 1, 128])
         XCTAssertLessThan(compactBytes, rawKVBytes)
