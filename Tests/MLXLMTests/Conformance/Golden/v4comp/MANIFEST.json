@@ -5,25 +5,29 @@
  "python": "3.15.0",
  "numpy": "2.5.4",
  "generator": {
-  "generate.py": "df1144876d2cf5bb783a4d0c18986c6cf3194785113d37afbf062abf36efb19b",
-  "v4comp_ref.py": "93b556e8ddf24d1f1f63b102eb44f3b795318c178f868a93b44c0f60b2ec0036"
+  "generate.py": "bb505c4c644e398a0fb5439b8ced799eef82f02c8e4f47cc4cf939813002d953",
+  "v4comp_ref.py": "d86f3c3e9d717a554ef62bc2e5ebd2b402b445ab25b53737addb2f45070fd387"
  },
  "files": {
   "ratio4.json": {
-   "sha256": "e97ea4eb80f374766a0a51239b2545350f30490e0ce0e6e6c46b45701b00bf13",
+   "sha256": "90e95bc8c971e2db0647922792c84004e8d4c765dbcea8c65516a1825c8af7f5",
    "cases": 6
   },
   "ratio128.json": {
-   "sha256": "67672721e1b5fbf5276d458f803d41cdb07a24d43a1253e9324d45d213039b97",
+   "sha256": "1af22fbc9e7340a9402e784f68fbb6bfe166364bd134d59b6ad299def1fa64c0",
    "cases": 5
   },
   "bf16.json": {
-   "sha256": "532ec30c11b612dd08867f4a5d2912d41ed2ae69600fa8cfc93872aa6ad0e545",
+   "sha256": "002e31a4e6eb12cba183875fdba49f20db4a9fa2a823765684f89132db91fa11",
    "cases": 2
   },
   "eps.json": {
-   "sha256": "5cdd6c506c6537dd62e3d788f0be08b07379f82668d8195c0e0f404eea2c30e6",
+   "sha256": "a43c3e3c9ae2ba18d19fd94ba021a4765d73346b943cec3e9a16c0a0e91078a9",
    "cases": 2
+  },
+  "yarn.json": {
+   "sha256": "87a1a4c90499679c47183592ee4bd3e49834a97d77ad6ec67610681d2c2fdaeb",
+   "cases": 5
   }
  },
  "tolerances": {
@@ -46,15 +50,17 @@
  },
  "crosscheck": {
   "cases": 240,
-  "entries_compared": 1114,
+  "yarn_cases": 80,
+  "entries_compared": 1216,
   "seed": 2025,
   "gate_relative": 1e-10,
   "max_relative_disagreement": {
-   "entries_vs_triton_ref_fp64": 1.9047070321135275e-15,
-   "entries_vs_cpu_eager": 1.9047070321135275e-15,
-   "prerope_vs_cpu_eager": 2.023751221620623e-15,
+   "entries_vs_triton_ref_fp64": 9.523856275450902e-16,
+   "entries_vs_cpu_eager": 9.523856275450902e-16,
+   "prerope_vs_cpu_eager": 9.523856275450902e-16,
    "state_rows_vs_save_eager": 0.0,
-   "triton_ref_unpatched_fp32_vs_fp64": 6.223691745187308e-07
+   "triton_ref_unpatched_fp32_vs_fp64": 6.760718091664516e-07,
+   "yarn_cos_sin_vs_vllm_class_fp64": 0.0
   }
  },
  "crosscheck_patches_to_vllm_reference_code": [
@@ -73,6 +79,12 @@
    "replace": "        block_idx_kv = kv_slot // kv_cache_block_size\n",
    "with": "        CAPTURE.append((normed.clone(), torch.cat([normed[:NOPE_DIM], rotated_rope])))\n        block_idx_kv = kv_slot // kv_cache_block_size\n",
    "why": "capture normed (pre-RoPE) and the RoPE'd row before the fp8 store"
+  },
+  {
+   "fn": "DeepseekScalingRotaryEmbedding._compute_inv_freq / DeepseekV4ScalingRotaryEmbedding._compute_cos_sin_cache",
+   "replace": "torch.float / torch.float32",
+   "with": "torch.float64",
+   "why": "run the fp32 YaRN cache in fp64"
   }
  ],
  "discriminators_max_abs_diff_of_wrong_readings_vs_golden": {
@@ -130,11 +142,38 @@
   },
   "r128_hd16_rope8_T260_eps1e-2": {
    "last_token_pos": 0.7945527229379515
+  },
+  "r4_hd16_rope8_T37_yarn_flash": {
+   "last_token_pos": 4.757813122325535,
+   "swap_halves": 4.4801917570004495,
+   "no_overlap_ratio4": 3.8101635485248764,
+   "plain_rope": 0.040543721589901605
+  },
+  "r4_hd128_rope64_T64_yarn_flash": {
+   "last_token_pos": 5.025690694290017,
+   "swap_halves": 5.920449068483496,
+   "no_overlap_ratio4": 6.972662731791329,
+   "plain_rope": 0.07431605929964769
+  },
+  "r128_hd16_rope8_T300_yarn_flash": {
+   "last_token_pos": 1.8461238739876529,
+   "plain_rope": 0.13942332578452954
+  },
+  "r128_hd128_rope64_T260_yarn_flash": {
+   "last_token_pos": 9.032850939757951,
+   "plain_rope": 0.07561125925411077
+  },
+  "r4_hd32_rope16_T40_yarn_small": {
+   "last_token_pos": 6.982467030378795,
+   "swap_halves": 5.312796745334227,
+   "no_overlap_ratio4": 5.387461418615034,
+   "plain_rope": 0.8033127464571355
   }
  },
  "inferred_points_not_from_vllm_source": [
   "head_dim / rope_dim are parameters in the oracle (the C++ hard-codes 512/64 and 128/64; vLLM's torch reference is generic)",
   "cos/sin cache built in float64 (vLLM builds it in float32)",
-  "plain RoPE (theta only): the real model also uses YaRN on compressor layers (rope.py:31-37), not modelled here"
+  "YaRN cos/sin built in float64 (vLLM: float32); yarn.json uses the real config values with mscale forced to 0 (rope.py:51-52), i.e. NO cos/sin scaling; the deepseek_llama_scaling variant (attention_factor == 1.0, rope.py:33) selects the same class and the same maths",
+  "ratio4/ratio128/bf16/eps fixtures use plain RoPE (theta only); only yarn.json models the YaRN rope of the compressor layers"
  ]
 }

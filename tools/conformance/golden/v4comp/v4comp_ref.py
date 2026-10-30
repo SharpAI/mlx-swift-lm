@@ -8,18 +8,46 @@ vllm/models/deepseek_v4/cpu/cpu_compressor.py:N, "comp:N" = vllm/models/deepseek
 "smla:N" = vllm/models/deepseek_v4/sparse_mla.py:N, "cpusp:N" = vllm/models/deepseek_v4/cpu/cpu_sparse.py:N.
 
 Everything the C++ kernel does in fp32 is done here in float64. NOT transcribed (out of scope, no Swift counterpart): the fp8/UE8M0
-quantisation of the stored entry (cpp:347-377). INFERRED by us (not in the vLLM source): head_dim / rope_dim are parameters here,
+quantisation of the stored entry (cpp:347-377). YaRN (compressor layers, rope.py:31-37) is modelled by yarn_inv_freq (optional `yarn`
+argument); plain RoPE is the default. INFERRED by us (not in the vLLM source): head_dim / rope_dim are parameters here,
 the C++ hard-codes 512/64 (cpp:49-51) and 128/64 (cpp:391-393); the algebra is dimension independent and vLLM's own
 torch reference (kvc:2432) is generic in head_dim / rope_dim, which crosscheck() exercises.
 """
+import math
+
 import torch
 
 F64 = torch.float64
 
 
-def make_cos_sin_cache(max_pos, rope_dim, base):
-    # rope:50-60 (float64 here, float32 in vLLM): cache[pos, :rope_dim/2] = cos, [pos, rope_dim/2:] = sin
-    inv_freq = 1.0 / (base ** (torch.arange(0, rope_dim, 2, dtype=F64) / rope_dim))
+def yarn_inv_freq(rope_dim, base, factor, original_max_position, beta_fast=32, beta_slow=1):
+    """YaRN inverse frequencies exactly as DeepseekScalingRotaryEmbedding._compute_inv_freq (vllm/model_executor/layers/rotary_embedding/
+    deepseek_scaling_rope.py, class DeepseekV4ScalingRotaryEmbedding inherits it) with common.py yarn_find_correction_range /
+    yarn_linear_ramp_mask, in float64. The correction range uses max_position_embeddings == original_max_position_embeddings
+    (rotary_embedding/__init__.py:284-312 passes original_max_position). rope.py:51-52 sets mscale = mscale_all_dim = 0, which makes
+    the attention scale yarn_get_mscale(factor, 0) / yarn_get_mscale(factor, 0) = 1, so cos/sin are NOT scaled."""
+    pos_freqs = base ** (torch.arange(0, rope_dim, 2, dtype=F64) / rope_dim)
+    inv_extra = 1.0 / pos_freqs
+    inv_inter = 1.0 / (factor * pos_freqs)
+    low = math.floor(rope_dim * math.log(original_max_position / (beta_fast * 2 * math.pi)) / (2 * math.log(base)))
+    high = math.ceil(rope_dim * math.log(original_max_position / (beta_slow * 2 * math.pi)) / (2 * math.log(base)))
+    low, high = max(low, 0), min(high, rope_dim - 1)
+    if low == high:
+        high += 0.001
+    ramp = torch.clamp((torch.arange(rope_dim // 2, dtype=F64) - low) / (high - low), 0, 1)
+    mask = 1 - ramp
+    return inv_inter * (1 - mask) + inv_extra * mask
+
+
+def make_cos_sin_cache(max_pos, rope_dim, base, yarn=None):
+    """rope:50-60 (float64 here, float32 in vLLM): cache[pos, :rope_dim/2] = cos, [pos, rope_dim/2:] = sin.
+    yarn: None = plain RoPE (rope_theta only); a dict {factor, original_max_position_embeddings, beta_fast, beta_slow} = the
+    compressor-layer rope (rope.py:31-37)."""
+    if yarn is None:
+        inv_freq = 1.0 / (base ** (torch.arange(0, rope_dim, 2, dtype=F64) / rope_dim))
+    else:
+        inv_freq = yarn_inv_freq(rope_dim, base, yarn["factor"], yarn["original_max_position_embeddings"],
+                                 yarn.get("beta_fast", 32), yarn.get("beta_slow", 1))
     t = torch.arange(max_pos, dtype=F64)
     freqs = torch.einsum("i,j -> ij", t, inv_freq)
     return torch.cat((freqs.cos(), freqs.sin()), dim=-1)
@@ -80,7 +108,7 @@ def compress_at(p, st_kv, st_score, ratio, overlap, head_dim, rope_dim, norm_w, 
     return pre_rope, out
 
 
-def compress_sequence(x, wkv, wgate, ape, norm_w, eps, ratio, head_dim, rope_dim, rope_theta, variant=None):
+def compress_sequence(x, wkv, wgate, ape, norm_w, eps, ratio, head_dim, rope_dim, rope_theta, variant=None, yarn=None):
     """x [T, hidden] -> (pre_rope [nb, head_dim], entries [nb, head_dim]); nb = T // ratio (partial trailing block carried, no entry)."""
     overlap = ratio == 4                                    # comp:239-240 `self.overlap = compress_ratio == 4; self.coff = 1 + self.overlap` (comp:158 asserts ratio in [4, 128])
     T = x.shape[0]
@@ -89,7 +117,7 @@ def compress_sequence(x, wkv, wgate, ape, norm_w, eps, ratio, head_dim, rope_dim
     if variant == "no_overlap_ratio4":
         overlap = False
     st_kv, st_score = save_partial_states(kv, sc, ape, ratio)
-    cs = make_cos_sin_cache(max(T, 2), rope_dim, rope_theta)
+    cs = make_cos_sin_cache(max(T, 2), rope_dim, rope_theta, None if variant == "plain_rope" else yarn)   # "plain_rope": wrong reading for yarn cases
     pre, ent = [], []
     for p in range(T):
         if (p + 1) % ratio != 0:                            # cpp:289

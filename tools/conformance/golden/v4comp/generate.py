@@ -7,7 +7,7 @@ Run ONCE, commit the outputs; tests never run Python.
 crosscheck() first compares the oracle against vLLM's OWN torch reference code, extracted verbatim from the vLLM test files
 (ast) and executed, on >= 200 random cases; any disagreement > 1e-10 relative aborts the run.
 """
-import argparse, ast, hashlib, json, os, platform, re, sys
+import argparse, ast, hashlib, json, math, os, platform, re, sys, textwrap, types
 import numpy as np
 import torch
 
@@ -63,6 +63,46 @@ def load_vllm(root):
                 rope=f_cpu["_apply_gptj_rope"], map=f_map)
 
 
+def load_vllm_yarn(root):
+    """vLLM's own YaRN code, extracted by ast and executed: common.py yarn_* helpers, deepseek_scaling_rope.py yarn_get_mscale,
+    DeepseekScalingRotaryEmbedding._compute_inv_freq and DeepseekV4ScalingRotaryEmbedding._compute_cos_sin_cache. Patched to float64
+    (torch.float / torch.float32 -> torch.float64) so the comparison with the float64 oracle can be exact."""
+    rd = os.path.join(root, "vllm/model_executor/layers/rotary_embedding")
+    helpers = extract(os.path.join(rd, "common.py"), ["yarn_find_correction_dim", "yarn_find_correction_range", "yarn_linear_ramp_mask"])
+    mscale = extract(os.path.join(rd, "deepseek_scaling_rope.py"), ["yarn_get_mscale"])["yarn_get_mscale"]
+    tree = ast.parse(open(os.path.join(rd, "deepseek_scaling_rope.py")).read())
+    methods = {}
+    for n in tree.body:
+        if isinstance(n, ast.ClassDef):
+            for m in n.body:
+                if isinstance(m, ast.FunctionDef) and (n.name, m.name) in (("DeepseekScalingRotaryEmbedding", "_compute_inv_freq"),
+                                                                           ("DeepseekV4ScalingRotaryEmbedding", "_compute_cos_sin_cache")):
+                    methods[m.name] = ast.unparse(m)
+    assert set(methods) == {"_compute_inv_freq", "_compute_cos_sin_cache"}, methods.keys()
+    def to64(src):
+        return re.sub(r"torch\.float\b(?!\d)", "torch.float64", src.replace("torch.float32", "torch.float64"))
+    PATCHES.append({"fn": "DeepseekScalingRotaryEmbedding._compute_inv_freq / DeepseekV4ScalingRotaryEmbedding._compute_cos_sin_cache",
+                    "replace": "torch.float / torch.float32", "with": "torch.float64", "why": "run the fp32 YaRN cache in fp64"})
+    ns = {"torch": torch, "math": math}
+    for src in (*helpers.values(), mscale):
+        exec(src, ns)
+    cls = type("VllmYarnStub", (), {})
+    for name, src in methods.items():
+        exec(to64(src), ns)
+        setattr(cls, name, ns[name])
+    return cls, ns["yarn_get_mscale"]
+
+
+def vllm_yarn_cache(stub_cls, yarn_get_mscale, rd, theta, y, n_rows):
+    o = stub_cls()
+    o.base, o.rotary_dim, o.max_position_embeddings = theta, rd, y["original_max_position_embeddings"]
+    o.beta_fast, o.beta_slow, o.scaling_factor = y["beta_fast"], y["beta_slow"], y["factor"]
+    # rope.py:51-52 mscale = mscale_all_dim = 0 -> deepseek_scaling_rope.py:__init__: yarn_get_mscale(f, 0.) / yarn_get_mscale(f, 0.)
+    o.mscale = float(yarn_get_mscale(y["factor"], 0.0) / yarn_get_mscale(y["factor"], 0.0))
+    assert o.mscale == 1.0
+    return o._compute_cos_sin_cache()[:n_rows]
+
+
 def rel(a, b):
     a, b = a.to(F64), b.to(F64)
     return float((a - b).abs().max() / b.abs().max().clamp(min=1e-300)) if a.numel() else 0.0
@@ -70,10 +110,12 @@ def rel(a, b):
 
 def crosscheck(vroot, n_cases=240, seed=2025):
     src = load_vllm(vroot)
+    ystub, ymscale = load_vllm_yarn(vroot)
     g = torch.Generator().manual_seed(seed)
     rnd = np.random.default_rng(seed)
     worst = {"entries_vs_triton_ref_fp64": 0.0, "entries_vs_cpu_eager": 0.0, "prerope_vs_cpu_eager": 0.0,
-             "state_rows_vs_save_eager": 0.0, "triton_ref_unpatched_fp32_vs_fp64": 0.0}
+             "state_rows_vs_save_eager": 0.0, "triton_ref_unpatched_fp32_vs_fp64": 0.0, "yarn_cos_sin_vs_vllm_class_fp64": 0.0}
+    n_yarn = 0
     n_entries = 0
     shapes = [(24, 8), (32, 16), (64, 16), (128, 64), (80, 16)]
     for case in range(n_cases):
@@ -94,7 +136,12 @@ def crosscheck(vroot, n_cases=240, seed=2025):
         wg = torch.randn(W, hidden, generator=g, dtype=F64) * sc_scale / np.sqrt(hidden)
         ape = torch.randn(ratio, W, generator=g, dtype=F64)
         nw = 1 + 0.2 * torch.randn(hd, generator=g, dtype=F64)
-        pre, ent = ref.compress_sequence(x, wkv, wg, ape, nw, eps, ratio, hd, rd, theta)
+        yarn = None
+        if case % 3 == 0:   # every third case runs with a YaRN rope, its cos/sin cache taken from vLLM's own class code
+            yarn = {"factor": float(rnd.choice([4.0, 16.0])), "original_max_position_embeddings": int(rnd.choice([256, 4096, 65536])),
+                    "beta_fast": float(rnd.choice([32.0, 16.0])), "beta_slow": 1.0}
+            n_yarn += 1
+        pre, ent = ref.compress_sequence(x, wkv, wg, ape, nw, eps, ratio, hd, rd, theta, yarn=yarn)
         # --- vLLM state write: tests/kernels/test_deepseek_v4_cpu_kernels.py:205 (_run_save_partial_states_eager)
         bs = 4 if ratio == 4 else 8
         nb_state = -(-T // bs)
@@ -115,7 +162,12 @@ def crosscheck(vroot, n_cases=240, seed=2025):
             assert ent.shape[0] == 0
             continue
         n_entries += len(bp)
-        cs = ref.make_cos_sin_cache(max(T, 2), rd, theta)
+        if yarn is None:
+            cs = ref.make_cos_sin_cache(max(T, 2), rd, theta)
+        else:
+            cs = vllm_yarn_cache(ystub, ymscale, rd, theta, yarn, max(T, 2))
+            worst["yarn_cos_sin_vs_vllm_class_fp64"] = max(worst["yarn_cos_sin_vs_vllm_class_fp64"],
+                                                           rel(cs, ref.make_cos_sin_cache(max(T, 2), rd, theta, yarn)))
         # --- vLLM triton-test reference (kvc:2432), fp64-patched
         ns = {"torch": torch}
         exec(src["tri64"], ns)
@@ -153,7 +205,8 @@ def crosscheck(vroot, n_cases=240, seed=2025):
     bad = {k: v for k, v in gate.items() if v > TOL_CROSS}
     assert not bad, f"oracle disagrees with vLLM reference code beyond {TOL_CROSS}: {bad}"
     assert worst["triton_ref_unpatched_fp32_vs_fp64"] < 1e-4, worst
-    return {"cases": n_cases, "entries_compared": n_entries, "seed": seed, "gate_relative": TOL_CROSS, "max_relative_disagreement": worst}
+    assert n_yarn >= 70, n_yarn
+    return {"cases": n_cases, "yarn_cases": n_yarn, "entries_compared": n_entries, "seed": seed, "gate_relative": TOL_CROSS, "max_relative_disagreement": worst}
 
 
 # ---------------------------------------------------------------------------------------------------------------- fixtures
@@ -201,8 +254,21 @@ CASES_EPS = [
 ]
 EPS_LARGE, EPS_WKV_SCALE = 1e-2, 0.05
 
+# YaRN rope on the compressor layers (rope.py:31-37): the REAL V4 config values (scripts/conformance/offline/fixtures/deepseek_v4/*.json:
+# rope_scaling {type yarn, factor 16, original_max_position_embeddings 65536, beta_fast 32, beta_slow 1}, compress_rope_theta 160000)
+# on tiny and on the real rope width (64), plus one non-default parameter set (factor 4, original 256, beta_fast 8) that moves the ramp.
+YARN_FLASH = {"factor": 16.0, "original_max_position_embeddings": 65536, "beta_fast": 32.0, "beta_slow": 1.0}
+YARN_SMALL = {"factor": 4.0, "original_max_position_embeddings": 256, "beta_fast": 8.0, "beta_slow": 1.0}
+CASES_YARN = [
+    (("r4_hd16_rope8_T37_yarn_flash", 4, 16, 8, 8, 37, 160000.0), YARN_FLASH),
+    (("r4_hd128_rope64_T64_yarn_flash", 4, 128, 64, 8, 64, 160000.0), YARN_FLASH),
+    (("r128_hd16_rope8_T300_yarn_flash", 128, 16, 8, 8, 300, 160000.0), YARN_FLASH),
+    (("r128_hd128_rope64_T260_yarn_flash", 128, 128, 64, 8, 260, 160000.0), YARN_FLASH),
+    (("r4_hd32_rope16_T40_yarn_small", 4, 32, 16, 8, 40, 10000.0), YARN_SMALL),
+]
 
-def build_case(idx, spec, seed=11, dtype="float32", eps=1e-6, wkv_scale=0.6):
+
+def build_case(idx, spec, seed=11, dtype="float32", eps=1e-6, wkv_scale=0.6, yarn=None):
     name, ratio, hd, rd, hidden, T, theta = spec
     rnd_in = b16 if dtype == "bfloat16" else f32
     g = torch.Generator().manual_seed(seed * 1000 + idx)
@@ -213,25 +279,32 @@ def build_case(idx, spec, seed=11, dtype="float32", eps=1e-6, wkv_scale=0.6):
     wg = rnd_in(torch.randn(W, hidden, generator=g, dtype=F64) * 2.0 / np.sqrt(hidden))
     ape = f32(torch.randn(ratio, W, generator=g, dtype=F64))
     nw = rnd_in(1 + 0.2 * torch.randn(hd, generator=g, dtype=F64))
-    pre, ent = ref.compress_sequence(x, wkv, wg, ape, nw, eps, ratio, hd, rd, theta)
+    pre, ent = ref.compress_sequence(x, wkv, wg, ape, nw, eps, ratio, hd, rd, theta, yarn=yarn)
     nb = T // ratio
     assert ent.shape == (nb, hd)
     # deliberately WRONG readings: the fixtures must be able to tell them apart from vLLM (recorded in the manifest)
     disc = {}
-    for v in ("last_token_pos", "swap_halves", "no_overlap_ratio4"):
-        if v != "last_token_pos" and ratio != 4:
+    wrong = {}   # the wrong readings' entries themselves, so the Swift tests can run the shipping code against them
+    for v in ("last_token_pos", "swap_halves", "no_overlap_ratio4", "plain_rope"):
+        if v in ("swap_halves", "no_overlap_ratio4") and ratio != 4:
+            continue
+        if v == "plain_rope" and yarn is None:
             continue
         if nb == 0:
             continue
-        _, e2 = ref.compress_sequence(x, wkv, wg, ape, nw, eps, ratio, hd, rd, theta, variant=v)
+        _, e2 = ref.compress_sequence(x, wkv, wg, ape, nw, eps, ratio, hd, rd, theta, variant=v, yarn=yarn)
         disc[v] = float((e2 - ent).abs().max())
+        wrong[v] = flat(e2)
     case = {
         "name": name, "dtype": dtype, "ratio": ratio, "head_dim": hd, "rope_dim": rd, "hidden": hidden, "tokens": T, "eps": eps,
         "rope_theta": theta, "blocks": nb, "pending": T - nb * ratio,
         "x": flat(x), "wkv": flat(wkv), "wgate": flat(wg), "ape": flat(ape), "norm": flat(nw),
         "pooled_normed": flat(pre), "entries": flat(ent),
         "visible": [ref.visible_count(t, ratio) for t in range(T)],
+        "wrong_entries": wrong,
     }
+    if yarn is not None:
+        case["rope_scaling"] = yarn
     return case, disc
 
 
@@ -247,7 +320,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     xc = None if a.skip_crosscheck else crosscheck(a.vllm)
     print("crosscheck:", json.dumps(xc))
-    groups = {"ratio4.json": [], "ratio128.json": [], "bf16.json": [], "eps.json": []}
+    groups = {"ratio4.json": [], "ratio128.json": [], "bf16.json": [], "eps.json": [], "yarn.json": []}
     discs = {}
     for i, spec in enumerate(CASES):
         c, d = build_case(i, spec)
@@ -273,6 +346,11 @@ def main():
         e1 = torch.tensor(c["entries"], dtype=F64).reshape(-1, sp[2])
         eps_sens[c["name"]] = float((e10 - e1).abs().max())
         assert eps_sens[c["name"]] > 1e-2, (c["name"], eps_sens[c["name"]])
+    for k, (spec, yarn) in enumerate(CASES_YARN):
+        c, d = build_case(len(CASES) + len(CASES_BF16) + len(CASES_EPS) + k, spec, yarn=yarn)
+        groups["yarn.json"].append(c)
+        discs[c["name"]] = d
+        assert d["plain_rope"] > 1e-3, (c["name"], d)   # the YaRN fixtures must tell plain RoPE apart
     files = {}
     for fn, cases in groups.items():
         with open(os.path.join(OUT, fn), "w") as f:
@@ -312,7 +390,8 @@ def main():
         "inferred_points_not_from_vllm_source": [
             "head_dim / rope_dim are parameters in the oracle (the C++ hard-codes 512/64 and 128/64; vLLM's torch reference is generic)",
             "cos/sin cache built in float64 (vLLM builds it in float32)",
-            "plain RoPE (theta only): the real model also uses YaRN on compressor layers (rope.py:31-37), not modelled here",
+            "YaRN cos/sin built in float64 (vLLM: float32); yarn.json uses the real config values with mscale forced to 0 (rope.py:51-52), i.e. NO cos/sin scaling; the deepseek_llama_scaling variant (attention_factor == 1.0, rope.py:33) selects the same class and the same maths",
+            "ratio4/ratio128/bf16/eps fixtures use plain RoPE (theta only); only yarn.json models the YaRN rope of the compressor layers",
         ],
     }
     with open(os.path.join(OUT, "MANIFEST.json"), "w") as f:
