@@ -14,14 +14,14 @@
   },
   "v4_clamped.json": {
    "cases": 90,
-   "sha256": "46189cbd0a6b21e4ab3b503c374b100b5e9062da0d422398b48c28ab1db04d66"
+   "sha256": "cdb06f6615419d6033ce3990847385a0f1f74b983dd9f1f0ac450b7bba2573c1"
   }
  },
  "generator": {
   "command": "VLLM_ROOT=<vLLM checkout at 739e5945d> venv/bin/python -I tools/conformance/golden/swiglu/generate.py",
   "scripts": {
-   "generate.py": "a7139b84231c3c438d66561d7ae38d900bad0bea067d4a9fdc475fa6413e208d",
-   "swiglu_ref.py": "c1da43eeb88ac03eb51bb924111e2ac89f9f1c908c39d789c1773b6ad2f9def0"
+   "generate.py": "0453633a5e85dcbe6edcb3ca1218957de6bc4f65b3185e22624e127f3f27ed49",
+   "swiglu_ref.py": "f2573313e6355b73c7ff1d4a99a8a3ff56ea409cb3474f349ba99aaa2d60667d"
   }
  },
  "numpy": "2.5.4",
@@ -35,7 +35,7 @@
   "silu_and_mul": "vLLM activation.py:137-141 (cross-checked)",
   "swigluoai_and_mul": "vLLM activation.py:319-327 (cross-checked)",
   "swiglustep_and_mul": "vLLM activation.py:359-365 (cross-checked; Triton kernel :27-52 emulation also agrees; llama.cpp llama-graph.cpp:1118-1135 corroborates silu-then-clamp)",
-  "v4_clamped": "INFERRED: vLLM 739e5945d has no DeepSeek-V4 model; formula from lane brief. Two golden columns: symmetric gate clamp (golden) and gate clamp(max) only (golden_gate_max_only)"
+  "v4_clamped": "golden = silu(min(gate, limit)) * clamp(up, -limit, limit): gate max-only, per vLLM SiluAndMulWithClamp.forward_native activation.py:239-243 as transcribed by the V4 routing lane at 2eae56c (not in the 739e5945d tree, which has no DeepSeek-V4 model). golden_gate_symmetric_control = the two-sided gate clamp that vLLM rules out, kept only to prove the fixture separates the two readings. INFERRED: chunk layout and the shared `limit` for up."
  },
  "tolerances": {
   "bfloat16": {

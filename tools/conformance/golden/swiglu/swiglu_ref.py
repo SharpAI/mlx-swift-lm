@@ -45,16 +45,24 @@ def swiglustep_kernel_emulation(x, limit=7.0):
 
 
 def v4_clamped(x, limit):
-    # DeepSeek-V4 style  silu(clamp(gate)) * clamp(up).  INFERRED: vLLM at 739e5945d has no DeepSeek-V4 model
-    # (ls vllm/model_executor/models | grep deepseek -> v2 only) and no V4 swiglu_limit code; the formula is the
-    # lane brief + docs/support-kernels.json "swiglu clamp, V4 style". Sidedness of the gate clamp is NOT
-    # established by any source available here, so both readings are produced:
+    """DeepSeek-V4 swiglu_limit:  silu(min(gate, limit)) * clamp(up, -limit, limit)  ->  (primary, control).
+
+    primary  = gate clamped with max only, up two-sided. Source: vLLM SiluAndMulWithClamp.forward_native
+               (vllm/model_executor/layers/activation.py:239-243 at commit 2eae56c, as transcribed by the V4 routing lane,
+               tools/conformance/golden/v4route_ref.py [AC] and cross-checked by v4route_crosscheck.py). That tree is NOT
+               the 739e5945d one this file's other ops come from (739e5945d has no DeepSeek-V4 model), so these lines
+               were not re-read from that tree by this oracle.
+    control  = the two-sided gate clamp ("reading A"), which vLLM rules out. Kept ONLY so the fixture can prove it
+               separates the two readings (negative gates beyond -limit differ).
+    INFERRED (no source in either tree): the chunk layout (gate = first half) and the two-sided up clamp's use of the
+    same `limit` (docs/support-kernels.json evidence line).
+    """
     d = x.shape[-1] // 2
-    gate, up = x[..., :d], x[..., d:]          # INFERRED chunk layout (HF gate_proj/up_proj are separate; no interleave)
-    up_c = up.clamp(min=-limit, max=limit)     # INFERRED two-sided (docs/support-kernels.json evidence line)
-    sym = F.silu(gate.clamp(min=-limit, max=limit)) * up_c    # reading A: two-sided gate clamp
-    maxonly = F.silu(gate.clamp(max=limit)) * up_c            # reading B: gate clamp(max=limit) only
-    return sym, maxonly
+    gate, up = x[..., :d], x[..., d:]
+    up_c = up.clamp(min=-limit, max=limit)
+    primary = F.silu(gate.clamp(max=limit)) * up_c                      # vLLM: max-only gate clamp
+    control = F.silu(gate.clamp(min=-limit, max=limit)) * up_c          # reading A: two-sided gate clamp (ruled out)
+    return primary, control
 
 
 def crosscheck(n_cases=400, seed=1234, vllm_root=None):

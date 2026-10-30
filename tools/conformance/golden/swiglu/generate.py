@@ -99,14 +99,14 @@ def main():
                     name = f"{op}-L{limit}-{dname}-" + ("special" if shape is None else f"{shape[0]}x{shape[1]}")
                     rng = np.random.RandomState(zlib.crc32(name.encode()) & 0xFFFFFFFF)
                     x, rows, d = build(op, layout, limit, huge, dt, shape or (0, 0), rng, shape is None)
-                    g, alt = golden(op, x, limit)
+                    g, control = golden(op, x, limit)
                     assert torch.isfinite(g).all(), name
                     # the golden must itself be finite in the dtype (no overflow hides inside the comparison)
                     assert torch.isfinite(g.to(dt)).all(), f"{name}: golden overflows {dname}"
                     c = {"name": name, "dtype": dname, "limit": limit, "rows": rows, "d": d,
                          "x": x.reshape(-1).tolist(), "golden": g.reshape(-1).tolist()}
-                    if alt is not None:
-                        c["golden_gate_max_only"] = alt.reshape(-1).tolist()
+                    if control is not None:       # v4_clamped only: "golden" is max-only (vLLM), this is the labelled control
+                        c["golden_gate_symmetric_control"] = control.reshape(-1).tolist()
                     cases.append(c)
         doc = {"op": op, "layout": layout, "cases": cases}
         fn = f"{op}.json"
@@ -125,7 +125,7 @@ def main():
             "silu_and_mul": "vLLM activation.py:137-141 (cross-checked)",
             "swigluoai_and_mul": "vLLM activation.py:319-327 (cross-checked)",
             "swiglustep_and_mul": "vLLM activation.py:359-365 (cross-checked; Triton kernel :27-52 emulation also agrees; llama.cpp llama-graph.cpp:1118-1135 corroborates silu-then-clamp)",
-            "v4_clamped": "INFERRED: vLLM 739e5945d has no DeepSeek-V4 model; formula from lane brief. Two golden columns: symmetric gate clamp (golden) and gate clamp(max) only (golden_gate_max_only)",
+            "v4_clamped": "golden = silu(min(gate, limit)) * clamp(up, -limit, limit): gate max-only, per vLLM SiluAndMulWithClamp.forward_native activation.py:239-243 as transcribed by the V4 routing lane at 2eae56c (not in the 739e5945d tree, which has no DeepSeek-V4 model). golden_gate_symmetric_control = the two-sided gate clamp that vLLM rules out, kept only to prove the fixture separates the two readings. INFERRED: chunk layout and the shared `limit` for up.",
         },
         "tolerances": {
             "enforced_in": "ConformanceSwigluGoldenTests.swift SwigluGolden.tolerances (this block only documents them; manifestComplete fails if they differ)",
