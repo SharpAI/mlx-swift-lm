@@ -240,7 +240,15 @@ enum KdaGolden {
         let ratio: Double
         let maxAbsError: Double
         let count: Int
+        /// The element that set `ratio`: index, value produced, golden value. Nil when there is nothing to report.
+        var worstIndex: Int? = nil
+        var worstGot: Double = 0
+        var worstWant: Double = 0
         var ok: Bool { count > 0 && ratio <= 1 }
+        var worstDescription: String {
+            guard let i = worstIndex else { return "" }
+            return " worst element [\(i)]: got=\(worstGot) want=\(worstWant)"
+        }
     }
 
     static func check(_ got: [Float], _ want: [Double], tol: Tol, mode: String) -> Check {
@@ -249,6 +257,7 @@ enum KdaGolden {
         }
         var maxErr = Double(0)
         var worst = Double(0)
+        var worstIndex: Int? = nil
         var maxWant = Double(0)
         for w in want { maxWant = max(maxWant, abs(w)) }
         for i in 0 ..< want.count {
@@ -257,9 +266,18 @@ enum KdaGolden {
             maxErr = max(maxErr, d)
             let allowed = mode == "elementwise" ? tol.atol + tol.rtol * abs(want[i]) : tol.atol + tol.rtol * maxWant
             let r: Double = d == 0 ? 0 : d / allowed
-            worst = max(worst, r)
+            if r > worst {
+                worst = r
+                worstIndex = i
+            }
         }
-        return Check(ratio: worst, maxAbsError: maxErr, count: want.count)
+        var result = Check(ratio: worst, maxAbsError: maxErr, count: want.count)
+        if let wi = worstIndex {
+            result.worstIndex = wi
+            result.worstGot = Double(got[wi])
+            result.worstWant = want[wi]
+        }
+        return result
     }
 
     // MARK: running a recurrent case
@@ -396,7 +414,7 @@ struct ConformanceKdaGoldenTests {
         eval(got)
         let c = G.check(got.asArray(Float.self), want, tol: tol.y, mode: tol.mode)
         print("KDA-GOLDEN \(f.name) [gate\(f.lowerBound == nil ? "" : ", lower_bound INFERRED")] err=\(c.maxAbsError) ratio=\(c.ratio)")
-        #expect(c.ok, "\(f.name): max|d|=\(c.maxAbsError) = \(c.ratio)x the allowed error (n=\(c.count))")
+        #expect(c.ok, "\(f.name): max|d|=\(c.maxAbsError) = \(c.ratio)x the allowed error (n=\(c.count));\(c.worstDescription)")
     }
 
     @Test("every fixture in the manifest is exercised by exactly one parametrised case")
