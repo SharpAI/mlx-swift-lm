@@ -7,6 +7,13 @@
 // tools/conformance/golden/kda_ref.py (every line cites vLLM file:line; items NOT in vLLM are listed there as I1..I6:
 // the per-token mask semantics and the lower_bound "safe gate" are INFERRED).
 //
+// SCOPE of the gate cases: there is no production KDA gate in Libraries/; they check the test-side reference
+// SharpAIOverlayGdnReference.kdaLogDecay against the vLLM gate, not a model's real gate. The softplus linear branch
+// (x > 20) differs from exact softplus by < 2e-9 relative, far below the 4e-6 tolerance, so that fixture cannot tell the
+// two apart; it only guards against overflow-style breakage. The lower_bound gate is INFERRED (I2). The y-zeroing on
+// masked steps is checked against whatever the allocator hands the kernel as its output buffer, so it is not a
+// deterministic detector on its own.
+//
 // What the test does for a case mirrors the CALLER of the kernel: l2-normalise q and k (if `l2norm`), multiply q by
 // `scale`, then call SharpAIOverlayGatedDeltaKDA.update with g = exp(logDecay). q/k/v are already rounded to the
 // case dtype in the fixture, so a tolerance only has to cover compute error. The tolerances (with their reasoning)
