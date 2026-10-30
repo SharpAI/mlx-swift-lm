@@ -61,9 +61,45 @@ extension SharpAIOverlay {
             return scores(x, qr: qr, rope: rope, keys: k, start: 0)
         }
 
+        /// Largest intermediate (in elements) that scoring or selection may materialise per step. The score
+        /// step holds [B, H, Lc, nb] floats and the select step a [B, Lc, k, nb] bool equality tensor for a
+        /// chunk of Lc queries; both are chunked over L so a long prompt cannot allocate L * nb * (H or k).
+        /// A problem that fits in one chunk runs the unchunked code path unchanged.
+        static let maxIntermediateElements = 1 << 27
+
+        /// Queries per chunk so that `rows * perRow <= maxElements` (at least one row), capped at `total`.
+        static func chunkRows(perRow: Int, total: Int, maxElements: Int) -> Int {
+            max(1, min(total, maxElements / max(1, perRow)))
+        }
+
         /// Same, with the indexer keys k [B, nb, headDim] (RoPE applied) given and the queries starting at
         /// absolute position `start` (cached decode).
         func scores(_ x: MLXArray, qr: MLXArray, rope: RoPELayer, keys k: MLXArray, start: Int) -> MLXArray {
+            scores(x, qr: qr, rope: rope, keys: k, start: start, maxElements: Self.maxIntermediateElements)
+        }
+
+        func scores(
+            _ x: MLXArray, qr: MLXArray, rope: RoPELayer, keys k: MLXArray, start: Int, maxElements: Int
+        ) -> MLXArray {
+            let b = x.dim(0), l = x.dim(1)
+            let rows = Self.chunkRows(perRow: b * nHeads * k.dim(1), total: l, maxElements: maxElements)
+            if rows >= l { return scoresChunk(x, qr: qr, rope: rope, keys: k, start: start) }
+            var parts: [MLXArray] = []
+            var l0 = 0
+            while l0 < l {
+                let l1 = min(l, l0 + rows)
+                let part = scoresChunk(
+                    x[0..., l0 ..< l1], qr: qr[0..., l0 ..< l1], rope: rope, keys: k, start: start + l0)
+                eval(part)  // free the [B, H, Lc, nb] intermediates before the next chunk
+                parts.append(part)
+                l0 = l1
+            }
+            return concatenated(parts, axis: 1)
+        }
+
+        private func scoresChunk(_ x: MLXArray, qr: MLXArray, rope: RoPELayer, keys k: MLXArray, start: Int)
+            -> MLXArray
+        {
             let b = x.dim(0), l = x.dim(1), nope = headDim - ropeDim
             let blocks = k.dim(1)
             var q = wqB(qr).reshaped(b, l, nHeads, headDim).transposed(0, 2, 1, 3)  // [B, H, L, D]
@@ -88,6 +124,27 @@ extension SharpAIOverlay {
         /// The selection step on a score matrix [B, L, nb] (-inf = not visible). Internal so the golden suite can feed it
         /// ties and rows with fewer than k visible entries directly.
         func select(_ s: MLXArray) -> MLXArray {
+            select(s, maxElements: Self.maxIntermediateElements)
+        }
+
+        func select(_ s: MLXArray, maxElements: Int) -> MLXArray {
+            let l = s.dim(1), nb = s.dim(-1)
+            let k = min(topk, nb)
+            let rows = Self.chunkRows(perRow: s.dim(0) * k * nb, total: l, maxElements: maxElements)
+            if rows >= l { return selectChunk(s) }
+            var parts: [MLXArray] = []
+            var l0 = 0
+            while l0 < l {
+                let l1 = min(l, l0 + rows)
+                let part = selectChunk(s[0..., l0 ..< l1])
+                eval(part)  // free the [B, Lc, k, nb] equality tensor before the next chunk
+                parts.append(part)
+                l0 = l1
+            }
+            return concatenated(parts, axis: 1)
+        }
+
+        private func selectChunk(_ s: MLXArray) -> MLXArray {
             let nb = s.dim(-1)
             let k = min(topk, nb)
             let top = argPartition(-s, kth: k - 1, axis: -1)[.ellipsis, ..<k]  // [B, L, k]
