@@ -1,0 +1,106 @@
+{
+ "vllm_commit": "2eae56c",
+ "vllm_branch": "main (shallow clone)",
+ "torch": "2.15.0",
+ "python": "3.15.0",
+ "numpy": "2.5.4",
+ "generator": {
+  "generate.py": "341c69e3f80a5ec983d3538b97739694f2b7dd634077cea37eec554c9eb7f02c",
+  "v4comp_ref.py": "93b556e8ddf24d1f1f63b102eb44f3b795318c178f868a93b44c0f60b2ec0036"
+ },
+ "files": {
+  "ratio4.json": {
+   "sha256": "15518cda85fffdd21f93eca4e2b0eb47e7b3d3fa33c1f9a22041e210bb3a4768",
+   "cases": 6
+  },
+  "ratio128.json": {
+   "sha256": "fa52f2242aa08182051550760b6ddc61ad5aab3b6d67a0bf68472283c865f927",
+   "cases": 5
+  }
+ },
+ "tolerances": {
+  "float32": {
+   "rtol": 2e-05,
+   "atol": 2e-05,
+   "atol_per_position": 1.5e-07,
+   "reasoning": "Inputs and weights are float32-exact, the oracle is float64, Swift runs float32 on Metal. pooled_normed: a <=8-term matmul (abs error ~3e-7 on kv/score of size ~3), exp of scores up to ~8 (relative error ~5e-7 per weight), a sum of <=256 weighted terms and an rsqrt: ~1e-6 observed scale, 2e-5 leaves >10x. entries (after RoPE) add the angle error: MLX forms position*freq in float32, so cos/sin carry an absolute error of about 2^-23 * angle, angle <= position (frequency of the first pair is 1): atol(entry b) = atol + atol_per_position * (b * ratio)."
+  }
+ },
+ "crosscheck": {
+  "cases": 240,
+  "entries_compared": 1114,
+  "seed": 2025,
+  "gate_relative": 1e-10,
+  "max_relative_disagreement": {
+   "entries_vs_triton_ref_fp64": 1.9047070321135275e-15,
+   "entries_vs_cpu_eager": 1.9047070321135275e-15,
+   "prerope_vs_cpu_eager": 2.023751221620623e-15,
+   "state_rows_vs_save_eager": 0.0,
+   "triton_ref_unpatched_fp32_vs_fp64": 6.223691745187308e-07
+  }
+ },
+ "crosscheck_patches_to_vllm_reference_code": [
+  {
+   "fn": "_reference_kv_compress_norm_rope",
+   "replace": ".float()",
+   "with": ".double()",
+   "why": "run the fp32 reference in fp64"
+  },
+  {
+   "replace": "    if return_full_cache:\n",
+   "with": "    return result\n    if return_full_cache:\n",
+   "why": "return before quantisation (kvc:~2510)"
+  },
+  {
+   "replace": "        block_idx_kv = kv_slot // kv_cache_block_size\n",
+   "with": "        CAPTURE.append((normed.clone(), torch.cat([normed[:NOPE_DIM], rotated_rope])))\n        block_idx_kv = kv_slot // kv_cache_block_size\n",
+   "why": "capture normed (pre-RoPE) and the RoPE'd row before the fp8 store"
+  }
+ ],
+ "discriminators_max_abs_diff_of_wrong_readings_vs_golden": {
+  "r4_hd16_rope8_T37": {
+   "last_token_pos": 4.246760331956927,
+   "swap_halves": 3.7225276852632287,
+   "no_overlap_ratio4": 4.231739630299811
+  },
+  "r4_hd128_rope64_T22": {
+   "last_token_pos": 4.40300692051434,
+   "swap_halves": 6.388201440865866,
+   "no_overlap_ratio4": 6.203826210132344
+  },
+  "r4_hd32_rope16_T4": {
+   "last_token_pos": 2.7628567207581587,
+   "swap_halves": 4.534335694912837,
+   "no_overlap_ratio4": 4.534335694912837
+  },
+  "r4_hd32_rope16_T3": {},
+  "r4_hd16_rope8_T5": {
+   "last_token_pos": 2.0337497909856657,
+   "swap_halves": 2.9054260097032443,
+   "no_overlap_ratio4": 2.9054260097032443
+  },
+  "r4_hd24_rope8_T64_theta160k": {
+   "last_token_pos": 5.493132575111543,
+   "swap_halves": 4.20544853198637,
+   "no_overlap_ratio4": 4.310841439513978
+  },
+  "r128_hd16_rope8_T300": {
+   "last_token_pos": 2.994824014599922
+  },
+  "r128_hd128_rope64_T260": {
+   "last_token_pos": 8.057871676515486
+  },
+  "r128_hd16_rope8_T127": {},
+  "r128_hd16_rope8_T128": {
+   "last_token_pos": 3.0424321477369194
+  },
+  "r128_hd32_rope16_T385_theta160k": {
+   "last_token_pos": 2.7717079893360412
+  }
+ },
+ "inferred_points_not_from_vllm_source": [
+  "head_dim / rope_dim are parameters in the oracle (the C++ hard-codes 512/64 and 128/64; vLLM's torch reference is generic)",
+  "cos/sin cache built in float64 (vLLM builds it in float32)",
+  "plain RoPE (theta only): the real model also uses YaRN on compressor layers (rope.py:31-37), not modelled here"
+ ]
+}
