@@ -435,7 +435,7 @@ struct ConformanceSwigluGoldenTests {
     @Test("V4 routed experts (DeepseekV4MoE.switchMLP): silu(min(gate, limit)) * clamp(up, -limit, limit) (vLLM activation.py:239-243)")
     func v4Routed() throws {
         let r = try Self.check("v4_clamped.json", label: "V4 routed", golden: \.goldenGateMaxOnly, include: Self.notFloat16SigmoidTail) { c, l in try S.viaV4Routed(c, layout: l) }
-        #expect(r.compared == 90 && r.nonzero > 0)
+        #expect(r.compared == (try S.manifest().files["v4_clamped.json"]?.cases ?? -1) && r.nonzero > 0)
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
     }
 
