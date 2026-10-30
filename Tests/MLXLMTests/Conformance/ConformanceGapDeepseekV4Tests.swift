@@ -177,11 +177,11 @@ struct ConformanceGapDeepseekV4Tests {
         #expect(out[landedHash] != nil, "sanitize dropped \(landedHash)")
     }
 
-    // MARK: known gap -- cached decode
+    // MARK: cached decode (SL-35 lane CACHE)
 
-    /// The compressor / indexer act only in the full-sequence forward (`cache == nil`); with a KV cache a
-    /// layer keeps its local-only attention, so real generation does not use them yet. Needs a
-    /// compressor/indexer state cache (pending block, previous block, compressed history).
+    /// The compressor / indexer keep their state in a cache entry (`SharpAIOverlay.V4CompressorStateCache`),
+    /// so a cached prefill reproduces the uncached forward. Token-by-token decode, chunking, trim and
+    /// serialization are pinned in ConformanceV4DecodeCacheTests. Batch size 1 only.
     @Test("V4 cached forward matches the uncached forward (compressor / indexer state is cached)")
     func cachedForwardUsesCompressor() async throws {
         let m = try await ConformanceDeepseekV4.tinyModel()
@@ -191,8 +191,6 @@ struct ConformanceGapDeepseekV4Tests {
         let cache = try m.newCache(parameters: nil)
         let cached = m(tokens, cache: cache)
         eval(plain, cached)
-        ConformanceGap.knownIssue("V4 compressor/indexer do not run with a KV cache (decode path)") {
-            ConformanceGap.expect(abs(plain - cached).max().item(Float.self) < 1e-4)
-        }
+        #expect(abs(plain - cached).max().item(Float.self) < 1e-4)
     }
 }
