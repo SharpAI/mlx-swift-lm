@@ -360,43 +360,40 @@ TOLERANCES = {
         "why": "booleans / indices / selections: integer outcomes, compared exactly (selection through the strict/tie/need "
                "contract, which makes the legitimately unspecified tie-break irrelevant)."},
     "score_fp32": {
-        "mode": "normwise", "y": {"rtol": 5e-5, "atol": 1e-7},
-        "why": "float32 vs float64. u = 2^-24 = 6e-8. The score of a row is sum_h w_h relu(q_h . k_b): q = wq_b(qr) is a "
-               "10-term dot (~3e-7), RoPE in float32 forms pos * inv_freq with pos <= 47 so the ANGLE carries up to "
-               "47 * 1 * 6e-8 = 3e-6 rad of error (the dominant term: the rotated vector moves by that fraction), the q.k dot "
-               "has 16 terms (~1e-6), w = weights_proj(x) * scale (~4e-7). The heads are summed with signed weights, so "
-               "cancellation inflates the relative error by <= ~3x versus max|row|. Budget 3x(3e-6 + 1e-6 + 1e-6) = 1.5e-5; "
-               "5e-5 is that with a 3x margin. Normwise vs max|want| over the fixture, atol only for all-zero rows and the "
-               "1e-10 text rounding."},
+        "mode": "normwise", "y": {"rtol": 3e-6, "atol": 1e-7},
+        "why": "float32 vs float64, normwise vs max|want| over the fixture. u = 2^-24 = 6e-8. Error sources: q = wq_b(qr) "
+               "(10-term dot), RoPE (float32 angle pos * inv_freq, pos <= 47), the 16-term q.k dot, w = weights_proj(x) * "
+               "scale, the signed sum over 4 heads (cancellation, <= ~3x). A first analytic bound of 5e-5 was far too "
+               "pessimistic: the MEASURED worst case over all fp32 score fixtures is 2.6e-7 (= 4u, score_wide_theta160k). "
+               "3e-6 is ~10x that and 12x tighter than the first bound; a formula defect (missing relu, wrong 1/sqrt "
+               "factor, wrong RoPE position or theta) moves scores by >= 1e-2, i.e. 3000x this."},
     "score_fp16": {
-        "mode": "normwise", "y": {"rtol": 12 * U16, "atol": 1e-6},
+        "mode": "normwise", "y": {"rtol": 4 * U16, "atol": 1e-6},
         "why": "inputs (x, qr, weights, keys) are rounded to float16 BEFORE the oracle sees them, so input rounding is not in "
-               "the error. Each float16 op output is rounded once (u = 2^-11 = 4.9e-4): wq_b matmul, RoPE, q.k matmul, "
-               "weights_proj matmul, the scale multiply, the product with w, the head sum = ~7 roundings; random-walk "
-               "sqrt(7) u ~ 2.6u, times the <=3x cancellation factor ~ 8u. Budget 12u = 5.9e-3. A wrong formula (missing "
-               "relu, wrong scale, wrong position) is O(1) off, so this still separates."},
+               "the error. Matmuls accumulate in float32 and round their output once (u = 2^-11 = 4.9e-4); the RoPE, the "
+               "scale multiply, the product and the head sum round again. Measured worst: 0.73u (score_fp16). Budget 4u = "
+               "2e-3 (5x measured). A formula defect is >= 1e-2."},
     "score_bf16": {
-        "mode": "normwise", "y": {"rtol": 12 * UBF, "atol": 1e-6},
-        "why": "as float16 with bfloat16's 8-bit significand: u = 2^-8 = 3.9e-3, same ~8u error model, budget 12u = 4.7e-2. "
-               "RoPE angles are computed in float32 inside the kernel, so position error is not amplified. Still O(1) "
-               "separated from a wrong formula (a missing 1/sqrt factor is 2-4x)."},
+        "mode": "normwise", "y": {"rtol": 4 * UBF, "atol": 1e-6},
+        "why": "as float16 with bfloat16's 8-bit significand: u = 2^-8 = 3.9e-3. Measured worst: 1.3u (score_bf16). Budget "
+               "4u = 1.6e-2 (3x measured); a formula defect (a missing 1/sqrt(nHeads), the relu, a wrong position) is >= 5e-2."},
     "rope_fp32": {
         "mode": "normwise", "y": {"rtol": 5e-6, "atol": 1e-7},
         "why": "float32 RoPE vs float64: the rotation angle pos * inv_freq is formed in float32 (<= 8 * 1 * 6e-8 = 5e-7 rad "
                "for pos <= 8 and the largest frequency), cos/sin and the 2-term products add ~2e-7. 5e-6 is ~10x that."},
     "merge_fp32": {
-        "mode": "normwise", "y": {"rtol": 2e-5, "atol": 1e-7},
-        "why": "float32 softmax attention over <= 14+3 keys with head dim 8 and logits |s| <~ 4: the dot (8 terms) ~2e-7, "
-               "exp amplifies a logit error e by |p| e, the p.v sum ~3e-7; the fused SDPA kernel uses exp2 with a rescaled "
-               "logit (extra ~1e-6). 2e-5 = ~10x that, normwise vs max|out|."},
+        "mode": "normwise", "y": {"rtol": 2e-6, "atol": 1e-7},
+        "why": "float32 softmax attention over <= 14+3 keys, head dim 8, logits |s| <~ 4, normwise vs max|out|. Measured worst "
+               "1.9e-7 (3u). 2e-6 is ~10x measured; the first guess of 2e-5 was 100x too loose. A defect (sink dropped or "
+               "scaled, window row leaking in, compressed row masked) is >= 1e-3."},
     "merge_fp16": {
-        "mode": "normwise", "y": {"rtol": 4 * U16, "atol": 1e-6},
-        "why": "inputs rounded to float16 before the oracle; the fused kernel accumulates in float32 and rounds the output "
-               "once (u), flash-style kernels also round the probabilities to the input dtype before p.v (another ~u): "
-               "budget 4u = 2e-3."},
+        "mode": "normwise", "y": {"rtol": 2 * U16, "atol": 1e-6},
+        "why": "inputs rounded to float16 before the oracle; the fused kernel accumulates in float32 and rounds the output once "
+               "(u = 4.9e-4), flash-style kernels may also round the probabilities. Measured worst 0.52u (merge_fp16). "
+               "Budget 2u = 1e-3 (4x)."},
     "merge_bf16": {
-        "mode": "normwise", "y": {"rtol": 4 * UBF, "atol": 1e-6},
-        "why": "as float16 with u = 2^-8 = 3.9e-3: budget 4u = 1.6e-2."},
+        "mode": "normwise", "y": {"rtol": 3 * UBF, "atol": 1e-6},
+        "why": "as float16 with u = 2^-8 = 3.9e-3. Measured worst 0.97u (merge_bf16). Budget 3u = 1.2e-2 (3x)."},
 }
 
 
