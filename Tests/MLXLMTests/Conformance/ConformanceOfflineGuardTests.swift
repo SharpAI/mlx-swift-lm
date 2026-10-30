@@ -76,6 +76,67 @@ private struct StubbornDownloader: Downloader {
     }
 }
 
+/// A gate the test controls. `wait()` suspends without holding a thread and ignores task cancellation, so it
+/// cannot starve the cooperative pool. `open()` releases every waiter, now and later.
+private final class Gate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func open() {
+        lock.lock()
+        isOpen = true
+        let w = waiters
+        waiters = []
+        lock.unlock()
+        for c in w { c.resume() }
+    }
+
+    func wait() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if isOpen {
+                lock.unlock()
+                c.resume()
+            } else {
+                waiters.append(c)
+                lock.unlock()
+            }
+        }
+    }
+}
+
+private final class ProgressLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    var count: Int { lock.lock(); defer { lock.unlock() }; return n }
+    func bump() { lock.lock(); n += 1; lock.unlock() }
+}
+
+/// A cache miss whose provider ignores cancellation: reports partial progress at once, waits on `gate` without
+/// ever looking at `Task.isCancelled`, then (optionally) reports completion before returning.
+private struct GatedDownloader: Downloader {
+    let gate: Gate
+    let finished: FlagBox
+    let reportsAfterRelease: Bool
+    func download(
+        id: String, revision: String?, matching patterns: [String], useLatest: Bool,
+        progressHandler: @Sendable @escaping (Progress) -> Void
+    ) async throws -> URL {
+        let partial = Progress(totalUnitCount: 100)
+        partial.completedUnitCount = 10
+        progressHandler(partial)
+        await gate.wait()
+        if reportsAfterRelease {
+            let done = Progress(totalUnitCount: 100)
+            done.completedUnitCount = 100
+            progressHandler(done)
+        }
+        finished.set(true)
+        return URL(fileURLWithPath: "/tmp/stub-gated")
+    }
+}
+
 @Suite("ConformanceOfflineGuard")
 struct ConformanceOfflineGuardTests {
     static let on = ["SWIFTLM_OFFLINE": "1"]
@@ -162,6 +223,31 @@ struct ConformanceOfflineGuardTests {
         #expect(finished.value == nil, "the provider must still be running when the error is thrown")
         // let the leaked provider drain so it cannot spill into other tests
         for _ in 0 ..< 100 where finished.value == nil { try await Task.sleep(nanoseconds: 50_000_000) }
+    }
+
+    /// After the early throw the caller must hear nothing more: a provider that ignores cancellation and keeps
+    /// reporting progress must not reach the caller's handler.
+    @Test func hfHubOfflineForwardsNoProgressAfterTheThrow() async throws {
+        let gate = Gate()
+        let finished = FlagBox()
+        let log = ProgressLog()
+        let stub = GatedDownloader(gate: gate, finished: finished, reportsAfterRelease: true)
+        var thrown: Error?
+        await SharpAIOverlay.OfflineGuard.$environmentOverride.withValue(["HF_HUB_OFFLINE": "1"]) {
+            do {
+                _ = try await SharpAIOverlay.guarded(stub).download(
+                    id: "org/model", revision: nil, matching: [], useLatest: false,
+                    progressHandler: { _ in log.bump() })
+            } catch {
+                thrown = error
+            }
+        }
+        #expect(thrown is SharpAIOverlay.OfflineError, "got \(String(describing: thrown))")
+        #expect(finished.value == nil, "the provider must still be blocked when the error is thrown")
+        gate.open()
+        for _ in 0 ..< 600 where finished.value == nil { try await Task.sleep(nanoseconds: 50_000_000) }
+        #expect(finished.value == true, "the provider did not drain")
+        #expect(log.count == 0, "the caller's handler was called \(log.count) time(s) after the throw")
     }
 
     /// SWIFTLM_OFFLINE stays the hard block even when HF_HUB_OFFLINE is also set.

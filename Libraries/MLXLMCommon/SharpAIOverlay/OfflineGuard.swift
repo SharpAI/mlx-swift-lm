@@ -7,8 +7,11 @@
 // (it used to be, which broke users who export it with a cached model). It wraps the downloader instead:
 // `useLatest` is forced to false (no revalidation against the provider) and the call is served when it
 // completes without a transfer. A cache miss shows up as a transfer in progress (progress strictly between
-// 0 and its total); the wrapper then throws `networkBlocked` at once, without waiting for the base download
-// (which is cancelled, and may keep running if it ignores cancellation).
+// 0 and its total); the wrapper then throws `networkBlocked` at once, without waiting for the base download.
+//
+// After that throw: the base download task is cancelled. A provider that ignores cancellation may keep running
+// and may keep writing into the cache, but no further callback reaches the caller: progress is no longer
+// forwarded to the caller's `progressHandler` once the call has produced its outcome.
 //
 // Limits, stated precisely: cache-hit detection is this progress heuristic, nothing more. (a) A provider that
 // reports no progress for a miss is not detected. (b) The HubClient cached-snapshot fast path may not match
@@ -112,6 +115,12 @@ struct HubOfflineDownloader: Downloader {
             w?.resume(returning: value)
         }
 
+        var isFinished: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return result != nil
+        }
+
         func wait() async -> Result<URL, Error> {
             await withCheckedContinuation { (c: CheckedContinuation<Result<URL, Error>, Never>) in
                 lock.lock()
@@ -145,6 +154,7 @@ struct HubOfflineDownloader: Downloader {
                             outcome.finish(.failure(blocked))
                             return
                         }
+                        if outcome.isFinished { return }
                         progressHandler(progress)
                     })
                 outcome.finish(.success(url))
