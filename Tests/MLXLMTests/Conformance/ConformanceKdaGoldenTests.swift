@@ -19,7 +19,6 @@
 // case dtype in the fixture, so a tolerance only has to cover compute error. The tolerances (with their reasoning)
 // live in the manifest. upstream-watch: Libraries/MLXLMCommon/SharpAIOverlay/GatedDeltaKDA.swift.
 
-import CryptoKit
 import Foundation
 import MLX
 import Testing
@@ -121,22 +120,12 @@ enum KdaGolden {
     // MARK: loader
 
     /// <repo>/Tests/MLXLMTests/Conformance/Golden/kda, derived from this file's path.
-    static let defaultDirectory: URL = {
-        var url = URL(fileURLWithPath: #filePath)
-        url.deleteLastPathComponent()
-        return url.appendingPathComponent("Golden/kda")
-    }()
+    static let defaultDirectory: URL = GoldenKit.directory("Golden/kda")
 
     /// <repo>/tools/conformance/golden (generator and oracle), derived from this file's path.
-    static let defaultToolsDirectory: URL = {
-        var url = URL(fileURLWithPath: #filePath)
-        for _ in 0 ..< 4 { url.deleteLastPathComponent() }
-        return url.appendingPathComponent("tools/conformance/golden")
-    }()
+    static let defaultToolsDirectory: URL = GoldenKit.directory("tools/conformance/golden")
 
-    static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
+    static func sha256(_ data: Data) -> String { GoldenKit.sha256(data) }
 
     /// Loads and VERIFIES a fixture directory. Throws (never skips) when anything is off: a missing or extra
     /// file, a sha256 that differs from the manifest, a count that does not add up, an unknown tolerance class.
@@ -208,10 +197,7 @@ enum KdaGolden {
     /// Loaded once. `KDA_GOLDEN_DIR` points the loader at another directory (used to show the suite red against a
     /// perturbed copy; unset in normal runs).
     static let shared: Result<Loaded, any Error> = Result {
-        if let override = ProcessInfo.processInfo.environment["KDA_GOLDEN_DIR"], !override.isEmpty {
-            return try load(from: URL(fileURLWithPath: override))
-        }
-        return try load(from: defaultDirectory)
+        try load(from: GoldenKit.directory("Golden/kda", overrideEnv: "KDA_GOLDEN_DIR"))
     }
 
     // MARK: test arguments

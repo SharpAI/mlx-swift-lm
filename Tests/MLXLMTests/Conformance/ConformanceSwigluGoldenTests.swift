@@ -24,7 +24,6 @@
 //  * GPT-OSS swiglu runs in float32 for bfloat16/float16 input (see gptossDTypePromotion), so it is held to the
 //    float32 tolerance in every dtype; the bfloat16/float16 rows of the tolerance table are not used for it.
 
-import CryptoKit  // macOS-only, like ConformanceOfflineBundleTests; CI for this repo is macos-15
 import Foundation
 import MLX
 import MLXNN
@@ -33,7 +32,6 @@ import Testing
 @testable import MLXLLM
 @testable import MLXLMCommon
 
-// TODO consolidate GoldenKit
 enum SwigluGolden {
     struct Case: Decodable {
         let name: String
@@ -75,29 +73,26 @@ enum SwigluGolden {
     ]
 
     /// Repository root, derived from this file: Tests/MLXLMTests/Conformance/<this file>.
-    static let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().deletingLastPathComponent()
+    static let repoRoot = GoldenKit.repoRoot
     static let scriptsDir = repoRoot.appendingPathComponent("tools/conformance/golden/swiglu")
 
-    static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
+    static func sha256(_ data: Data) -> String { GoldenKit.sha256(data) }
 
-    static let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        .appendingPathComponent("Golden/swiglu")
+    /// SWIGLU_GOLDEN_DIR points the suite at another directory (to show it red against a perturbed copy).
+    static let dir = GoldenKit.directory("Golden/swiglu", overrideEnv: "SWIGLU_GOLDEN_DIR")
 
     static func manifest() throws -> Manifest {
-        try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: dir.appendingPathComponent("MANIFEST.json")))
+        try GoldenKit.decode(Manifest.self, from: GoldenKit.read(dir.appendingPathComponent("MANIFEST.json")), name: "MANIFEST.json")
     }
 
     /// Loads a fixture after verifying its sha256 against MANIFEST.json.
     static func load(_ name: String) throws -> File {
-        let data = try Data(contentsOf: dir.appendingPathComponent(name))
+        let data = try GoldenKit.read(dir.appendingPathComponent(name))
         let m = try manifest()
         let want = try #require(m.files[name], "\(name) is not in MANIFEST.json")
         let got = sha256(data)
         #expect(got == want.sha256, "\(name): sha256 \(got) != manifest \(want.sha256)")
-        let f = try JSONDecoder().decode(File.self, from: data)
+        let f = try GoldenKit.decode(File.self, from: data, name: name)
         #expect(f.cases.count == want.cases, "\(name): \(f.cases.count) cases != manifest \(want.cases)")
         return f
     }

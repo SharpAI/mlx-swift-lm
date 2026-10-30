@@ -21,172 +21,94 @@
 // listed at the top of dequant_ref.py.
 // upstream-watch: MLX dequantize (mlx-swift), MXFP4Checkpoint.swift, FP8Linear.swift, ParoQuantLoader.swift.
 
-import CryptoKit
 import Foundation
 import MLX
 import Testing
 
 @testable import MLXLMCommon
 
-// TODO consolidate GoldenKit
 enum DequantGolden {
-    /// Repo root: Tests/MLXLMTests/Conformance/Golden/dequant/<this file> -> six components up.
-    static let repoRoot: URL = {
-        var url = URL(fileURLWithPath: #filePath)
-        for _ in 0 ..< 6 { url.deleteLastPathComponent() }
-        return url
-    }()
-    static let dir = repoRoot.appendingPathComponent("tools/conformance/golden/dequant/fixtures")
+    /// Repo root (shared with the other golden suites).
+    static let repoRoot: URL = GoldenKit.repoRoot
+    /// DEQUANT_GOLDEN_DIR points the suite at another fixture directory (to show it red against a perturbed copy).
+    static let dir = GoldenKit.directory("tools/conformance/golden/dequant/fixtures", overrideEnv: "DEQUANT_GOLDEN_DIR")
 
     static func manifest() -> [String: Any] { json("MANIFEST.json") }
 
+    /// A fixture without its integrity check. An unreadable or unparsable file is recorded as an issue (never trapped)
+    /// and reads as an empty object.
     static func json(_ name: String) -> [String: Any] {
-        parseJSON(try! Data(contentsOf: dir.appendingPathComponent(name))) as! [String: Any]
+        GoldenKit.loadObject(dir.appendingPathComponent(name)) ?? [:]
     }
 
-    /// Exact JSON parser for the fixtures (objects -> [String: Any], arrays -> [Any], integers -> NSNumber(Int),
-    /// other numbers -> NSNumber(Double) via Swift's correctly rounded Double(String), strings, Bool, null -> NSNull).
-    /// Foundation's JSONSerialization reads some decimals one ulp off: -0.024411658756434917 (an exact float32 rounding
-    /// tie, 0.5 ulp from two floats) came back as the other neighbour, so Float(parsed) flipped and the exact float32
-    /// comparison failed although MLX was right.
-    static func parseJSON(_ data: Data) -> Any {
-        let b = [UInt8](data)
-        var i = 0
-        func ws() { while i < b.count, b[i] == 0x20 || b[i] == 0x0A || b[i] == 0x0D || b[i] == 0x09 { i += 1 } }
-        func string() -> String {
-            i += 1  // opening quote
-            var bytes = [UInt8]()
-            while b[i] != 0x22 {
-                if b[i] == 0x5C {
-                    i += 1
-                    switch b[i] {
-                    case 0x6E: bytes.append(0x0A)
-                    case 0x74: bytes.append(0x09)
-                    case 0x72: bytes.append(0x0D)
-                    case 0x62: bytes.append(0x08)
-                    case 0x66: bytes.append(0x0C)
-                    case 0x75:
-                        let hex = String(decoding: b[(i + 1) ... (i + 4)], as: UTF8.self)
-                        bytes.append(contentsOf: Array(String(UnicodeScalar(UInt32(hex, radix: 16)!)!).utf8))
-                        i += 4
-                    default: bytes.append(b[i])  // \" \\ \/
-                    }
-                } else {
-                    bytes.append(b[i])
-                }
-                i += 1
-            }
-            i += 1
-            return String(decoding: bytes, as: UTF8.self)
-        }
-        func value() -> Any {
-            ws()
-            switch b[i] {
-            case 0x7B:
-                i += 1
-                var o = [String: Any]()
-                ws()
-                if b[i] == 0x7D { i += 1; return o }
-                while true {
-                    ws()
-                    let k = string()
-                    ws(); i += 1  // colon
-                    o[k] = value()
-                    ws()
-                    if b[i] == 0x2C { i += 1; continue }
-                    i += 1  // closing brace
-                    return o
-                }
-            case 0x5B:
-                i += 1
-                var a = [Any]()
-                ws()
-                if b[i] == 0x5D { i += 1; return a }
-                while true {
-                    a.append(value())
-                    ws()
-                    if b[i] == 0x2C { i += 1; continue }
-                    i += 1  // closing bracket
-                    return a
-                }
-            case 0x22: return string()
-            case 0x74: i += 4; return NSNumber(value: true)
-            case 0x66: i += 5; return NSNumber(value: false)
-            case 0x6E: i += 4; return NSNull()
-            default:
-                let start = i
-                while i < b.count, "+-0123456789.eE".utf8.contains(b[i]) { i += 1 }
-                let tok = String(decoding: b[start ..< i], as: UTF8.self)
-                if tok.contains(where: { ".eE".contains($0) }) { return NSNumber(value: Double(tok)!) }
-                return NSNumber(value: Int(tok)!)
-            }
-        }
-        return value()
-    }
+    static func parseJSON(_ data: Data) -> Any { (try? GoldenKit.parseJSON(data)) ?? NSNull() }
 
-    static func sha256(_ url: URL) -> String { sha256(try! Data(contentsOf: url)) }
+    static func sha256(_ url: URL) -> String { GoldenKit.sha256((try? Data(contentsOf: url)) ?? Data()) }
 
-    static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
+    static func sha256(_ data: Data) -> String { GoldenKit.sha256(data) }
 
     /// nil when `data` is what `files` (the manifest's "files") records for `name`; otherwise the problem.
     static func verify(_ name: String, data: Data, files: [String: [String: Any]]) -> String? {
-        guard let info = files[name] else { return "\(name) is not in MANIFEST.json" }
-        if sha256(data) != info["sha256"] as? String {
-            return "\(name): sha256 differs from MANIFEST.json (regenerate with gen_dequant_golden.py)"
-        }
-        if let bytes = info["bytes"] as? Int, bytes != data.count {
-            return "\(name): \(data.count) bytes, MANIFEST.json records \(bytes) bytes"
-        }
-        return nil
+        let info = files[name]
+        guard let problem = GoldenKit.verify(name, data: data, sha256: info?["sha256"] as? String, bytes: info?["bytes"] as? Int)
+        else { return nil }
+        return info == nil ? problem : problem + " (regenerate with gen_dequant_golden.py)"
     }
 
     /// Parsed fixtures and their integrity problem, read once per process (tests run in parallel).
-    private final class Cache: @unchecked Sendable {
-        private let lock = NSLock()
-        private var entries: [String: (json: [String: Any], problem: String?)] = [:]
-        func get(_ name: String, make: () -> (json: [String: Any], problem: String?)) -> (json: [String: Any], problem: String?) {
-            lock.lock()
-            defer { lock.unlock() }
-            if let e = entries[name] { return e }
-            let e = make()
-            entries[name] = e
-            return e
+    private static let cache = GoldenKit.Memo<(json: [String: Any], problem: String?)>()
+
+    private static func read(_ name: String) -> (json: [String: Any], problem: String?) {
+        do {
+            let data = try GoldenKit.read(dir.appendingPathComponent(name))
+            guard let object = try GoldenKit.parseJSON(data) as? [String: Any] else { return ([:], "\(name) is not a JSON object") }
+            return (object, nil)
+        } catch {
+            return ([:], "\(error)")
         }
     }
-    private static let cache = Cache()
 
     /// Loads a fixture after checking it against the manifest. A mismatch is RECORDED as an issue of the calling test
     /// (not trapped: a trap would kill the whole test process and every unrelated test after it).
     static func load(_ name: String) -> [String: Any] {
         let e = cache.get(name) {
-            let data = try! Data(contentsOf: dir.appendingPathComponent(name))
-            let files = manifest()["files"] as! [String: [String: Any]]
-            return (parseJSON(data) as! [String: Any], verify(name, data: data, files: files))
+            let r = read(name)
+            if r.problem != nil { return r }
+            let files = manifest()["files"] as? [String: [String: Any]] ?? [:]
+            let data = (try? Data(contentsOf: dir.appendingPathComponent(name))) ?? Data()
+            return (r.json, verify(name, data: data, files: files))
         }
-        if let problem = e.problem { Issue.record(Comment(rawValue: problem)) }
+        GoldenKit.record(e.problem)
         return e.json
     }
 
     /// Fixture content without the integrity check; for test ARGUMENT lists, which are evaluated outside any test.
     static func unverified(_ name: String) -> [String: Any] {
-        cache.get("raw/" + name) {
-            let data = try! Data(contentsOf: dir.appendingPathComponent(name))
-            return (parseJSON(data) as! [String: Any], nil)
-        }.json
+        cache.get("raw/" + name) { (read(name).json, nil) }.json
     }
 
+    /// The `key` array of a fixture. A missing array is recorded as an issue and reads as empty.
     static func cases(_ file: String, _ key: String = "cases") -> [[String: Any]] {
-        load(file)[key] as! [[String: Any]]
+        guard let c = load(file)[key] as? [[String: Any]] else {
+            GoldenKit.record("\(file) has no '\(key)' array")
+            return []
+        }
+        return c
     }
 
+    /// Case ids for a parameterised test. When the fixture cannot be read the list holds one sentinel id, so the test
+    /// runs once and goes red instead of silently running zero cases.
     static func ids(_ file: String, _ key: String = "cases") -> [String] {
-        (unverified(file)[key] as! [[String: Any]]).map { $0["id"] as! String }
+        guard let c = unverified(file)[key] as? [[String: Any]], !c.isEmpty else { return ["LOAD-FAILED"] }
+        return c.map { $0["id"] as? String ?? "MALFORMED-ID" }
     }
 
     static func entry(_ file: String, _ id: String, key: String = "cases") -> [String: Any] {
-        cases(file, key).first { $0["id"] as? String == id }!
+        guard let e = cases(file, key).first(where: { $0["id"] as? String == id }) else {
+            GoldenKit.record("\(file): no case '\(id)' under '\(key)'")
+            return [:]
+        }
+        return e
     }
 
     static func d(_ v: Any) -> Double {
@@ -208,14 +130,19 @@ enum DequantGolden {
     /// tolerance of element i is atol_per_scale * scales[i] (its OWN group's scale, see MANIFEST "why").
     static func affineMismatch(_ got: [Float], _ want: [Double], scales: [Double]) -> String? {
         guard scales.count == got.count else { return "scales count \(scales.count) != \(got.count)" }
-        let t = (manifest()["tolerances"] as! [String: [String: Any]])["float32_affine_cancellation"]!
-        let perScale = d(t["atol_per_scale"]!)
-        return mismatch(got, want, rtol: d(t["rtol"]!), atolAt: { perScale * scales[$0] })
+        guard let t = (manifest()["tolerances"] as? [String: [String: Any]])?["float32_affine_cancellation"],
+            let atolPerScale = t["atol_per_scale"], let rtol = t["rtol"]
+        else { return "MANIFEST.json has no float32_affine_cancellation tolerance" }
+        let perScale = d(atolPerScale)
+        return mismatch(got, want, rtol: d(rtol), atolAt: { perScale * scales[$0] })
     }
 
     static func tolerance(_ name: String) -> (rtol: Double, atol: Double) {
-        let t = (manifest()["tolerances"] as! [String: [String: Any]])[name]!
-        return (d(t["rtol"]!), d(t["atol"]!))
+        guard let t = (manifest()["tolerances"] as? [String: [String: Any]])?[name], let r = t["rtol"], let a = t["atol"] else {
+            GoldenKit.record("MANIFEST.json has no tolerance '\(name)'")
+            return (0, 0)  // strictest: a missing tolerance can only make comparisons fail, never pass
+        }
+        return (d(r), d(a))
     }
 
     /// nil when `got` equals the float32 rounding of `want` within rtol/atol (NaN matches NaN, inf matches inf).
@@ -312,22 +239,22 @@ struct DequantGoldenTests {
     @Test("manifest: every fixture's sha256 matches, no stray files, generator inputs recorded")
     func manifestIntegrity() {
         let m = G.manifest()
-        let files = m["files"] as! [String: [String: Any]]
+        let files = m["files"] as? [String: [String: Any]] ?? [:]
         #expect(m["vllm_commit"] as? String == "739e5945d")
         #expect((m["torch_version"] as? String)?.isEmpty == false)
         #expect(files.count == 8)
         for name in files.keys.sorted() {
-            let data = try! Data(contentsOf: G.dir.appendingPathComponent(name))
+            let data = (try? Data(contentsOf: G.dir.appendingPathComponent(name))) ?? Data()
             #expect(G.verify(name, data: data, files: files) == nil, "\(G.verify(name, data: data, files: files) ?? "")")
         }
         let onDisk = Set(
             ((try? FileManager.default.contentsOfDirectory(atPath: G.dir.path)) ?? []).filter { $0.hasSuffix(".json") })
         #expect(onDisk == Set(files.keys).union(["MANIFEST.json"]), "fixtures on disk differ from the manifest")
-        let tol = m["tolerances"] as! [String: [String: Any]]
+        let tol = m["tolerances"] as? [String: [String: Any]] ?? [:]
         for k in ["float32_exact", "float32_product", "float32_affine_cancellation", "bfloat16_values"] {
             #expect((tol[k]?["why"] as? String)?.isEmpty == false, "tolerance \(k) needs a reason")
         }
-        let cc = m["crosscheck"] as! [String: Any]
+        guard let cc = m["crosscheck"] as? [String: Any] else { Issue.record("MANIFEST.json has no crosscheck section"); return }
         #expect(Set(cc.keys).isSuperset(of: ["nvfp4", "mxfp8_e8m0_decode", "fp8_scaled_dequantize", "int4"]))
         // the crosscheck numbers are self-reported by the generator; at least pin that they claim real coverage
         #expect((cc["nvfp4"] as! [String: Any])["cases"] as! Int >= 200)
@@ -737,8 +664,8 @@ struct DequantGoldenTests {
 
     @Test("fixture integrity problems are reported as a problem string (no trap): tampered content, wrong size, unknown file")
     func integrityIsReported() {
-        let files = G.manifest()["files"] as! [String: [String: Any]]
-        let data = try! Data(contentsOf: G.dir.appendingPathComponent("e8m0.json"))
+        let files = G.manifest()["files"] as? [String: [String: Any]] ?? [:]
+        let data = (try? Data(contentsOf: G.dir.appendingPathComponent("e8m0.json"))) ?? Data()
         #expect(G.verify("e8m0.json", data: data, files: files) == nil)
         var tampered = data
         tampered[tampered.startIndex + 10] ^= 1
@@ -836,7 +763,7 @@ struct DequantGoldenTests {
     @Test("every fixture in the manifest is loaded by this suite, and every case of a fixture is a test argument")
     func everyFixtureUsed() throws {
         let source = try String(contentsOf: URL(fileURLWithPath: #filePath), encoding: .utf8)
-        let files = Array((G.manifest()["files"] as! [String: Any]).keys)
+        let files = Array((G.manifest()["files"] as? [String: Any] ?? [:]).keys)
         for name in files {
             #expect(source.contains("\"\(name)\""), "\(name) is in the manifest but no test loads it")
         }
