@@ -1,7 +1,8 @@
 // Conformance offline bundle: proves the fixture loading mechanism.
 //
 // Fixtures live at <repo>/scripts/conformance/offline/fixtures/ (outside every SwiftPM target, so
-// Package.swift is untouched and SwiftPM has no "unhandled files" to warn about) and are located through
+// SwiftPM has no "unhandled files" to warn about for them; the Golden/kda and Golden/swiglu fixtures, which sit
+// inside the test target dir, are listed as `exclude:` in Package.swift instead) and are located through
 // `#filePath`. They are CONFIG-ONLY json files (no weights). Needs the source tree at test time, which an
 // air-gapped `swift test` of a checkout always has. Generator: scripts/conformance/offline/make_bundle.py.
 
