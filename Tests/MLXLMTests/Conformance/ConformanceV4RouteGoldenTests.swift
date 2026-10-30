@@ -234,27 +234,12 @@ enum V4RouteGolden {
         "clamped SwiGLU: vLLM clamps gate max-only and up two-sided for routed AND shared experts (AC:239-243, FU); "
         + "the routed SwitchGLU activation clips only the gate, two-sided, and never clamps up; the shared expert "
         + "clips the gate two-sided."
-    static let mhcGap =
-        "mHC split: vLLM (MT:108-123, MK:866-916) uses pre = sigmoid + eps (NOT normalised to sum 1), post = "
-        + "sigmoid * 2.0 (CM:263), comb = softmax(row) + eps then column / (row, column) normalisation with eps INSIDE "
-        + "the denominators and sinkhorn_iters - 1 further rounds; hcSplitSinkhorn normalises pre, has no x2 on post, "
-        + "uses sigmoid for comb and no eps in the denominators."
-    static let epsGap =
-        "eps: vLLM keeps rms_norm_eps (RMS scale) and hc_eps (pre / sinkhorn eps) apart (CM:327-329, 619-626); "
-        + "hcPre/hcHead take one eps for both. Latent: shipped Flash has rms_norm_eps == hc_eps == 1e-6."
-
     static let gaps: [String: String] = {
         var g: [String: String] = [
             "gate_fp32_k1_renorm": k1Gap, "hash_fp32_k1_renorm": k1Gap,
-            "hchead_rms_eps_differs": epsGap, "hchead_hc_eps_differs": epsGap,
         ]
         for n in ["expert_up_outside", "expert_gate_above", "expert_gate_below", "expert_all_clamps"] { g[n] = swigluGap }
         for n in ["moe_learned_limit_active", "moe_hash_limit_active"] { g[n] = moeSwigluGap }
-        for n in [
-            "hcpre_hc4_rep20", "hcpre_hc4_rep1", "hcpre_hc4_rep2", "hcpre_hc2_rep5", "hcpre_batch2", "hcpre_peaky_logits",
-            "hcpre_zero_fn_base_only", "hcpre_large_hc_eps", "hcpre_rms_eps_differs", "hcpre_hc_eps_differs",
-            "hcchain_hc4_rep20", "hcchain_hc2_rep3",
-        ] { g[n] = mhcGap }
         return g
     }()
 
@@ -459,7 +444,8 @@ enum V4RouteGolden {
         let (y, post, comb) = hcPre(
             x: array(try input(f, "x"), .float32), hcFn: array(try input(f, "fn"), .float32),
             hcScale: array(try input(f, "scale"), .float32), hcBase: array(try input(f, "base"), .float32),
-            hcMult: try #require(p.hc), sinkhornIters: try #require(p.sinkhornIters), eps: Float(try #require(p.hcEps)))
+            hcMult: try #require(p.hc), sinkhornIters: try #require(p.sinkhornIters),
+            rmsEps: Float(try #require(p.rmsEps)), eps: Float(try #require(p.hcEps)))
         eval(y, post, comb)
         return compare(y, try output(f, "y"), tol: try tol(m, f, "y"), label: "y", tag: f.name)
             + compare(post, try output(f, "post"), tol: try tol(m, f, "post"), label: "post", tag: f.name)
@@ -480,7 +466,7 @@ enum V4RouteGolden {
         let y = hcHead(
             x: array(try input(f, "x"), .float32), hcFn: array(try input(f, "fn"), .float32),
             hcScale: array(try input(f, "scale"), .float32), hcBase: array(try input(f, "base"), .float32),
-            eps: Float(try #require(p.hcEps)))
+            rmsEps: Float(try #require(p.rmsEps)), eps: Float(try #require(p.hcEps)))
         eval(y)
         return compare(y, try output(f, "y"), tol: try tol(m, f, "y"), label: "y", tag: f.name)
     }
@@ -491,7 +477,8 @@ enum V4RouteGolden {
         let (y, post, comb) = hcPre(
             x: x, hcFn: array(try input(f, "fn"), .float32),
             hcScale: array(try input(f, "scale"), .float32), hcBase: array(try input(f, "base"), .float32),
-            hcMult: try #require(p.hc), sinkhornIters: try #require(p.sinkhornIters), eps: Float(try #require(p.hcEps)))
+            hcMult: try #require(p.hc), sinkhornIters: try #require(p.sinkhornIters),
+            rmsEps: Float(try #require(p.rmsEps)), eps: Float(try #require(p.hcEps)))
         let sub = y * Float(try #require(p.sublayerScale)) + Float(try #require(p.sublayerShift))
         let out = hcPost(x: sub, residual: x, post: post, comb: comb)
         eval(out)

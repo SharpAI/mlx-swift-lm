@@ -119,6 +119,13 @@ private func headRmsNorm(_ x: MLXArray, eps: Float) -> MLXArray {
 /// Split mixes into (pre, post, comb) with Sinkhorn normalization.
 /// mixes: [B, S, mix_hc] where mix_hc = (2+hc)*hc
 /// Returns pre [B,S,hc], post [B,S,hc], comb [B,S,hc,hc]
+///
+/// Maths as vLLM `mhc_pre_torch` (vllm/model_executor/kernels/mhc/torch.py:108-123; the same in
+/// tests/kernels/mhc/test_mhc_kernels.py `sinkhorn_normalize_ref` / `mhc_pre_ref`):
+///   pre  = sigmoid(mix * scale[0] + base) + eps                 (not normalised)
+///   post = sigmoid(mix * scale[1] + base) * 2.0                 (hc_post_alpha, models/deepseek_v4/cpu/model.py:263)
+///   comb = softmax(mix * scale[2] + base, last axis) + eps; comb /= colsum(comb) + eps;
+///          then (iters - 1) times: comb /= rowsum(comb) + eps; comb /= colsum(comb) + eps
 func hcSplitSinkhorn(
     _ mixes: MLXArray,
     hcScale: MLXArray,    // [3]
@@ -140,19 +147,17 @@ func hcSplitSinkhorn(
     let postBase = hcBase[hc ..< 2 * hc]
     let combBase = hcBase[(2 * hc)...]
 
-    // Apply scale, add bias, then sigmoid + eps
-    var pre = sigmoid(preMix * hcScale[0] + preBase) + eps   // [B, S, hc]
-    let post = sigmoid(postMix * hcScale[1] + postBase) + eps  // [B, S, hc]
-    var comb = (sigmoid(combMix * hcScale[2] + combBase) + eps)
-        .reshaped(B, S, hc, hc)                               // [B, S, hc, hc]
+    let pre = sigmoid(preMix * hcScale[0] + preBase) + eps
+    let post = sigmoid(postMix * hcScale[1] + postBase) * Float(2)
+    let combLogits = (combMix * hcScale[2] + combBase).reshaped(B, S, hc, hc)
+    var comb = softmax(combLogits, axis: -1) + eps
 
-    // Normalize pre so it sums to 1 across hc copies
-    pre = pre / pre.sum(axis: -1, keepDims: true)
-
-    // Sinkhorn normalization for comb (alternating column/row normalize)
-    for _ in 0 ..< sinkhornIters {
-        comb = comb / comb.sum(axis: -2, keepDims: true)  // column normalize
-        comb = comb / comb.sum(axis: -1, keepDims: true)  // row normalize
+    comb = comb / (comb.sum(axis: -2, keepDims: true) + eps)  // column normalize
+    if sinkhornIters > 1 {
+        for _ in 0 ..< (sinkhornIters - 1) {
+            comb = comb / (comb.sum(axis: -1, keepDims: true) + eps)  // row normalize
+            comb = comb / (comb.sum(axis: -2, keepDims: true) + eps)  // column normalize
+        }
     }
 
     return (pre, post, comb)
@@ -167,7 +172,8 @@ func hcPre(
     hcBase: MLXArray,      // [mix_hc]
     hcMult: Int,
     sinkhornIters: Int,
-    eps: Float
+    rmsEps: Float,         // model rms_norm_eps: RMS scale (vLLM cpu/model.py:327)
+    eps: Float             // hc_eps: pre / sinkhorn eps (cpu/model.py:328-329)
 ) -> (MLXArray, MLXArray, MLXArray) {
     let dtype = x.dtype
     let B = x.dim(0), S = x.dim(1), hc = x.dim(2), D = x.dim(3)
@@ -176,7 +182,7 @@ func hcPre(
     let xFlat = x.reshaped(B, S, hc * D).asType(.float32)
 
     // RMS-style normalization scale
-    let normScale = rsqrt(xFlat.square().mean(axis: -1, keepDims: true) + eps)
+    let normScale = rsqrt(xFlat.square().mean(axis: -1, keepDims: true) + rmsEps)
 
     // Linear projection: [B, S, mix_hc]
     let mixes = matmul(xFlat, hcFn.T) * normScale
@@ -236,13 +242,14 @@ func hcHead(
     hcFn: MLXArray,     // [hc, hc*D]
     hcScale: MLXArray,  // [1]
     hcBase: MLXArray,   // [hc]
-    eps: Float
+    rmsEps: Float,      // model rms_norm_eps (vLLM cpu/model.py:619-626)
+    eps: Float          // hc_eps
 ) -> MLXArray {
     let dtype = x.dtype
     let B = x.dim(0), S = x.dim(1), hc = x.dim(2), D = x.dim(3)
 
     let xFlat = x.reshaped(B, S, hc * D).asType(.float32)
-    let normScale = rsqrt(xFlat.square().mean(axis: -1, keepDims: true) + eps)
+    let normScale = rsqrt(xFlat.square().mean(axis: -1, keepDims: true) + rmsEps)
     let mixes = matmul(xFlat, hcFn.T) * normScale           // [B, S, hc]
     let pre = sigmoid(mixes * hcScale + hcBase) + eps        // [B, S, hc]
 
@@ -767,6 +774,7 @@ public class DeepseekV4Block: Module {
             hcBase: hc_attn.base,
             hcMult: config.hcMult,
             sinkhornIters: config.hcSinkhornIters,
+            rmsEps: config.rmsNormEps,
             eps: config.hcEps
         )
 
@@ -784,6 +792,7 @@ public class DeepseekV4Block: Module {
             hcBase: hc_ffn.base,
             hcMult: config.hcMult,
             sinkhornIters: config.hcSinkhornIters,
+            rmsEps: config.rmsNormEps,
             eps: config.hcEps
         )
 
@@ -861,7 +870,7 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
         // HC head: [B, S, hc, D] → [B, S, D]
         h = hcHead(
             x: h, hcFn: hc_head.fn, hcScale: hc_head.scale,
-            hcBase: hc_head.base, eps: config.hcEps)
+            hcBase: hc_head.base, rmsEps: config.rmsNormEps, eps: config.hcEps)
 
         return norm(h)
     }
@@ -1024,7 +1033,7 @@ extension DeepseekV4Model: MTPLanguageModel {
             // Reduce back to [B, S, D]
             prevHidden = hcHead(
                 x: h, hcFn: model.hc_head.fn, hcScale: model.hc_head.scale,
-                hcBase: model.hc_head.base, eps: args.hcEps)
+                hcBase: model.hc_head.base, rmsEps: args.rmsNormEps, eps: args.hcEps)
                 
             let mtpLogits = lmHead(model.norm(prevHidden))
             result.append(mtpLogits)
