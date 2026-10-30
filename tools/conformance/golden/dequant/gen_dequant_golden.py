@@ -213,7 +213,8 @@ def fx_fp8_scaled():
 def fx_int4():
     cases = []
     for cid, N, K, g, asym in [("sym_2x16_g8", 2, 16, 8, False), ("sym_4x32_g16", 4, 32, 16, False),
-                               ("sym_3x64_g32", 3, 64, 32, False), ("asym_8x16_g8", 8, 16, 8, True)]:
+                               ("sym_3x64_g32", 3, 64, 32, False), ("asym_8x16_g8", 8, 16, 8, True),
+                               ("sym_2x128_g64", 2, 128, 64, False), ("asym_8x64_g32", 8, 64, 32, True)]:
         q = torch.from_numpy(G.integers(0, 16, size=(N, K), dtype=np.int64))
         q[0, 0], q[0, 1] = 0, 15  # extreme nibbles
         words = pack_words(q)
@@ -243,7 +244,7 @@ def fx_awq():
     ns = {"torch": torch, "numpy": np}
     CC.lift(VLLM_DIR, CC.Q + "quant_utils.py", ["get_pack_factor", "pack_cols", "awq_pack"], ns)
     cases = []
-    for cid, K, N, g in [("awq_16x16_g8", 16, 16, 8), ("awq_32x32_g16", 32, 32, 16), ("awq_8x8_g8", 8, 8, 8)]:
+    for cid, K, N, g in [("awq_32x16_g32", 32, 16, 32), ("awq_64x32_g32", 64, 32, 32), ("awq_128x8_g64", 128, 8, 64)]:
         q = torch.from_numpy(G.integers(0, 16, size=(K, N), dtype=np.int64)).to(torch.int32)
         zp = torch.from_numpy(G.integers(0, 16, size=(K // g, N), dtype=np.int64)).to(torch.int32)
         sc = rand_scales_f32((K // g, N), 0.01, 0.5)

@@ -32,8 +32,8 @@
  },
  "files": {
   "awq_int4.json": {
-   "bytes": 37903,
-   "sha256": "08b97a88378e89d056a813900a364606db3246ac2de165dae21ba8b88ed45d18"
+   "bytes": 94864,
+   "sha256": "de4b6d03bc84ed3be078ca6ce65d8f82a276eb36e0832e76b002845c74284c65"
   },
   "e8m0.json": {
    "bytes": 747,
@@ -52,8 +52,8 @@
    "sha256": "074c5149970011894fcf74b9cce1aed031a87224a7e08dc3c6511a7a437e3779"
   },
   "int4_pack_quantized.json": {
-   "bytes": 14683,
-   "sha256": "d1e0c6e18d8659d34f6e89715bce64a52d28249af8ab401cae3e9e0020dcf067"
+   "bytes": 35428,
+   "sha256": "e3deac4893caf049129a9e8bb3239d789163a64b342374ba2332db1eefcdfde3"
   },
   "mxfp4.json": {
    "bytes": 55855,
