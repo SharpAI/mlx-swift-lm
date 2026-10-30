@@ -1,4 +1,5 @@
-// Conformance gap pins, part 2: deepseek_v4 (registered, but #254 says the text path is incomplete).
+// Conformance pins, part 2: deepseek_v4 (registered, but #254 said the text path is incomplete).
+// SL-35 4.1-4.3: the compressor, indexer and tid2eid gaps have landed; their pins are plain asserts now.
 //
 // Tier 0/1 facts only: config JSON from the offline fixtures (scripts/conformance/offline/fixtures/
 // deepseek_v4*), no weights, no network. Green tests record facts; every gap is a precise test
@@ -156,11 +157,11 @@ struct ConformanceGapDeepseekV4Tests {
     func hashRoutingTable() async throws {
         let m = try await ConformanceDeepseekV4.tinyModel()
         let params = Dictionary(uniqueKeysWithValues: m.parameters().flattened())
+        // tid2eid landed (SL-35 step 4.3): plain asserts. Only layers below num_hash_layers (= 1) own one.
         let t = params["model.layers.0.ffn.gate.tid2eid"]
-        ConformanceGap.knownIssue("DeepseekV4 has no tid2eid parameter (sanitize drops it)") {
-            ConformanceGap.expect(t != nil)
-            ConformanceGap.expect(t?.shape == [64, 2])
-        }
+        #expect(t != nil)
+        #expect(t?.shape == [64, 2])
+        #expect(params["model.layers.1.ffn.gate.tid2eid"] == nil && params["model.layers.2.ffn.gate.tid2eid"] == nil)
     }
 
     @Test("V4 sanitize keeps the compressor / indexer / tid2eid tensors of a main layer")
@@ -168,15 +169,11 @@ struct ConformanceGapDeepseekV4Tests {
         let m = try await ConformanceDeepseekV4.tinyModel()
         let landed = "model.layers.0.attn.compressor.wkv.weight"  // compressor: SL-35 step 4.1
         let landedIx = "model.layers.0.attn.indexer.wq_b.weight"  // indexer: SL-35 step 4.2
-        let probe = ["model.layers.0.ffn.gate.tid2eid"]
+        let landedHash = "model.layers.0.ffn.gate.tid2eid"  // tid2eid: SL-35 step 4.3
         let out = m.sanitize(
-            weights: Dictionary(uniqueKeysWithValues: (probe + [landed, landedIx]).map { ($0, MLXArray.zeros([2, 2])) }))
+            weights: Dictionary(uniqueKeysWithValues: [landed, landedIx, landedHash].map { ($0, MLXArray.zeros([2, 2])) }))
         #expect(out[landed] != nil, "sanitize dropped \(landed)")
         #expect(out[landedIx] != nil, "sanitize dropped \(landedIx)")
-        for k in probe {
-            ConformanceGap.knownIssue("DeepseekV4.sanitize drops \(k)") {
-                ConformanceGap.expect(out[k] != nil)
-            }
-        }
+        #expect(out[landedHash] != nil, "sanitize dropped \(landedHash)")
     }
 }

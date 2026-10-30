@@ -541,29 +541,39 @@ class DeepseekV4Expert: Module, UnaryLayer {
     }
 }
 
-/// MoE routing gate with sqrtsoftplus (score-based routing only; hash routing not implemented).
+/// MoE routing gate with sqrtsoftplus. Layers below `num_hash_layers` are hash layers (SL-35 4.3): the experts
+/// come from the `tid2eid[token_id]` lookup table (no score top-k, no e_score_correction_bias); the routing
+/// weights are still the learned scores gathered at those experts.
 class DeepseekV4Gate: Module {
     let topK: Int
     let nRoutedExperts: Int
     let routedScalingFactor: Float
     let normTopkProb: Bool
     let scoringFunc: String
+    let isHash: Bool
 
     var weight: MLXArray              // [n_routed_experts, hidden_size]
-    var e_score_correction_bias: MLXArray  // [n_routed_experts]
+    var e_score_correction_bias: MLXArray?  // [n_routed_experts]; nil on hash layers
+    var tid2eid: MLXArray?            // [vocab_size, top_k] int32; hash layers only
 
-    init(config: DeepseekV4Configuration) {
+    init(config: DeepseekV4Configuration, layerIndex: Int = 0) {
         self.topK = config.numExpertsPerTok
         self.nRoutedExperts = config.nRoutedExperts
         self.routedScalingFactor = config.routedScalingFactor
         self.normTopkProb = config.normTopkProb
         self.scoringFunc = config.scoringFunc
+        self.isHash = layerIndex < config.numHashLayers
         self.weight = zeros([config.nRoutedExperts, config.hiddenSize])
-        self.e_score_correction_bias = zeros([config.nRoutedExperts])
+        if isHash {
+            self.e_score_correction_bias = nil
+            self.tid2eid = zeros([config.vocabSize, config.numExpertsPerTok], dtype: .int32)
+        } else {
+            self.e_score_correction_bias = zeros([config.nRoutedExperts])
+            self.tid2eid = nil
+        }
     }
 
-    /// Allow hash-routing layers (0..numHashLayers-1) to load without e_score_correction_bias.
-    /// Those layers use tid2eid hash routing in the original code; we keep the zero default.
+    /// Learned layers may load without e_score_correction_bias (keep the zero default).
     override func updateMissing(
         parameter: String,
         verify: VerifyUpdate,
@@ -577,7 +587,8 @@ class DeepseekV4Gate: Module {
             parameter: parameter, verify: verify, path: path, modulePath: modulePath)
     }
 
-    func callAsFunction(_ x: MLXArray) -> (MLXArray, MLXArray) {
+    /// `tokenIds` ([B, S] ints) is required on hash layers and ignored on learned layers.
+    func callAsFunction(_ x: MLXArray, tokenIds: MLXArray? = nil) -> (MLXArray, MLXArray) {
         // Compute expert scores
         let logits = x.matmul(weight.T)       // [B, S, n_experts]
         var scores: MLXArray
@@ -591,11 +602,16 @@ class DeepseekV4Gate: Module {
             scores = sqrtSoftplus(logits)
         }
 
-        // Bias-shifted scores for top-k selection (bias not applied to routing weights)
-        let scoresForChoice = scores + e_score_correction_bias
-
-        // Top-k selection
-        let inds = argPartition(-scoresForChoice, kth: topK - 1, axis: -1)[.ellipsis, ..<topK]
+        let inds: MLXArray
+        if let tid2eid {
+            precondition(tokenIds != nil, "DeepseekV4Gate: hash-routing layers need the input token ids")
+            inds = take(tid2eid, tokenIds!, axis: 0)  // [B, S, top_k]
+        } else {
+            // Bias-shifted scores for top-k selection (bias not applied to routing weights)
+            let scoresForChoice = scores + (e_score_correction_bias ?? MLXArray(Float(0)))
+            // Top-k selection
+            inds = argPartition(-scoresForChoice, kth: topK - 1, axis: -1)[.ellipsis, ..<topK]
+        }
 
         // Gather weights using original (non-biased) scores
         var selectedScores = takeAlong(scores, inds, axis: -1)
@@ -618,7 +634,7 @@ class DeepseekV4MoE: Module, UnaryLayer {
     var gate: DeepseekV4Gate
     @ModuleInfo(key: "shared_experts") var sharedExperts: DeepseekV4Expert
 
-    init(config: DeepseekV4Configuration) {
+    init(config: DeepseekV4Configuration, layerIndex: Int = 0) {
         self.numExpertsPerTok = config.numExpertsPerTok
 
         // Routed experts (stacked via SwitchGLU, same as V3)
@@ -635,7 +651,7 @@ class DeepseekV4MoE: Module, UnaryLayer {
                 return silu(x)
             }
         )
-        self.gate = DeepseekV4Gate(config: config)
+        self.gate = DeepseekV4Gate(config: config, layerIndex: layerIndex)
 
         // Shared expert (1 expert, same intermediate size)
         self._sharedExperts.wrappedValue = DeepseekV4Expert(
@@ -646,7 +662,12 @@ class DeepseekV4MoE: Module, UnaryLayer {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let (indices, scores) = gate(x)
+        self(x, tokenIds: nil)
+    }
+
+    /// `tokenIds` ([B, S]) feed the hash-routing layers (SL-35 4.3).
+    func callAsFunction(_ x: MLXArray, tokenIds: MLXArray?) -> MLXArray {
+        let (indices, scores) = gate(x, tokenIds: tokenIds)
         var y = switchMLP(x, indices)
         y = (y * scores[.ellipsis, .newAxis]).sum(axis: -2)
 
@@ -678,7 +699,7 @@ public class DeepseekV4Block: Module {
         self.config = config
 
         self._selfAttn.wrappedValue = DeepseekV4Attention(config: config, layerIndex: layerIndex)
-        self.ffn = DeepseekV4MoE(config: config)
+        self.ffn = DeepseekV4MoE(config: config, layerIndex: layerIndex)
 
         self._attnNorm.wrappedValue = RMSNorm(
             dimensions: config.hiddenSize, eps: config.rmsNormEps)
@@ -702,7 +723,8 @@ public class DeepseekV4Block: Module {
     func callAsFunction(
         _ x: MLXArray,
         mask: MLXFast.ScaledDotProductAttentionMaskMode,
-        cache: KVCache?
+        cache: KVCache?,
+        tokenIds: MLXArray? = nil
     ) -> MLXArray {
         // x: [B, S, hc, D]
         let residualAttn = x
@@ -736,7 +758,7 @@ public class DeepseekV4Block: Module {
         )
 
         // FFN sublayer: [B,S,D] → [B,S,D]
-        let ffnOut = ffn(ffnNorm(xFfn))
+        let ffnOut = ffn(ffnNorm(xFfn), tokenIds: tokenIds)
 
         // HC post for FFN: [B,S,D] → [B,S,hc,D]
         return hcPost(x: ffnOut, residual: residualFfn, post: postFfn, comb: combFfn)
@@ -801,7 +823,7 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
             h = partitionedLayerCall(
                 index: i, gpuLayerCount: gpuLayerCount, stream: streamExperts
             ) {
-                layer(h, mask: attentionMask, cache: cache?[i])
+                layer(h, mask: attentionMask, cache: cache?[i], tokenIds: x)
             }
         }
 
@@ -892,9 +914,14 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         for (key, value) in newWeights {
             // Drop rotary embedding precomputed frequencies
             if key.contains("rotary_emb.inv_freq") { continue }
-            // compressor (SL-35 4.1) and indexer (SL-35 4.2) tensors are kept: SharpAIOverlay.V4Compressor / V4Indexer
-            // Drop gate.tid2eid
-            if key.contains(".ffn.gate.tid2eid") { continue }
+            // compressor (SL-35 4.1), indexer (SL-35 4.2) and gate.tid2eid (4.3) tensors are kept.
+            // Hash layers have no score-correction bias; drop one if a converter emitted it.
+            if key.hasSuffix(".ffn.gate.e_score_correction_bias"),
+                let layerIdx = key.split(separator: ".").dropFirst(2).first.flatMap({ Int($0) }),
+                layerIdx < args.numHashLayers
+            {
+                continue
+            }
 
             if key.starts(with: "model.layers.") {
                 let parts = key.split(separator: ".")

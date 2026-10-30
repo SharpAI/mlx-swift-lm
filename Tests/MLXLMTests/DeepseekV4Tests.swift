@@ -244,7 +244,8 @@ public class DeepseekV4Tests: XCTestCase {
 
     func testMoEGateRoutingShape() {
         let config = makeSmallConfig()
-        let gate = DeepseekV4Gate(config: config)
+        // Layer 1 is a learned-routing layer; layer 0 (< num_hash_layers) is a hash layer that needs token ids (SL-35 4.3).
+        let gate = DeepseekV4Gate(config: config, layerIndex: 1)
         gate.weight = MLXRandom.uniform(low: 0, high: 1, [config.nRoutedExperts, config.hiddenSize])
         gate.e_score_correction_bias = zeros([config.nRoutedExperts])
 
