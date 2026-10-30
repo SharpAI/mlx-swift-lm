@@ -1,0 +1,64 @@
+{
+ "files": {
+  "silu_and_mul.json": {
+   "cases": 30,
+   "sha256": "971fc245ba561149e3f14bed2c1588f11d0b10e167539487aaf2a0f534a7af02"
+  },
+  "swigluoai_and_mul.json": {
+   "cases": 30,
+   "sha256": "446a35c4a383fed7f5535c685c5433e2d0bc29d9acb3087f32202e6e9c10e547"
+  },
+  "swiglustep_and_mul.json": {
+   "cases": 30,
+   "sha256": "9e01c60a702cd23c380747f80a27e06723a8dd25436205aa516a049d8b40882e"
+  },
+  "v4_clamped.json": {
+   "cases": 90,
+   "sha256": "46189cbd0a6b21e4ab3b503c374b100b5e9062da0d422398b48c28ab1db04d66"
+  }
+ },
+ "generator": {
+  "command": "VLLM_ROOT=<vLLM checkout at 739e5945d> venv/bin/python -I tools/conformance/golden/swiglu/generate.py",
+  "scripts": {
+   "generate.py": "e6dde83e947d97cd46c75cebf4be5d7533c4bf1eee752228fd1f898b636840b6",
+   "swiglu_ref.py": "c1da43eeb88ac03eb51bb924111e2ac89f9f1c908c39d789c1773b6ad2f9def0"
+  }
+ },
+ "numpy": "2.5.4",
+ "oracle_crosscheck_max_relative_disagreement": {
+  "silu_and_mul": 0.0,
+  "step_kernel_vs_native": 3.902209956664768e-16,
+  "swigluoai_and_mul": 0.0,
+  "swiglustep_and_mul": 0.0
+ },
+ "oracle_provenance": {
+  "silu_and_mul": "vLLM activation.py:137-141 (cross-checked)",
+  "swigluoai_and_mul": "vLLM activation.py:319-327 (cross-checked)",
+  "swiglustep_and_mul": "vLLM activation.py:359-365 (cross-checked; Triton kernel :27-52 emulation also agrees; llama.cpp llama-graph.cpp:1118-1135 corroborates silu-then-clamp)",
+  "v4_clamped": "INFERRED: vLLM 739e5945d has no DeepSeek-V4 model; formula from lane brief. Two golden columns: symmetric gate clamp (golden) and gate clamp(max) only (golden_gate_max_only)"
+ },
+ "tolerances": {
+  "bfloat16": {
+   "atol": 1e-30,
+   "rtol": 0.02,
+   "why": "u=2^-9=2e-3; up to ~5 successive roundings if MLX keeps bf16 intermediates -> 1e-2; same rtol vLLM's own test_activation.py:90 uses for bf16."
+  },
+  "enforced_in": "ConformanceSwigluGoldenTests.swift SwigluGolden.tolerances (this block only documents them; manifestComplete fails if they differ)",
+  "float16": {
+   "atol": 1e-07,
+   "rtol": 0.002,
+   "why": "u=2^-11=4.9e-4; ~5 roundings -> 2.5e-3 worst case, vLLM test uses 2e-3 (test_activation.py:90); atol = 1.7 subnormal steps (6e-8 each) for results below fp16 min normal 6.1e-5."
+  },
+  "float32": {
+   "atol": 1e-30,
+   "rtol": 2e-06,
+   "why": "u=6e-8; 5 roundings + Metal fast exp (<=3 ulp) is ~4e-7; 2e-6 leaves 5x margin. atol 1e-30 only guards denormal flush; the earlier 1e-20 made ~78 swigluoai goldens below 5e-15 effectively unchecked. swigluoai adds an exp-tail term |1.702*gate|*2*2^-24 (INFERRED conditioning argument)."
+  },
+  "rule": "|swift - golden| <= atol + rtol*|golden|; golden is exact float64 math on dtype-rounded inputs, so the budget is dtype rounding only. Set a priori from the dtype's unit roundoff u and the number of rounded operations (sigmoid, gate*sigmoid, *up, optional clamps which are exact): about 3-5 roundings plus a few ulp of fast-math exp."
+ },
+ "torch": "2.15.0",
+ "vllm": {
+  "commit": "739e5945d",
+  "path": "vllm/model_executor/layers/activation.py"
+ }
+}
