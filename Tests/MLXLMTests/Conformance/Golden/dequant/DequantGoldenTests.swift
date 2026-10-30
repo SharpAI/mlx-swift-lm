@@ -302,6 +302,7 @@ struct ConformanceDequantGoldenTests {
     @Test("mxfp4 golden cases (nibble order, group boundaries, scale edges, random)", arguments: G.ids("mxfp4.json"))
     func mxfp4(id: String) {
         let c = G.entry("mxfp4.json", id)
+        guard !c.isEmpty else { return }  // entry() recorded the problem
         let rows = c["rows"] as! Int, cols = c["cols"] as! Int
         let got = G.mxfp4Dequant(rows: rows, cols: cols, packed: G.ints(c["packed"]), scales: G.ints(c["scales"]))
         let t = G.tolerance("float32_exact")
@@ -313,6 +314,7 @@ struct ConformanceDequantGoldenTests {
     @Test("nvfp4 golden cases (e4m3 block scales, global multiplier, nibble order)", arguments: G.ids("nvfp4.json"))
     func nvfp4(id: String) {
         let c = G.entry("nvfp4.json", id)
+        guard !c.isEmpty else { return }  // entry() recorded the problem
         let got = G.nvfp4Dequant(
             rows: c["rows"] as! Int, cols: c["cols"] as! Int, packed: G.ints(c["packed"]), scales: G.ints(c["scales"]),
             multiplier: G.d(c["global_scale"]!))
@@ -349,6 +351,7 @@ struct ConformanceDequantGoldenTests {
         arguments: G.ids("fp8_scaled.json", "channel"))
     func fp8Channel(id: String) {
         let c = G.entry("fp8_scaled.json", id, key: "channel")
+        guard !c.isEmpty else { return }  // entry() recorded the problem
         let (n, k) = (c["rows"] as! Int, c["cols"] as! Int)
         let w = G.fp8Weight(G.ints(c["weight"]), n, k)
         let scale = MLXArray(G.doubles(c["scale"]).map { Float($0) }, [n, 1])
@@ -363,6 +366,7 @@ struct ConformanceDequantGoldenTests {
     @Test("fp8 block scale (weight_scale_inv): dequantFP8Blocks and the FP8Linear prefill path", arguments: G.ids("fp8_scaled.json", "block"))
     func fp8Block(id: String) {
         let c = G.entry("fp8_scaled.json", id, key: "block")
+        guard !c.isEmpty else { return }  // entry() recorded the problem
         let (n, k, bs) = (c["rows"] as! Int, c["cols"] as! Int, c["block"] as! Int)
         let shape = G.ints(c["scale_shape"])
         let w = G.fp8Weight(G.ints(c["weight"]), n, k)
@@ -447,7 +451,7 @@ struct ConformanceDequantGoldenTests {
     }
 
     @Test("non-divisible fp8 shapes (zero-pad and crop): dequantFP8Blocks, FP8Linear prefill and decode equal the cropped golden",
-        arguments: G.ids("fp8_scaled.json", "block").filter { G.entry("fp8_scaled.json", $0, key: "block")["block"] as! Int >= 2 })
+        arguments: G.ids("fp8_scaled.json", "block").filter { (G.entry("fp8_scaled.json", $0, key: "block")["block"] as? Int ?? 2) >= 2 })
     func fp8NonDivisible(id: String) {
         let b = BlockCase(id, cropped: true)
         #expect(b.n % b.bs != 0 && b.k % b.bs != 0 && b.n > 0 && b.k > 1, "case must be non-divisible")
@@ -467,6 +471,7 @@ struct ConformanceDequantGoldenTests {
         arguments: G.ids("fp8_scaled.json", "ue8m0_block"))
     func fp8Ue8m0(id: String) {
         let c = G.entry("fp8_scaled.json", id, key: "ue8m0_block")
+        guard !c.isEmpty else { return }  // entry() recorded the problem
         let (n, k, bs) = (c["rows"] as! Int, c["cols"] as! Int, c["block"] as! Int)
         let w = G.fp8Weight(G.ints(c["weight"]), n, k)
         let sb = MLXArray(G.ints(c["scale_bytes"]).map { UInt8($0) }, G.ints(c["scale_shape"]))
@@ -497,11 +502,12 @@ struct ConformanceDequantGoldenTests {
 
     @Test("int4 pack-quantized, group 32/64: the packing is MLX affine, w = q*s - zp*s (mapping feasibility, not a loader)",
         arguments: G.ids("int4_pack_quantized.json").filter { id in
-            let g = G.entry("int4_pack_quantized.json", id)["group"] as! Int
+            let g = G.entry("int4_pack_quantized.json", id)["group"] as? Int ?? 32
             return g == 32 || g == 64
         })
     func int4ViaAffine(id: String) {
         let c = G.entry("int4_pack_quantized.json", id)
+        guard !c.isEmpty else { return }  // entry() recorded the problem
         let (got, scales) = Self.int4Dequant(c)
         G.check("int4/\(id)", G.affineMismatch(got, G.doubles(c["expected"]), scales: scales))
     }
@@ -530,6 +536,7 @@ struct ConformanceDequantGoldenTests {
         arguments: G.ids("awq_int4.json"))
     func awq(id: String) {
         let c = G.entry("awq_int4.json", id)
+        guard !c.isEmpty else { return }  // entry() recorded the problem
         let (got, scales) = Self.awqDequant(c)
         G.check("awq/\(id)", G.affineMismatch(got, G.doubles(c["expected_KxN"]), scales: scales))
     }
@@ -680,6 +687,7 @@ struct ConformanceDequantGoldenTests {
     func tolerancesAreTight() {
         // fp8 * float32 scale is one correctly rounded float32 product, so equality is required (no slack for 1 ulp)
         let ch = G.entry("fp8_scaled.json", "channel_4x8", key: "channel")
+        guard !ch.isEmpty else { return }  // entry() recorded the problem
         let want = G.doubles(ch["expected"])
         let exact = want.map { Float($0) }
         let p = G.tolerance("float32_product")
@@ -707,12 +715,14 @@ struct ConformanceDequantGoldenTests {
         var out = [(String, [Float], [Double], [Double])]()
         for id in G.ids("int4_pack_quantized.json") {
             let c = G.entry("int4_pack_quantized.json", id)
+            guard !c.isEmpty else { continue }  // entry() recorded the problem
             guard [32, 64].contains(c["group"] as! Int) else { continue }
             let (got, scales) = Self.int4Dequant(c)
             out.append(("int4/\(id)", got, scales, G.doubles(c["expected"])))
         }
         for id in G.ids("awq_int4.json") {
             let c = G.entry("awq_int4.json", id)
+            guard !c.isEmpty else { continue }  // entry() recorded the problem
             let (got, scales) = Self.awqDequant(c)
             out.append(("awq/\(id)", got, scales, G.doubles(c["expected_KxN"])))
         }
@@ -722,6 +732,7 @@ struct ConformanceDequantGoldenTests {
     @Test("mutation: perturbed goldens and swapped nibbles must FAIL the comparison")
     func mutationsFail() {
         let c = G.entry("mxfp4.json", "all_bytes_unit_scale")
+        guard !c.isEmpty else { return }  // entry() recorded the problem
         let rows = c["rows"] as! Int, cols = c["cols"] as! Int
         let packed = G.ints(c["packed"]), scales = G.ints(c["scales"])
         let want = G.doubles(c["expected"])
@@ -748,6 +759,7 @@ struct ConformanceDequantGoldenTests {
         // 5. tolerance-based comparison also rejects a 1e-3 perturbation
         let p = G.tolerance("float32_product")
         let ch = G.entry("fp8_scaled.json", "channel_4x8", key: "channel")
+        guard !ch.isEmpty else { return }  // entry() recorded the problem
         var w2 = G.doubles(ch["expected"])
         w2[w2.firstIndex { $0 != 0 }!] *= 1.001
         let g2 = G.floats(
@@ -780,7 +792,7 @@ struct ConformanceDequantGoldenTests {
         #expect(G.cases("e8m0.json", "bytes").count == 8)
         // every int4 case is either run through the affine mapping or documented as unsupported by MLX group sizes
         for id in G.ids("int4_pack_quantized.json") {
-            let g = G.entry("int4_pack_quantized.json", id)["group"] as! Int
+            let g = G.entry("int4_pack_quantized.json", id)["group"] as? Int ?? 0
             #expect([8, 16, 32, 64].contains(g))
         }
     }
