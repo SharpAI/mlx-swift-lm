@@ -204,3 +204,84 @@ jobs:
         run: |
           cd SwiftLM
           bash tests/test-speculative-eval.sh
+
+  sealed-offline:
+    # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights. The
+    # Metal toolchain and the MLX metallib are fetched BEFORE the seal (same as the main job). NOT a required check (branch protection is untouched). The dependency fetch happens before the seal;
+    # scripts/conformance/offline-build/run-blocked.sh then self-tests the seal, resolves from the SwiftPM cache,
+    # builds clean and runs the filters, failing on a vacuous (zero-test) filter.
+    name: Sealed offline conformance (macOS 15)
+    runs-on: macos-15
+    # Observation phase: report the result without turning the workflow red (owner gate 2: observe once before merge).
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode 26 (Swift 6.2)
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Checkout SharpAI/mlx-swift
+        uses: actions/checkout@v4
+        with:
+          repository: SharpAI/mlx-swift
+          path: mlx-swift
+
+      # The fork's default branch is the dependency by design (Package.swift: "We MUST depend on the SharpAI fork"; a sync
+      # bot advances it), same as the main job. Record exactly which revision this run used so a result can be reproduced.
+      - name: Record the mlx-swift revision
+        run: |
+          rev=$(git -C mlx-swift rev-parse HEAD)
+          echo "mlx-swift revision: $rev"
+          echo "mlx-swift revision: \`$rev\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Redirect mlx-swift dependency to local checkout
+        run: |
+          sed -i '' -E 's|\.package\(path: "\.\./mlx-swift"\),|\.package(path: "./mlx-swift"),|' Package.swift
+
+      - name: Install Metal Toolchain (network allowed, before the seal)
+        run: xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Prefetch dependencies and the MLX Metal library (network allowed, before the seal)
+        run: |
+          swift package resolve
+          # The metallib must come from the same MLX release as the C++ the Swift build compiles. That release is the
+          # version in mlx-swift's bundled mlx/version.h, so pin the PyPI wheel to it (a missing wheel fails loudly here).
+          MLX_VER=$(awk '/#define MLX_VERSION_(MAJOR|MINOR|PATCH) /{v[$2]=$3} END{printf "%s.%s.%s", v["MLX_VERSION_MAJOR"], v["MLX_VERSION_MINOR"], v["MLX_VERSION_PATCH"]}' mlx-swift/Source/Cmlx/mlx/mlx/version.h)
+          echo "$MLX_VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::cannot read the MLX version from mlx-swift (got '$MLX_VER')"; exit 1; }
+          echo "MLX version of the mlx-swift checkout: $MLX_VER"
+          python3 -m venv /tmp/mlx_venv
+          /tmp/mlx_venv/bin/pip install --quiet "mlx==$MLX_VER"
+          find /tmp/mlx_venv -name "mlx.metallib" | head -n 1 > /tmp/mlx_metallib_path
+          test -s /tmp/mlx_metallib_path
+
+      - name: Build and test with network blocked
+        env:
+          FILTERS: "Conformance SharpAIOverlay"
+          TEST_ARGS: "--no-parallel"
+          POST_BUILD: |
+            set -eu
+            MLX_LIB=$(cat /tmp/mlx_metallib_path)
+            test -f "$MLX_LIB" || { echo "::error::mlx.metallib not found at $MLX_LIB"; exit 1; }
+            n=0
+            while IFS= read -r d; do
+              cp "$MLX_LIB" "$d/"
+              n=$((n + 1))
+            done < <({ find "$SCRATCH" -type d \( -name MacOS -o -name Resources \); find "$SCRATCH" -maxdepth 3 -type d -name debug; })
+            echo "post-build: copied mlx.metallib into $n directories"
+            test "$n" -gt 0 || { echo "::error::metallib not installed: no MacOS/Resources/debug directory under $SCRATCH"; exit 1; }
+        run: bash scripts/conformance/offline-build/run-blocked.sh
+
+      # continue-on-error keeps the workflow green, so say the verdict explicitly where a reviewer looks.
+      - name: Sealed offline verdict
+        if: always()
+        run: |
+          case "${{ job.status }}" in
+            success) verdict=PASS ;;
+            cancelled) verdict=CANCELLED ;;
+            *) verdict=FAIL ;;
+          esac
+          echo "SEALED-OFFLINE: $verdict"
+          { echo "### SEALED-OFFLINE: $verdict"; echo "Observation phase: this job is continue-on-error, so a FAIL does not turn the workflow red."; } >> "$GITHUB_STEP_SUMMARY"

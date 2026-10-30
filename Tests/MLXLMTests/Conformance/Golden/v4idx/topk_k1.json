@@ -1,0 +1,1 @@
+{"R":2,"dtype":"float32","group":"plain","inputs":{"scores":[1,9,4,-3,-2,-9]},"kind":"topk","name":"topk_k1","nb":3,"outputs":{"select":[{"need":1,"strict":[],"tie":[1]},{"need":1,"strict":[],"tie":[1]}]},"tolerance":"exact","topk":1}

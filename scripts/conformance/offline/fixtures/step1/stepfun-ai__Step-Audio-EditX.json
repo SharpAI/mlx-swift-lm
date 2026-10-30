@@ -1,0 +1,24 @@
+{
+  "architectures": [
+    "Step1ForCausalLM"
+  ],
+  "auto_map": {
+    "AutoConfig": "configuration_step1.Step1Config",
+    "AutoModelForCausalLM": "modeling_step1.Step1ForCausalLM"
+  },
+  "model_type": "step1",
+  "bos_token_id": 1,
+  "pad_token_id": 0,
+  "eos_token_id": 3,
+  "hidden_size": 3072,
+  "intermediate_size": 8192,
+  "num_attention_heads": 48,
+  "num_attention_groups": 4,
+  "num_hidden_layers": 32,
+  "max_seq_len": 32768,
+  "vocab_size": 74752,
+  "rms_norm_eps": 1e-05,
+  "tie_word_embeddings": false,
+  "torch_dtype": "bfloat16",
+  "use_cache": true 
+}

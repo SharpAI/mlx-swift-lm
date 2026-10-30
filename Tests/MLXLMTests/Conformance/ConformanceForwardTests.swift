@@ -2,9 +2,9 @@
 // forward pass. No checkpoint, no network. Tier 1 = the model builds and produces finite
 // logits of the right shape. Tier 2 = a numeric property that shape checks cannot see.
 //
-// Known gaps are expressed with `withKnownIssue`: the test is green while the gap exists
-// and goes RED when the gap is fixed (or upstream fixes it), which is the cue to delete the
-// `withKnownIssue` wrapper -- so a fix is always paired with the test that proves it.
+// Known gaps are expressed with `withKnownIssue(isIntermittent: true)`: the test is green while the
+// gap exists AND once it is fixed (so a correct upstream sync is never blocked); delete the wrapper
+// in the change that fixes the gap, so the fix is paired with the test that proves it.
 
 import Foundation
 import MLX
@@ -56,8 +56,7 @@ struct ConformanceForwardTests {
     }
 
     /// Tier 2: `final_logit_softcapping` (Rnj1 and other Gemma3-text derivatives) must bound the
-    /// logits. SURVEY FINDING, confirmed by reading `Gemma3Text.swift` (the configuration has no
-    /// such key and `callAsFunction` ends with a bare `lmHead`); this test makes it runnable.
+    /// logits (tanh softcap applied after `lmHead`).
     @Test("gemma3_text honours final_logit_softcapping")
     func gemma3TextSoftcap() async throws {
         let cap = 5.0
@@ -70,9 +69,30 @@ struct ConformanceForwardTests {
         let logits = try ConformanceBuild.logits(model, tokens: [1, 2, 3, 4]).asType(.float32)
         let maxAbs = abs(logits).max().item(Float.self)
 
-        // KNOWN GAP: remove this wrapper in the PR that adds softcapping.
-        withKnownIssue("Gemma3TextConfiguration ignores final_logit_softcapping") {
-            #expect(maxAbs <= Float(cap) + 1e-3, "max |logit| = \(maxAbs), cap = \(cap)")
-        }
+        #expect(maxAbs <= Float(cap) + 1e-3, "max |logit| = \(maxAbs), cap = \(cap)")
+    }
+
+    /// The cap is `cap * tanh(raw / cap)`, not a clamp: same weights built without the key give the
+    /// raw logits, and the capped model must equal the formula applied to them.
+    @Test("gemma3_text softcap equals cap * tanh(raw / cap) of the uncapped logits")
+    func gemma3TextSoftcapFormula() async throws {
+        let cap: Float = 5
+        let raw = try #require(
+            try await ConformanceBuild.llm(Self.gemma3TextJSON(softcap: nil), modelType: "gemma3_text") as? Gemma3TextModel)
+        let capped = try #require(
+            try await ConformanceBuild.llm(Self.gemma3TextJSON(softcap: Double(cap)), modelType: "gemma3_text") as? Gemma3TextModel)
+        // Same weights in both; scale the head so some raw logits exceed the cap and some stay below.
+        let params = raw.parameters()
+        raw.update(parameters: params)
+        capped.update(parameters: params)
+        let scaled = ModuleParameters.unflattened([("lm_head.weight", raw.lmHead.weight * 40)])
+        raw.update(parameters: scaled)
+        capped.update(parameters: scaled)
+        eval(raw, capped)
+        let r = try ConformanceBuild.logits(raw, tokens: [1, 2, 3, 4]).asType(.float32)
+        let c = try ConformanceBuild.logits(capped, tokens: [1, 2, 3, 4]).asType(.float32)
+        let want = tanh(r / cap) * cap
+        #expect(abs(r).max().item(Float.self) > cap, "raw logits must exceed the cap for the test to bite")
+        #expect(abs(c - want).max().item(Float.self) < 1e-3)
     }
 }

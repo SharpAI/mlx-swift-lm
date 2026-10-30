@@ -1,0 +1,1925 @@
+{
+ "conflicts": [],
+ "count": 169,
+ "fixtures": [
+  {
+   "architectures": [
+    "NemotronH_Nano_Omni_Reasoning_V3"
+   ],
+   "model_type": "NemotronH_Nano_Omni_Reasoning_V3",
+   "path": "fixtures/NemotronH_Nano_Omni_Reasoning_V3/nvidia__Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16.json",
+   "repo": "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16",
+   "repo_source": "csv",
+   "sha256": "bf8859c106ef73d65fd194cbd336584d24dceaf724a408c762db7945e3925957",
+   "size": 9842
+  },
+  {
+   "architectures": [
+    "NemotronH_Nano_VL_V2"
+   ],
+   "model_type": "NemotronH_Nano_VL_V2",
+   "path": "fixtures/NemotronH_Nano_VL_V2/nvidia__Nemotron-Nano-12B-v2-VL-BF16.json",
+   "repo": "nvidia/Nemotron-Nano-12B-v2-VL-BF16",
+   "repo_source": "csv",
+   "sha256": "6bc9bf778ad3bc8b91adb05eb2ed9ed2671748e4645b28dfac680faddde36142",
+   "size": 8692
+  },
+  {
+   "architectures": [
+    "PanguEmbeddedForCausalLM"
+   ],
+   "model_type": "PanguEmbedded",
+   "path": "fixtures/PanguEmbedded/FreedomIntelligence__openPangu-Embedded-7B-V1.1.json",
+   "repo": "FreedomIntelligence/openPangu-Embedded-7B-V1.1",
+   "repo_source": "csv",
+   "sha256": "8e300541888d68a6148d18720fa6b2df48f71e2e1606026d55b30af6dcb2ba37",
+   "size": 861
+  },
+  {
+   "architectures": [
+    "PEagleDraftModel"
+   ],
+   "model_type": null,
+   "path": "fixtures/_none/inference-optimization__Qwen3-8B-speculators.peagle-qwen3arch-ckpt4.json",
+   "repo": "inference-optimization/Qwen3-8B-speculators.peagle-qwen3arch-ckpt4",
+   "repo_source": "csv",
+   "sha256": "b4232a6376520d701eca6481c22c7be7035969f6a7827b3dcffd8f0ae8454f9b",
+   "size": 1849
+  },
+  {
+   "architectures": [
+    "HF_ColBERT"
+   ],
+   "model_type": null,
+   "path": "fixtures/_none/jinaai__jina-colbert-v2.json",
+   "repo": "jinaai/jina-colbert-v2",
+   "repo_source": "csv",
+   "sha256": "be60be0e1395e40b2726212570fced67b599b41abb8ad27194fe1bbfc36f6029",
+   "size": 1577
+  },
+  {
+   "architectures": [
+    "LongcatFlashNgramForCausalLM"
+   ],
+   "model_type": null,
+   "path": "fixtures/_none/meituan-longcat__LongCat-Flash-Lite.json",
+   "repo": "meituan-longcat/LongCat-Flash-Lite",
+   "repo_source": "csv",
+   "sha256": "c5719c2df9c931b11b0336a0fa8bfdceae617c5303d1bad7197436a7daea33a0",
+   "size": 1339
+  },
+  {
+   "architectures": [
+    "MoonshotKimiaForCausalLM"
+   ],
+   "model_type": null,
+   "path": "fixtures/_none/moonshotai__Kimi-Audio-7B-Instruct.json",
+   "repo": "moonshotai/Kimi-Audio-7B-Instruct",
+   "repo_source": "csv",
+   "sha256": "515a352843ad45896514ecf707b0983fa39bd3ee2c32bd88cc4fa98a50516ba1",
+   "size": 1239
+  },
+  {
+   "architectures": [
+    "PEagleDraftModel"
+   ],
+   "model_type": null,
+   "path": "fixtures/_none/nm-testing__qwen3-8b-peagle-speculators.json",
+   "repo": "nm-testing/qwen3-8b-peagle-speculators",
+   "repo_source": "csv",
+   "sha256": "4c5b1ee4982d97df3263e48a87f88feefbe7c580faf557d3cb92e99d33dcc12d",
+   "size": 1701
+  },
+  {
+   "architectures": [
+    "AfmoeForCausalLM"
+   ],
+   "model_type": "afmoe",
+   "path": "fixtures/afmoe/arcee-ai__Trinity-Nano-Preview.json",
+   "repo": "arcee-ai/Trinity-Nano-Preview",
+   "repo_source": "csv",
+   "sha256": "15750458af859d21ad4fe4460cfe1e77a9415dc50cbd29b539b46566300f64f3",
+   "size": 2556
+  },
+  {
+   "architectures": [
+    "AliceAIForCausalLM"
+   ],
+   "model_type": "alice_ai",
+   "path": "fixtures/alice_ai/yandex__AliceAI-Foundation-80B-A3B-Base.json",
+   "repo": "yandex/AliceAI-Foundation-80B-A3B-Base",
+   "repo_source": "csv",
+   "sha256": "9cabf840ba76c5e1d6dbff5f3f08f92fa230d5f3f199abcd416ae6056d637ab7",
+   "size": 2240
+  },
+  {
+   "architectures": [
+    "Alpamayo2Super"
+   ],
+   "model_type": "alpamayo2_super",
+   "path": "fixtures/alpamayo2_super/nvidia__Alpamayo2-Super.json",
+   "repo": "nvidia/Alpamayo2-Super",
+   "repo_source": "csv",
+   "sha256": "7dca4e806e5fb6334f4988b7954492246aa9edd90442528abf59fedaa5437ab3",
+   "size": 11171
+  },
+  {
+   "architectures": [
+    "AudioFlamingo3ForConditionalGeneration"
+   ],
+   "model_type": "audioflamingo3",
+   "path": "fixtures/audioflamingo3/nvidia__audio-flamingo-3-hf.json",
+   "repo": "nvidia/audio-flamingo-3-hf",
+   "repo_source": "csv",
+   "sha256": "547254e919aad4846ddd90340f30a9a935c3c4d033fead9cc1121ecdd3b13ef7",
+   "size": 2093
+  },
+  {
+   "architectures": [
+    "AXK1ForCausalLM"
+   ],
+   "model_type": "axk1",
+   "path": "fixtures/axk1/skt__A.X-K1.json",
+   "repo": "skt/A.X-K1",
+   "repo_source": "csv",
+   "sha256": "f01a5e3f8e3b491ff84eb15fa24bb53f86a4d58398529b9a0d706dc18428b302",
+   "size": 1324
+  },
+  {
+   "architectures": [
+    "BagelForConditionalGeneration"
+   ],
+   "model_type": "bagel",
+   "path": "fixtures/bagel/ByteDance-Seed__BAGEL-7B-MoT.json",
+   "repo": "ByteDance-Seed/BAGEL-7B-MoT",
+   "repo_source": "csv",
+   "sha256": "0795703a1d2ceeaa44bfe1275ef29b3c0dce6c4e1d479ea1cd3e9dd0967c1810",
+   "size": 1443
+  },
+  {
+   "architectures": [
+    "BailingMoeV2_5ForCausalLM"
+   ],
+   "model_type": "bailing_hybrid",
+   "path": "fixtures/bailing_hybrid/inclusionAI__Ling-2.5-1T.json",
+   "repo": "inclusionAI/Ling-2.5-1T",
+   "repo_source": "csv",
+   "sha256": "93cc7a965587eeeda5de2df444e746cf72e283945b2b761c56640ca87d9c9b9c",
+   "size": 1887
+  },
+  {
+   "architectures": [
+    "BailingMoeV3ForCausalLM"
+   ],
+   "model_type": "bailing_hybrid",
+   "path": "fixtures/bailing_hybrid/inclusionAI__Ling-3.0-flash.json",
+   "repo": "inclusionAI/Ling-3.0-flash",
+   "repo_source": "csv",
+   "sha256": "6c1bd3c25e8b2db7ed954bd08291fa706ab2596a16b2cbab397ca75d44979c3b",
+   "size": 2897
+  },
+  {
+   "architectures": [
+    "BailingMoeV2_5ForCausalLM"
+   ],
+   "model_type": "bailing_hybrid",
+   "path": "fixtures/bailing_hybrid/inclusionAI__Ring-2.5-1T.json",
+   "repo": "inclusionAI/Ring-2.5-1T",
+   "repo_source": "csv",
+   "sha256": "c1e8932c3c7546bad19d356d31ce21c9c5c60b5500ddef45498741d957204403",
+   "size": 3131
+  },
+  {
+   "architectures": [
+    "BailingMoeV3VLForConditionalGeneration"
+   ],
+   "model_type": "bailing_moe_v3_vl",
+   "path": "fixtures/bailing_moe_v3_vl/inclusionAI__Ling-3.0-flash-VL.json",
+   "repo": "inclusionAI/Ling-3.0-flash-VL",
+   "repo_source": "csv",
+   "sha256": "5bf44c150dda0ae11975dc923174eed9118b903bada8cd2a158b13a2266a108a",
+   "size": 2565
+  },
+  {
+   "architectures": [
+    "BeamForCausalLM"
+   ],
+   "model_type": "beam",
+   "path": "fixtures/beam/reflection__Beam-1.0-501B-A23B.json",
+   "repo": "reflection/Beam-1.0-501B-A23B",
+   "repo_source": "csv",
+   "sha256": "c5dcc35e5f0135faaf50f91cedde15f66a50859663b4f669b077b3bc75bb65fd",
+   "size": 3015
+  },
+  {
+   "architectures": [
+    "HF_ColBERT"
+   ],
+   "model_type": "bert",
+   "path": "fixtures/bert/colbert-ir__colbertv2.0.json",
+   "repo": "colbert-ir/colbertv2.0",
+   "repo_source": "csv",
+   "sha256": "cbdcc01dc7772fd0e5e1d85d5de695faf8c4935ae3c7ea3fdb6c24397b284f3c",
+   "size": 743
+  },
+  {
+   "architectures": [
+    "BertForMaskedLM"
+   ],
+   "model_type": "bert",
+   "path": "fixtures/bert/google-bert__bert-base-uncased.json",
+   "repo": "google-bert/bert-base-uncased",
+   "repo_source": "csv",
+   "sha256": "7160e1553ad2ca51d8c1cb066be533db31826e12d173824c1bb0cb1a4f187d20",
+   "size": 570
+  },
+  {
+   "architectures": [
+    "Cohere2MoeForCausalLM"
+   ],
+   "model_type": "cohere2_moe",
+   "path": "fixtures/cohere2_moe/CohereLabs__North-Mini-Code-1.0.json",
+   "repo": "CohereLabs/North-Mini-Code-1.0",
+   "repo_source": "csv",
+   "sha256": "0c987a88193e90c89a88a9dbeaba6844f5f24d00b728683338e2ace1476509a7",
+   "size": 2342
+  },
+  {
+   "architectures": [
+    "CohereCompassForConditionalGeneration"
+   ],
+   "model_type": "cohere_compass",
+   "path": "fixtures/cohere_compass/CohereLabs__North-Micro-Vision-Instruct.json",
+   "repo": "CohereLabs/North-Micro-Vision-Instruct",
+   "repo_source": "csv",
+   "sha256": "d1a76c913772b57179785b278ce2d1a4800b685247723fb9c4dafd5cbffe5236",
+   "size": 3731
+  },
+  {
+   "architectures": [
+    "ColPaliForRetrieval"
+   ],
+   "model_type": "colpali",
+   "path": "fixtures/colpali/vidore__colpali-v1.3-hf.json",
+   "repo": "vidore/colpali-v1.3-hf",
+   "repo_source": "csv",
+   "sha256": "bc0fcc32b13b1e5a8356f1fcc41bd5a51d525305d9afa64648124ac45540f606",
+   "size": 1364
+  },
+  {
+   "architectures": [
+    "ColQwen3"
+   ],
+   "model_type": "colqwen3",
+   "path": "fixtures/colqwen3/TomoroAI__tomoro-colqwen3-embed-4b.json",
+   "repo": "TomoroAI/tomoro-colqwen3-embed-4b",
+   "repo_source": "csv",
+   "sha256": "3084ed43dfbe16081839597916fd440ee6d29e283c2b48ed210adac2fd4245d8",
+   "size": 1726
+  },
+  {
+   "architectures": [
+    "Cosmos3EdgeForConditionalGeneration"
+   ],
+   "model_type": "cosmos3_edge",
+   "path": "fixtures/cosmos3_edge/nvidia__Cosmos3-Edge.json",
+   "repo": "nvidia/Cosmos3-Edge",
+   "repo_source": "csv",
+   "sha256": "ffb75b654e65d10e337ea07f20ac4eadc3775dd22c9a8194c87c3b68df5c8f5f",
+   "size": 1679
+  },
+  {
+   "architectures": [
+    "Cosmos3ForConditionalGeneration"
+   ],
+   "model_type": "cosmos3_omni",
+   "path": "fixtures/cosmos3_omni/nvidia__Cosmos3-Super.json",
+   "repo": "nvidia/Cosmos3-Super",
+   "repo_source": "csv",
+   "sha256": "90510e6522fa44b79413076f0cf49b3c1b78241c53cfaf70ea0095bb7ed611a0",
+   "size": 8168
+  },
+  {
+   "architectures": [
+    "DeepseekV32ForCausalLM"
+   ],
+   "model_type": "deepseek_v32",
+   "path": "fixtures/deepseek_v32/nvidia__DeepSeek-V3.2-NVFP4.json",
+   "repo": "nvidia/DeepSeek-V3.2-NVFP4",
+   "repo_source": "csv",
+   "sha256": "6c15a56d351458fa62d2eb1b6fa6a56d150c48b9eb520bab00a85ae608b59488",
+   "size": 1358
+  },
+  {
+   "architectures": [
+    "DeepseekV3BidirectionalModel"
+   ],
+   "model_type": "deepseek_v3_bidirec",
+   "path": "fixtures/deepseek_v3_bidirec/ai-sage__Giga-Embeddings-instruct-10B-A1.8B-0826.json",
+   "repo": "ai-sage/Giga-Embeddings-instruct-10B-A1.8B-0826",
+   "repo_source": "csv",
+   "sha256": "faa0fe2dcab877059ecec1849295846cc93c31cf846dbed4b353d116c6beca42",
+   "size": 1614
+  },
+  {
+   "architectures": [
+    "DeepseekV4ForCausalLM"
+   ],
+   "model_type": "deepseek_v4",
+   "path": "fixtures/deepseek_v4/deepseek-ai__DeepSeek-V4-Flash-Vision-Exp.json",
+   "repo": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+   "repo_source": "csv",
+   "sha256": "6cd841bdd6702f5e2ac34671bc78047ed80817102465525ae2a41c502abbcd75",
+   "size": 2165
+  },
+  {
+   "architectures": [
+    "DeepseekV4ForCausalLM"
+   ],
+   "model_type": "deepseek_v4",
+   "path": "fixtures/deepseek_v4/deepseek-ai__DeepSeek-V4-Flash.json",
+   "repo": "deepseek-ai/DeepSeek-V4-Flash",
+   "repo_source": "csv",
+   "sha256": "b628e63398a645abc711d92207f8737dd8140f7a4ef1e0a5b3616019e0ddd818",
+   "size": 1749
+  },
+  {
+   "architectures": [
+    "DeepseekV4ForCausalLM"
+   ],
+   "model_type": "deepseek_v4",
+   "path": "fixtures/deepseek_v4/deepseek-ai__DeepSeek-V4-Pro-DSpark.json",
+   "repo": "deepseek-ai/DeepSeek-V4-Pro-DSpark",
+   "repo_source": "csv",
+   "sha256": "9dd2a89255469e120b333668ef5a169b7ae46c00f6bbab786bf0be457546aec0",
+   "size": 1967
+  },
+  {
+   "architectures": [
+    "DeepseekV4ForCausalLM"
+   ],
+   "model_type": "deepseek_v4",
+   "path": "fixtures/deepseek_v4/deepseek-ai__DeepSeek-V4-Pro.json",
+   "repo": "deepseek-ai/DeepSeek-V4-Pro",
+   "repo_source": "csv",
+   "sha256": "5fe4568daee51c208cb8a79538eaeda090ae011ade1dee2c386aa95f569c810e",
+   "size": 1828
+  },
+  {
+   "architectures": [
+    "DeepseekV41ForCausalLM"
+   ],
+   "model_type": "deepseek_v41",
+   "path": "fixtures/deepseek_v41/deepseek-ai__DeepSeek-V4.1-Flash.json",
+   "repo": "deepseek-ai/DeepSeek-V4.1-Flash",
+   "repo_source": "csv",
+   "sha256": "8be45ce0476004a3f529fd896115a4a2e800a129ad2d3ec05b16050f52e21879",
+   "size": 3311
+  },
+  {
+   "architectures": [
+    "DeepseekOCR2ForCausalLM"
+   ],
+   "model_type": "deepseek_vl_v2",
+   "path": "fixtures/deepseek_vl_v2/deepseek-ai__DeepSeek-OCR-2.json",
+   "repo": "deepseek-ai/DeepSeek-OCR-2",
+   "repo_source": "csv",
+   "sha256": "e2bb23b49b445f0bfd6eeb978bac9f19a2df82cb38472754e4ae83662d18f845",
+   "size": 2588
+  },
+  {
+   "architectures": [
+    "DiffusionGemmaForBlockDiffusion"
+   ],
+   "model_type": "diffusion_gemma",
+   "path": "fixtures/diffusion_gemma/google__diffusiongemma-26B-A4B-it.json",
+   "repo": "google/diffusiongemma-26B-A4B-it",
+   "repo_source": "csv",
+   "sha256": "13b11d2fe87302cc2332c64eb9eb4ac305d9b8a123ffe9c5cb5b1920fc70c506",
+   "size": 3469
+  },
+  {
+   "architectures": [
+    "DomynEdgeForCausalLM"
+   ],
+   "model_type": "domynedge",
+   "path": "fixtures/domynedge/domyn__Domyn-Edge-Base.json",
+   "repo": "domyn/Domyn-Edge-Base",
+   "repo_source": "csv",
+   "sha256": "12a4a1dd9939d78c50512dd996e130b62297aba78927c304685ae5d2e8dd377c",
+   "size": 3744
+  },
+  {
+   "architectures": [
+    "DoryForCausalLM"
+   ],
+   "model_type": "dory",
+   "path": "fixtures/dory/nvidia__NVIDIA-Nemotron-Labs-Dory1.0-4B-BF16.json",
+   "repo": "nvidia/NVIDIA-Nemotron-Labs-Dory1.0-4B-BF16",
+   "repo_source": "csv",
+   "sha256": "8fcd066bdf77982e3d14d169a8f158eca1d05e42fb122cf31d0150ca71b3a84d",
+   "size": 2226
+  },
+  {
+   "architectures": [
+    "Dots3NoteForCausalLM"
+   ],
+   "model_type": "dots3_note",
+   "path": "fixtures/dots3_note/dots-studio__dots3-note-prev.json",
+   "repo": "dots-studio/dots3-note-prev",
+   "repo_source": "csv",
+   "sha256": "99b7de680dd456111c36efb8749f8ae7177328e97b65a3e39a6700cbc1173833",
+   "size": 4813
+  },
+  {
+   "architectures": [
+    "EmbeddingGemma2Model"
+   ],
+   "model_type": "embedding_gemma2",
+   "path": "fixtures/embedding_gemma2/google__embeddinggemma-2.json",
+   "repo": "google/embeddinggemma-2",
+   "repo_source": "csv",
+   "sha256": "b8f1e9931b57fbc054acdb445c41765d55b0074c58d145fa82839941ad1b5bb3",
+   "size": 4455
+  },
+  {
+   "architectures": [
+    "Exaone4_5_ForConditionalGeneration"
+   ],
+   "model_type": "exaone4_5",
+   "path": "fixtures/exaone4_5/LGAI-EXAONE__EXAONE-4.5-33B.json",
+   "repo": "LGAI-EXAONE/EXAONE-4.5-33B",
+   "repo_source": "csv",
+   "sha256": "29e21fcbfe95268e11a151577b6440d77385064b41c960aceff83a2b70eea090",
+   "size": 3537
+  },
+  {
+   "architectures": [
+    "ExaoneMoeForCausalLM"
+   ],
+   "model_type": "exaone_moe",
+   "path": "fixtures/exaone_moe/LGAI-EXAONE__K-EXAONE-2.0-750B-A37B.json",
+   "repo": "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B",
+   "repo_source": "csv",
+   "sha256": "9af1d47a5b0aaadd8eefb71e55de885976acea7e633e9cd04c155689789222c1",
+   "size": 5606
+  },
+  {
+   "architectures": [
+    "ExaoneMoeForCausalLM"
+   ],
+   "model_type": "exaone_moe",
+   "path": "fixtures/exaone_moe/LGAI-EXAONE__K-EXAONE-236B-A23B.json",
+   "repo": "LGAI-EXAONE/K-EXAONE-236B-A23B",
+   "repo_source": "csv",
+   "sha256": "afcc4355b0a504a1ea3333cda7217b63ff153560fccfa1c1718f681fbb8d4d8b",
+   "size": 3972
+  },
+  {
+   "architectures": [
+    "FlintForCausalLM"
+   ],
+   "model_type": "flint",
+   "path": "fixtures/flint/RecursiveSI__flint.json",
+   "repo": "RecursiveSI/flint",
+   "repo_source": "csv",
+   "sha256": "a57c33d11f725099105b657043c113149763066d204fd472d0b2ee399abc2ba7",
+   "size": 2451
+  },
+  {
+   "architectures": [
+    "Gemma3ForCausalLM"
+   ],
+   "model_type": "gemma3_text",
+   "path": "fixtures/gemma3_text/EssentialAI__rnj-1-instruct.json",
+   "repo": "EssentialAI/rnj-1-instruct",
+   "repo_source": "csv",
+   "sha256": "6c36b82027157061b0b86d53ee2c2b57725f19ccf295b3a29ab4445bf55d6c53",
+   "size": 1831
+  },
+  {
+   "architectures": [
+    "Gemma4ForConditionalGeneration"
+   ],
+   "model_type": "gemma4",
+   "path": "fixtures/gemma4/google__gemma-4-31B-it.json",
+   "repo": "google/gemma-4-31B-it",
+   "repo_source": "csv",
+   "sha256": "e967dd38bc5cfd38bd09a995a7bf4a754075df2b46aba68f7fbb5a791e6d8dd1",
+   "size": 4621
+  },
+  {
+   "architectures": [
+    "Gemma4ForConditionalGeneration"
+   ],
+   "model_type": "gemma4",
+   "path": "fixtures/gemma4/google__gemma-4-E2B-it.json",
+   "repo": "google/gemma-4-E2B-it",
+   "repo_source": "csv",
+   "sha256": "1b28f3d2c3100f6c594754b81107428bd7b822a7f48272ca681dae9d2ec38330",
+   "size": 4954
+  },
+  {
+   "architectures": [
+    "Gemma4ForConditionalGeneration"
+   ],
+   "model_type": "gemma4",
+   "path": "fixtures/gemma4/google__gemma-4-E4B-it.json",
+   "repo": "google/gemma-4-E4B-it",
+   "repo_source": "csv",
+   "sha256": "33b10c02df3c2e8536cf323d29d53262aaa2f4d11dbe19bc729373fbe90295d4",
+   "size": 5145
+  },
+  {
+   "architectures": [
+    "Gemma4DSparkModel"
+   ],
+   "model_type": "gemma4_text",
+   "path": "fixtures/gemma4_text/deepseek-ai__dspark_gemma4_12b_block7.json",
+   "repo": "deepseek-ai/dspark_gemma4_12b_block7",
+   "repo_source": "csv",
+   "sha256": "312e893cdb8b2b451f65432145c574604d8ef27a22db199376a96499ed0205a6",
+   "size": 1882
+  },
+  {
+   "architectures": [
+    "Gemma4UnifiedForConditionalGeneration"
+   ],
+   "model_type": "gemma4_unified",
+   "path": "fixtures/gemma4_unified/google__gemma-4-12B-it.json",
+   "repo": "google/gemma-4-12B-it",
+   "repo_source": "csv",
+   "sha256": "478c46e8d2c52d5c2d85bf67e3b3e8c90e7c9d91086cee27e3c267907e936bd9",
+   "size": 4423
+  },
+  {
+   "architectures": [
+    "Glm4MoeForCausalLM"
+   ],
+   "model_type": "glm4_moe",
+   "path": "fixtures/glm4_moe/zai-org__GLM-4.5.json",
+   "repo": "zai-org/GLM-4.5",
+   "repo_source": "csv",
+   "sha256": "a5dbd07371a8a51b0013a63a7a70543a7094af1a9598812b537133e6da78dda7",
+   "size": 1007
+  },
+  {
+   "architectures": [
+    "Glm4MoeLiteForCausalLM"
+   ],
+   "model_type": "glm4_moe_lite",
+   "path": "fixtures/glm4_moe_lite/zai-org__GLM-4.7-Flash.json",
+   "repo": "zai-org/GLM-4.7-Flash",
+   "repo_source": "csv",
+   "sha256": "dc9b97c7c9bed726a2e6939da4234d5c43abb3edec8812068c9a1af1dbc13acb",
+   "size": 1070
+  },
+  {
+   "architectures": [
+    "Glm5NextForConditionalGeneration"
+   ],
+   "model_type": "glm5_next",
+   "path": "fixtures/glm5_next/zai-org__GLM-5.3-Flash.json",
+   "repo": "zai-org/GLM-5.3-Flash",
+   "repo_source": "csv",
+   "sha256": "bb8f01c42cb92a52ca72e65afb4d5bd8d11aef083cd210e8de25dfb904f23e9f",
+   "size": 69416
+  },
+  {
+   "architectures": [
+    "GlmMoeDsaForCausalLM"
+   ],
+   "model_type": "glm_moe_dsa",
+   "path": "fixtures/glm_moe_dsa/zai-org__GLM-5.json",
+   "repo": "zai-org/GLM-5",
+   "repo_source": "csv",
+   "sha256": "308d3ceebe7bd9c2246d20550d5b793098dd03838d1e504f8236063ae152bcae",
+   "size": 1384
+  },
+  {
+   "architectures": [
+    "GlmOcrForConditionalGeneration"
+   ],
+   "model_type": "glm_ocr",
+   "path": "fixtures/glm_ocr/zai-org__GLM-OCR.json",
+   "repo": "zai-org/GLM-OCR",
+   "repo_source": "csv",
+   "sha256": "ad537817b2becde827cbb23569a1dd83a352ee64cc34ce751a4ef000ecce4b5f",
+   "size": 1737
+  },
+  {
+   "architectures": [
+    "GlmAsrForConditionalGeneration"
+   ],
+   "model_type": "glmasr",
+   "path": "fixtures/glmasr/zai-org__GLM-ASR-Nano-2512.json",
+   "repo": "zai-org/GLM-ASR-Nano-2512",
+   "repo_source": "csv",
+   "sha256": "5e410db9ee1000a87e0b0e7bf6c5d91b313887c28f769ace68a07da66613c4c9",
+   "size": 1448
+  },
+  {
+   "architectures": [
+    "Granite4VisionForConditionalGeneration"
+   ],
+   "model_type": "granite4_vision",
+   "path": "fixtures/granite4_vision/ibm-granite__granite-vision-4.1-4b.json",
+   "repo": "ibm-granite/granite-vision-4.1-4b",
+   "repo_source": "csv",
+   "sha256": "dcff6e9ba19e2b718fcc2a218a008939e5d96e6fdd4f4ca67828b892db43ceaa",
+   "size": 3339
+  },
+  {
+   "architectures": [
+    "GraniteSpeechPlusForConditionalGeneration"
+   ],
+   "model_type": "granite_speech_plus",
+   "path": "fixtures/granite_speech_plus/ibm-granite__granite-speech-4.1-2b-plus.json",
+   "repo": "ibm-granite/granite-speech-4.1-2b-plus",
+   "repo_source": "csv",
+   "sha256": "067f17dea1dc207175d3e4c8c1794d3f5dfbb6b99283640799b33530281c62f0",
+   "size": 2481
+  },
+  {
+   "architectures": [
+    "GraniteSWAForCausalLM"
+   ],
+   "model_type": "granite_swa",
+   "path": "fixtures/granite_swa/ibm-granite__granite-swash-2b.json",
+   "repo": "ibm-granite/granite-swash-2b",
+   "repo_source": "csv",
+   "sha256": "654162ab4a5373344d6e93ea744b577814224c442a02a08bde4a04c516d28795",
+   "size": 1288
+  },
+  {
+   "architectures": [
+    "GraniteMoeSWAForCausalLM"
+   ],
+   "model_type": "granitemoe_swa",
+   "path": "fixtures/granitemoe_swa/ibm-granite__granite-swash-3b-a600m.json",
+   "repo": "ibm-granite/granite-swash-3b-a600m",
+   "repo_source": "csv",
+   "sha256": "4fe1db27b5f72553fa0ee8e257e47ce27da78cae2b2c775e15bb1c3a9ffdbd99",
+   "size": 1714
+  },
+  {
+   "architectures": [
+    "HrmTextForCausalLM"
+   ],
+   "model_type": "hrm_text",
+   "path": "fixtures/hrm_text/sapientinc__HRM-Text-1B.json",
+   "repo": "sapientinc/HRM-Text-1B",
+   "repo_source": "csv",
+   "sha256": "5a708f1230e8abe305c875c92cf4ed481377ba39d34d4d93a45ea5c9a5b924e2",
+   "size": 619
+  },
+  {
+   "architectures": [
+    "HunYuanVLForConditionalGeneration"
+   ],
+   "model_type": "hunyuan_vl",
+   "path": "fixtures/hunyuan_vl/tencent__HunyuanOCR.json",
+   "repo": "tencent/HunyuanOCR",
+   "repo_source": "csv",
+   "sha256": "14aeb192e94fbe9c3ec71fb7ed003955397be08eb4b345dd7b923549798b60ba",
+   "size": 2233
+  },
+  {
+   "architectures": [
+    "HYV3ForCausalLM"
+   ],
+   "model_type": "hy_v3",
+   "path": "fixtures/hy_v3/tencent__Hy3-preview.json",
+   "repo": "tencent/Hy3-preview",
+   "repo_source": "csv",
+   "sha256": "0172ae631b01e8a9432d83f9aba7e2b84fa296e6855dc5d0be78e6acaa09f03d",
+   "size": 1194
+  },
+  {
+   "architectures": [
+    "HYV3ForCausalLM"
+   ],
+   "model_type": "hy_v3",
+   "path": "fixtures/hy_v3/tencent__Hy3.json",
+   "repo": "tencent/Hy3",
+   "repo_source": "csv",
+   "sha256": "0c9daab42bff9cce1b6f058b10d7b730f76d583e583e28ad56e92b36373246f0",
+   "size": 1218
+  },
+  {
+   "architectures": [
+    "HYV4ForCausalLM"
+   ],
+   "model_type": "hy_v4",
+   "path": "fixtures/hy_v4/tencent__Hy4-preview.json",
+   "repo": "tencent/Hy4-preview",
+   "repo_source": "csv",
+   "sha256": "a2c0dc5ec7c5b85b83c5514d1f923dcaeb3510ac0aa0816c3c26a2418ee80f8d",
+   "size": 6315
+  },
+  {
+   "architectures": [
+    "HyperCLOVAXForCausalLM"
+   ],
+   "model_type": "hyperclovax",
+   "path": "fixtures/hyperclovax/naver-hyperclovax__HyperCLOVAX-SEED-Think-14B.json",
+   "repo": "naver-hyperclovax/HyperCLOVAX-SEED-Think-14B",
+   "repo_source": "csv",
+   "sha256": "da67d1782f88e44f04d2f853afef75f8183806f7874e568e317257e7e6b2a7e5",
+   "size": 1214
+  },
+  {
+   "architectures": [
+    "HyperCLOVAXVisionV2ForConditionalGeneration"
+   ],
+   "model_type": "hyperclovax_vision_v2",
+   "path": "fixtures/hyperclovax_vision_v2/naver-hyperclovax__HyperCLOVAX-SEED-Think-32B.json",
+   "repo": "naver-hyperclovax/HyperCLOVAX-SEED-Think-32B",
+   "repo_source": "csv",
+   "sha256": "df78abe6cf9f964c07eb15c377d22ae85bff1942f07974ec96c06783a0f36aa7",
+   "size": 2517
+  },
+  {
+   "architectures": [
+    "InklingForConditionalGeneration"
+   ],
+   "model_type": "inkling_mm_model",
+   "path": "fixtures/inkling_mm_model/thinkingmachines__Inkling-NVFP4.json",
+   "repo": "thinkingmachines/Inkling-NVFP4",
+   "repo_source": "csv",
+   "sha256": "58720f145bcecef9a7ab2b419ab346e7c634af8d2f3e7362e900d00f789ea46c",
+   "size": 2415
+  },
+  {
+   "architectures": [
+    "InklingForConditionalGeneration"
+   ],
+   "model_type": "inkling_mm_model",
+   "path": "fixtures/inkling_mm_model/thinkingmachines__Inkling.json",
+   "repo": "thinkingmachines/Inkling",
+   "repo_source": "csv",
+   "sha256": "58720f145bcecef9a7ab2b419ab346e7c634af8d2f3e7362e900d00f789ea46c",
+   "size": 2415
+  },
+  {
+   "architectures": [
+    "InternS2PreviewForConditionalGeneration"
+   ],
+   "model_type": "intern_s2_preview",
+   "path": "fixtures/intern_s2_preview/internlm__Intern-S2-Preview.json",
+   "repo": "internlm/Intern-S2-Preview",
+   "repo_source": "csv",
+   "sha256": "14943b1574b2467db8e1e2474d9f84a0e09e67ba296f9e7a14de877de8f84767",
+   "size": 4422
+  },
+  {
+   "architectures": [
+    "InternS1ProForConditionalGeneration"
+   ],
+   "model_type": "interns1_pro",
+   "path": "fixtures/interns1_pro/internlm__Intern-S1-Pro.json",
+   "repo": "internlm/Intern-S1-Pro",
+   "repo_source": "csv",
+   "sha256": "d29a25b658cd209c1b72ea4cea42953e57a085e022cbcce611c28448e7ea1719",
+   "size": 35975
+  },
+  {
+   "architectures": [
+    "InternS2MobiusForConditionalGeneration"
+   ],
+   "model_type": "interns2_mobius",
+   "path": "fixtures/interns2_mobius/internlm__Intern-S2-Mobius.json",
+   "repo": "internlm/Intern-S2-Mobius",
+   "repo_source": "csv",
+   "sha256": "c7ad0c527f10af163042bfa272b315458912807eb3492f24a5e6b34e768e7e68",
+   "size": 3705
+  },
+  {
+   "architectures": [
+    "IQuestCoderForCausalLM"
+   ],
+   "model_type": "iquestcoder",
+   "path": "fixtures/iquestcoder/IQuestLab__IQuest-Coder-V1-40B-Instruct.json",
+   "repo": "IQuestLab/IQuest-Coder-V1-40B-Instruct",
+   "repo_source": "csv",
+   "sha256": "cb5090335a09c12eb3bbceabaf2a96eb5800f497eb01558e89f419f7732391f5",
+   "size": 1322
+  },
+  {
+   "architectures": [
+    "IQuestLoopCoderForCausalLM"
+   ],
+   "model_type": "iquestloopcoder",
+   "path": "fixtures/iquestloopcoder/IQuestLab__IQuest-Coder-V1-40B-Loop-Instruct.json",
+   "repo": "IQuestLab/IQuest-Coder-V1-40B-Loop-Instruct",
+   "repo_source": "csv",
+   "sha256": "d8fe4db01164b642779ddf1b322b924a2a4a2dc803027ddd5ed925097cc5c721",
+   "size": 969
+  },
+  {
+   "architectures": [
+    "IsaacForConditionalGeneration"
+   ],
+   "model_type": "isaac",
+   "path": "fixtures/isaac/PerceptronAI__Isaac-0.2-2B-Preview.json",
+   "repo": "PerceptronAI/Isaac-0.2-2B-Preview",
+   "repo_source": "csv",
+   "sha256": "af9471d874f698b35415f162833005a1b5167af7dc0ee41c709a50bd220987f6",
+   "size": 4109
+  },
+  {
+   "architectures": [
+    "JinaEmbeddingsV5Model"
+   ],
+   "model_type": "jina_embeddings_v5",
+   "path": "fixtures/jina_embeddings_v5/jinaai__jina-embeddings-v5-text-small.json",
+   "repo": "jinaai/jina-embeddings-v5-text-small",
+   "repo_source": "csv",
+   "sha256": "1af1e1269488c83d8b2332e42099f0d2201d687fbe074d1ed096c6201f283546",
+   "size": 991
+  },
+  {
+   "architectures": [
+    "K2HorizonForCausalLM"
+   ],
+   "model_type": "k2_horizon",
+   "path": "fixtures/k2_horizon/IFM__K2-Horizon-7B.json",
+   "repo": "IFM/K2-Horizon-7B",
+   "repo_source": "csv",
+   "sha256": "bf4df2c9253d62a89170038ee73cba1e75173cc50e2b4142458b4f5a95ee268c",
+   "size": 2067
+  },
+  {
+   "architectures": [
+    "K3DSparkModel"
+   ],
+   "model_type": "k3_dspark",
+   "path": "fixtures/k3_dspark/Inferact__Kimi-K3-DSpark.json",
+   "repo": "Inferact/Kimi-K3-DSpark",
+   "repo_source": "csv",
+   "sha256": "5a3c2f4f91c965ed93b14de5f12a4e9c17fd98d8c99916ed2deb26ce8702f970",
+   "size": 1251
+  },
+  {
+   "architectures": [
+    "KananaVForConditionalGeneration"
+   ],
+   "model_type": "kanana-1.5-v",
+   "path": "fixtures/kanana-1.5-v/kakaocorp__kanana-1.5-v-3b-instruct.json",
+   "repo": "kakaocorp/kanana-1.5-v-3b-instruct",
+   "repo_source": "csv",
+   "sha256": "500c82ccfd5f8368c7a4dbbf3af13139a379db853a21a85c42df42f127d81e52",
+   "size": 7099
+  },
+  {
+   "architectures": [
+    "KimiK25ForConditionalGeneration"
+   ],
+   "model_type": "kimi_k25",
+   "path": "fixtures/kimi_k25/moonshotai__Kimi-K2.5.json",
+   "repo": "moonshotai/Kimi-K2.5",
+   "repo_source": "csv",
+   "sha256": "acd5bb01a16f64b309599cd6ed196be056f613c99d6bc9300692b82cd10882f6",
+   "size": 5416
+  },
+  {
+   "architectures": [
+    "KimiK3ForConditionalGeneration"
+   ],
+   "model_type": "kimi_k3",
+   "path": "fixtures/kimi_k3/moonshotai__Kimi-K3.json",
+   "repo": "moonshotai/Kimi-K3",
+   "repo_source": "csv",
+   "sha256": "9710e121a58d03ac92c8d6da287a19541994319afbbe6d6202af001ffd379213",
+   "size": 7006
+  },
+  {
+   "architectures": [
+    "KimiLinearForCausalLM"
+   ],
+   "model_type": "kimi_linear",
+   "path": "fixtures/kimi_linear/moonshotai__Kimi-Linear-48B-A3B-Instruct.json",
+   "repo": "moonshotai/Kimi-Linear-48B-A3B-Instruct",
+   "repo_source": "csv",
+   "sha256": "a6ac3c2c4b5aa72370f9727f49ffa4432715d20061889acdb37c688be853096e",
+   "size": 1751
+  },
+  {
+   "architectures": [
+    "Kolibri1ForCausalLM"
+   ],
+   "model_type": "kolibri1",
+   "path": "fixtures/kolibri1/Aleph-Alpha__Kolibri-1.json",
+   "repo": "Aleph-Alpha/Kolibri-1",
+   "repo_source": "csv",
+   "sha256": "59375c4abcf65517b408c2095805fc4844a31fe5c986db43992afe1736794f6e",
+   "size": 3957
+  },
+  {
+   "architectures": [
+    "DFlashLagunaForCausalLM"
+   ],
+   "model_type": "laguna",
+   "path": "fixtures/laguna/poolside__Laguna-XS-2.1-DFlash-NVFP4.json",
+   "repo": "poolside/Laguna-XS-2.1-DFlash-NVFP4",
+   "repo_source": "csv",
+   "sha256": "22bdc5fd9fd41dc6945523fd504f1b70809af0f5ab26c09716e33616033ecf9a",
+   "size": 963
+  },
+  {
+   "architectures": [
+    "LagunaForCausalLM"
+   ],
+   "model_type": "laguna",
+   "path": "fixtures/laguna/poolside__Laguna-XS.2.json",
+   "repo": "poolside/Laguna-XS.2",
+   "repo_source": "csv",
+   "sha256": "ea98d58d56f27126ffaf70df77cac7de1c09af448c09a2734cecf5854fc6d86b",
+   "size": 3372
+  },
+  {
+   "architectures": [
+    "Lfm2Model"
+   ],
+   "model_type": "lfm2",
+   "path": "fixtures/lfm2/LiquidAI__LFM2-ColBERT-350M.json",
+   "repo": "LiquidAI/LFM2-ColBERT-350M",
+   "repo_source": "csv",
+   "sha256": "7fa7f1042dbed4b72a0758b170fc59dfe8526f621439735e5e9a8ee79fe967d0",
+   "size": 1215
+  },
+  {
+   "architectures": [
+    "Lfm2BidirectionalModel"
+   ],
+   "model_type": "lfm2",
+   "path": "fixtures/lfm2/LiquidAI__LFM2.5-Embedding-350M.json",
+   "repo": "LiquidAI/LFM2.5-Embedding-350M",
+   "repo_source": "csv",
+   "sha256": "c44923b7d8e728cfd1293628355889c3c037bd8d0b13093747d595b06fa591ee",
+   "size": 1404
+  },
+  {
+   "architectures": [
+    "Lfm2VlForConditionalGeneration"
+   ],
+   "model_type": "lfm2_vl",
+   "path": "fixtures/lfm2_vl/LiquidAI__LFM2-VL-3B.json",
+   "repo": "LiquidAI/LFM2-VL-3B",
+   "repo_source": "csv",
+   "sha256": "7ab5ba7e926eae0365bb0527166bd5bbd73231a9d02f5f78b7e3eef144068f9d",
+   "size": 2633
+  },
+  {
+   "architectures": [
+    "LlamaBidirectionalModel"
+   ],
+   "model_type": "llama_bidirec",
+   "path": "fixtures/llama_bidirec/nvidia__llama-nemotron-embed-1b-v2.json",
+   "repo": "nvidia/llama-nemotron-embed-1b-v2",
+   "repo_source": "csv",
+   "sha256": "ddf5697053b34611da16ea2dd565f86d4341f14a05fc460b54d20e50a10b9895",
+   "size": 1158
+  },
+  {
+   "architectures": [
+    "LlamaBidirectionalForSequenceClassification"
+   ],
+   "model_type": "llama_bidirec",
+   "path": "fixtures/llama_bidirec/nvidia__llama-nemotron-rerank-1b-v2.json",
+   "repo": "nvidia/llama-nemotron-rerank-1b-v2",
+   "repo_source": "csv",
+   "sha256": "34d45f095f896f950db008c19e2bb4c935fc2866f71212c0cd26022eb1167d7b",
+   "size": 1311
+  },
+  {
+   "architectures": [
+    "LlamaNemotronVLModel"
+   ],
+   "model_type": "llama_nemotron_vl",
+   "path": "fixtures/llama_nemotron_vl/nvidia__llama-nemotron-embed-vl-1b-v2.json",
+   "repo": "nvidia/llama-nemotron-embed-vl-1b-v2",
+   "repo_source": "csv",
+   "sha256": "f2dfebb580204fe735f6e8b5519d1ed612c6a22df8ab1b4ac26776d910128a46",
+   "size": 5875
+  },
+  {
+   "architectures": [
+    "LlamaNemotronVLForSequenceClassification"
+   ],
+   "model_type": "llama_nemotron_vl_rerank",
+   "path": "fixtures/llama_nemotron_vl_rerank/nvidia__llama-nemotron-rerank-vl-1b-v2.json",
+   "repo": "nvidia/llama-nemotron-rerank-vl-1b-v2",
+   "repo_source": "csv",
+   "sha256": "8c0ee3859e0338c3eb89328d02d7073800e03a8a60a87daf26c81287c926d85b",
+   "size": 6056
+  },
+  {
+   "architectures": [
+    "LlavaOnevision2ForConditionalGeneration"
+   ],
+   "model_type": "llava_onevision2",
+   "path": "fixtures/llava_onevision2/lmms-lab-encoder__LLaVA-OneVision-2-8B-Instruct.json",
+   "repo": "lmms-lab-encoder/LLaVA-OneVision-2-8B-Instruct",
+   "repo_source": "csv",
+   "sha256": "93e2921267f19b95c7b07b766684a21898d52462a87c719a9385cc2ed219ff9e",
+   "size": 3143
+  },
+  {
+   "architectures": [
+    "MellumForCausalLM"
+   ],
+   "model_type": "mellum",
+   "path": "fixtures/mellum/JetBrains__Mellum2-12B-A2.5B-Base.json",
+   "repo": "JetBrains/Mellum2-12B-A2.5B-Base",
+   "repo_source": "csv",
+   "sha256": "28953bc64472a20efd1a41e83ba9b4ee076d319fc89bcec1277862b7fd9fc49c",
+   "size": 2319
+  },
+  {
+   "architectures": [
+    "MiMoV2ForCausalLM"
+   ],
+   "model_type": "mimo_v2",
+   "path": "fixtures/mimo_v2/XiaomiMiMo__MiMo-V2.5-Pro.json",
+   "repo": "XiaomiMiMo/MiMo-V2.5-Pro",
+   "repo_source": "csv",
+   "sha256": "7e11c6cd358a841d5ac016fc80c030cad14d418ee125e9bde1eb6d0757b635d6",
+   "size": 5350
+  },
+  {
+   "architectures": [
+    "MiMoV2FlashForCausalLM"
+   ],
+   "model_type": "mimo_v2_flash",
+   "path": "fixtures/mimo_v2_flash/XiaomiMiMo__MiMo-V2-Flash.json",
+   "repo": "XiaomiMiMo/MiMo-V2-Flash",
+   "repo_source": "csv",
+   "sha256": "3f04b3a6c7edc7062e2501dd83a7726c73a1a0383494c7dd4a8a9ab6ca046d79",
+   "size": 4484
+  },
+  {
+   "architectures": [
+    "MingV3ASRForConditionalGeneration"
+   ],
+   "model_type": "ming_v3_asr",
+   "path": "fixtures/ming_v3_asr/inclusionAI__Ming-3.0-asr-tiny.json",
+   "repo": "inclusionAI/Ming-3.0-asr-tiny",
+   "repo_source": "csv",
+   "sha256": "e2738ad0d6b3b2f95ffc8fd716d496ce9cd508958f4acabe89d580f62da88d78",
+   "size": 2351
+  },
+  {
+   "architectures": [
+    "MiniCPMOcrForConditionalGeneration"
+   ],
+   "model_type": "minicpm_ocr",
+   "path": "fixtures/minicpm_ocr/openbmb__MiniCPM-OCR-1.0.json",
+   "repo": "openbmb/MiniCPM-OCR-1.0",
+   "repo_source": "csv",
+   "sha256": "762025491b206967a3c29c3e36ff2cccd8af6a8c750360b61dc91882b573f759",
+   "size": 2275
+  },
+  {
+   "architectures": [
+    "MiniCPMV4_6ForConditionalGeneration"
+   ],
+   "model_type": "minicpmv4_6",
+   "path": "fixtures/minicpmv4_6/openbmb__MiniCPM-V-4_6.json",
+   "repo": "openbmb/MiniCPM-V-4_6",
+   "repo_source": "csv",
+   "sha256": "72d83ac9089bebddf28131b9953908acaf0a5740b868263c8aaac7c40b97991c",
+   "size": 2378
+  },
+  {
+   "architectures": [
+    "MiniMaxM2ForCausalLM"
+   ],
+   "model_type": "minimax_m2",
+   "path": "fixtures/minimax_m2/MiniMaxAI__MiniMax-M2.json",
+   "repo": "MiniMaxAI/MiniMax-M2",
+   "repo_source": "csv",
+   "sha256": "03d0b726553f72ee799f30f52f77b9292b873714abda76ee7e2683953373db87",
+   "size": 2055
+  },
+  {
+   "architectures": [
+    "MiniMaxM3SparseForConditionalGeneration"
+   ],
+   "model_type": "minimax_m3_vl",
+   "path": "fixtures/minimax_m3_vl/MiniMaxAI__MiniMax-M3.json",
+   "repo": "MiniMaxAI/MiniMax-M3",
+   "repo_source": "csv",
+   "sha256": "c9c97ce1e4eece60012d5a10ea87717458bfb1f19c2c7a615a3dbff83d090c6b",
+   "size": 5254
+  },
+  {
+   "architectures": [
+    "Mistral3ForConditionalGeneration"
+   ],
+   "model_type": "mistral3",
+   "path": "fixtures/mistral3/mistralai__Ministral-3-3B-Instruct-2512.json",
+   "repo": "mistralai/Ministral-3-3B-Instruct-2512",
+   "repo_source": "csv",
+   "sha256": "a9c3658d7bb45ab5be77e660d483a9d3f8a3d54bda2c69a1c576bdfefbc16be6",
+   "size": 1903
+  },
+  {
+   "architectures": [
+    "Mistral3ForConditionalGeneration"
+   ],
+   "model_type": "mistral3",
+   "path": "fixtures/mistral3/mistralai__Mistral-Medium-3.5-128B.json",
+   "repo": "mistralai/Mistral-Medium-3.5-128B",
+   "repo_source": "csv",
+   "sha256": "6ebadc48e3bdfff1a6a0b863530c68c9725a49eecd21c0527bdcb21b822f4d71",
+   "size": 1923
+  },
+  {
+   "architectures": [
+    "MistralLarge4ForConditionalGeneration"
+   ],
+   "model_type": "mistral_large4",
+   "path": "fixtures/mistral_large4/mistralai__Mistral-Large-4-1T-A52B.json",
+   "repo": "mistralai/Mistral-Large-4-1T-A52B",
+   "repo_source": "csv",
+   "sha256": "3081fb94f5001f34a21e08437df710bb0b6423beada9184b566a8f5b1ee46277",
+   "size": 8220
+  },
+  {
+   "architectures": [
+    "ModernBertModel"
+   ],
+   "model_type": "modernbert",
+   "path": "fixtures/modernbert/lightonai__GTE-ModernColBERT-v1.json",
+   "repo": "lightonai/GTE-ModernColBERT-v1",
+   "repo_source": "csv",
+   "sha256": "2402ec27c8ec3148b8bed3d27ca97c774d0a9d8c64c36d329821152b7a5cfba4",
+   "size": 1374
+  },
+  {
+   "architectures": null,
+   "model_type": "modernvbert",
+   "path": "fixtures/modernvbert/ModernVBERT__colmodernvbert-merged.json",
+   "repo": "ModernVBERT/colmodernvbert-merged",
+   "repo_source": "csv",
+   "sha256": "b732f7f984f68084fa2e4734128f5ec97dd1eb21ba21c542643b9709f47acb89",
+   "size": 2633
+  },
+  {
+   "architectures": [
+    "Molmo2ForConditionalGeneration"
+   ],
+   "model_type": "molmo2",
+   "path": "fixtures/molmo2/allenai__Molmo2-O-7B.json",
+   "repo": "allenai/Molmo2-O-7B",
+   "repo_source": "csv",
+   "sha256": "918491a079e7c26062393a95b3eb5ee25e4b0ab7d4dbd262edc7b1c6b613a159",
+   "size": 2966
+  },
+  {
+   "architectures": [
+    "HfMoondream"
+   ],
+   "model_type": "moondream3",
+   "path": "fixtures/moondream3/moondream__moondream3-preview.json",
+   "repo": "moondream/moondream3-preview",
+   "repo_source": "csv",
+   "sha256": "59713e0305d3c3e96f99eeee84ae26b0347950d28830aab7f20a21334d27d9d5",
+   "size": 364
+  },
+  {
+   "architectures": [
+    "MossAudioModel"
+   ],
+   "model_type": "moss_audio",
+   "path": "fixtures/moss_audio/OpenMOSS-Team__MOSS-Audio-4B-Instruct.json",
+   "repo": "OpenMOSS-Team/MOSS-Audio-4B-Instruct",
+   "repo_source": "csv",
+   "sha256": "e528a941446f4443f1b9fede12ea484e58a79d494c28d21ef1e73b5148abfbfa",
+   "size": 2714
+  },
+  {
+   "architectures": [
+    "MossTranscribeDiarizeForConditionalGeneration"
+   ],
+   "model_type": "moss_transcribe_diarize",
+   "path": "fixtures/moss_transcribe_diarize/OpenMOSS-Team__MOSS-Transcribe-Diarize.json",
+   "repo": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+   "repo_source": "csv",
+   "sha256": "2b2b7a6e61334152bdd7ecf8a4da3073b4940a097e193d1d2b22093e77535234",
+   "size": 2335
+  },
+  {
+   "architectures": [
+    "MuseGlimmerForConditionalGeneration"
+   ],
+   "model_type": "muse_glimmer",
+   "path": "fixtures/muse_glimmer/meta-models__Muse-Glimmer-30B.json",
+   "repo": "meta-models/Muse-Glimmer-30B",
+   "repo_source": "csv",
+   "sha256": "5a9df2d8a385b3d361ab6ae68d73586f4e775033933bd0cd863fb7f3820e6a14",
+   "size": 5109
+  },
+  {
+   "architectures": [
+    "MuseGlimmerAssistantModel"
+   ],
+   "model_type": "muse_glimmer_assistant",
+   "path": "fixtures/muse_glimmer_assistant/meta-models__Muse-Glimmer-30B-assistant.json",
+   "repo": "meta-models/Muse-Glimmer-30B-assistant",
+   "repo_source": "csv",
+   "sha256": "38915167b64b1e6405492aacae5b1b4511b6431163d2960b9bd25821df6fa30a",
+   "size": 883
+  },
+  {
+   "architectures": [
+    "MuseSparkDSparkModel"
+   ],
+   "model_type": "muse_spark_dspark",
+   "path": "fixtures/muse_spark_dspark/Inferact__Muse-Spark-Open-DSpark.json",
+   "repo": "Inferact/Muse-Spark-Open-DSpark",
+   "repo_source": "csv",
+   "sha256": "588298a4cd6e5179467656644c33d29c31f33f4c951f5c26d2b43aaa390b9af7",
+   "size": 2444
+  },
+  {
+   "architectures": [
+    "NanbeigeForCausalLM"
+   ],
+   "model_type": "nanbeige",
+   "path": "fixtures/nanbeige/Nanbeige__Nanbeige4.2-3B.json",
+   "repo": "Nanbeige/Nanbeige4.2-3B",
+   "repo_source": "csv",
+   "sha256": "f6cb15b22847664f3a6049dc4b58fdd10f1650d112ac99a1da3d051f17c2ca19",
+   "size": 1019
+  },
+  {
+   "architectures": [
+    "NemotronHForCausalLM"
+   ],
+   "model_type": "nemotron_h",
+   "path": "fixtures/nemotron_h/nvidia__NVIDIA-Nemotron-3-Nano-30B-A3B-BF16.json",
+   "repo": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+   "repo_source": "csv",
+   "sha256": "dd9fa380ac107b0477db5a26108db9febe6378e7bb3966a107944853ec4f76f8",
+   "size": 1817
+  },
+  {
+   "architectures": [
+    "NemotronH_Omni_Reasoning_V3"
+   ],
+   "model_type": "nemotron_h_omni",
+   "path": "fixtures/nemotron_h_omni/nvidia__NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16.json",
+   "repo": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+   "repo_source": "csv",
+   "sha256": "be121eafe4c174c8bc7204da2cd063baa0392c0adfd41dd82fc9e0bba5b0f9a0",
+   "size": 5723
+  },
+  {
+   "architectures": [
+    "NemotronParseForConditionalGeneration"
+   ],
+   "model_type": "nemotron_parse",
+   "path": "fixtures/nemotron_parse/nvidia__NVIDIA-Nemotron-Parse-v1.2.json",
+   "repo": "nvidia/NVIDIA-Nemotron-Parse-v1.2",
+   "repo_source": "csv",
+   "sha256": "ddf75154ad32138ef595d7e39fe4990ea7c466150177c2b9c3dba182c92495f4",
+   "size": 10896
+  },
+  {
+   "architectures": [
+    "RadioMBartPrefixForCausalLM"
+   ],
+   "model_type": "nemotron_parse",
+   "path": "fixtures/nemotron_parse/nvidia__Nemotron-3.5-Parse.json",
+   "repo": "nvidia/Nemotron-3.5-Parse",
+   "repo_source": "csv",
+   "sha256": "bff3460ae530573ad2e276627be86cab1b6859754b76e8b196410f17e7f0b7d5",
+   "size": 5735
+  },
+  {
+   "architectures": [
+    "OlmoHybridForCausalLM"
+   ],
+   "model_type": "olmo_hybrid",
+   "path": "fixtures/olmo_hybrid/allenai__Olmo-Hybrid-7B.json",
+   "repo": "allenai/Olmo-Hybrid-7B",
+   "repo_source": "csv",
+   "sha256": "00bdf5c713c1be5c10498de8e248b6a47e132e0c3636b1c7015b4dc55ebe568e",
+   "size": 1597
+  },
+  {
+   "architectures": [
+    "OpenAIPrivacyFilterForTokenClassification"
+   ],
+   "model_type": "openai_privacy_filter",
+   "path": "fixtures/openai_privacy_filter/openai__privacy-filter.json",
+   "repo": "openai/privacy-filter",
+   "repo_source": "csv",
+   "sha256": "b2b26a4a4a000639ad30b0c264adbefe365bdb567fbd7bb27303b8c438375bd1",
+   "size": 3039
+  },
+  {
+   "architectures": [
+    "OpenCUAForConditionalGeneration"
+   ],
+   "model_type": "opencua",
+   "path": "fixtures/opencua/xlangai__OpenCUA-7B.json",
+   "repo": "xlangai/OpenCUA-7B",
+   "repo_source": "csv",
+   "sha256": "77d22b5c7146bd9cb754942504ed248b2fa01d9ab500ee7bc6843331bca59ce9",
+   "size": 1890
+  },
+  {
+   "architectures": [
+    "OpenPanguVLForConditionalGeneration"
+   ],
+   "model_type": "openpangu_vl",
+   "path": "fixtures/openpangu_vl/FreedomIntelligence__openPangu-VL-7B.json",
+   "repo": "FreedomIntelligence/openPangu-VL-7B",
+   "repo_source": "csv",
+   "sha256": "de7bae5316c65bf5768e79b913a5dee11ecfc99ae8031b5de70e58e0c92b150c",
+   "size": 1628
+  },
+  {
+   "architectures": [
+    "OpenVLAForActionPrediction"
+   ],
+   "model_type": "openvla",
+   "path": "fixtures/openvla/openvla__openvla-7b.json",
+   "repo": "openvla/openvla-7b",
+   "repo_source": "csv",
+   "sha256": "edd5c5cf6d7927e07465cf086ebe41f7b3ec8f3b128a51f71d6db14dad7ad8b1",
+   "size": 60712
+  },
+  {
+   "architectures": [
+    "OpsColQwen3Model"
+   ],
+   "model_type": "ops_colqwen3",
+   "path": "fixtures/ops_colqwen3/OpenSearch-AI__Ops-Colqwen3-4B.json",
+   "repo": "OpenSearch-AI/Ops-Colqwen3-4B",
+   "repo_source": "csv",
+   "sha256": "038d311590c71416b6834897cbdb6f7d86e18ce93d48725ee97c6c33bcf21b8b",
+   "size": 1838
+  },
+  {
+   "architectures": [
+    "Ovis2_6_MoeForCausalLM"
+   ],
+   "model_type": "ovis2_6_moe",
+   "path": "fixtures/ovis2_6_moe/AIDC-AI__Ovis2.6-30B-A3B.json",
+   "repo": "AIDC-AI/Ovis2.6-30B-A3B",
+   "repo_source": "csv",
+   "sha256": "bd9ddef0a9d7fa9bf44a86221b3c8a50fa0c1803951de321111bb3f05614684c",
+   "size": 2962
+  },
+  {
+   "architectures": [
+    "PaddleOCRVLForConditionalGeneration"
+   ],
+   "model_type": "paddleocr_vl",
+   "path": "fixtures/paddleocr_vl/PaddlePaddle__PaddleOCR-VL.json",
+   "repo": "PaddlePaddle/PaddleOCR-VL",
+   "repo_source": "csv",
+   "sha256": "ce7f4565f8b1db78532ad5d1b9ebe55c2139d49bd4cb04778b580a08a598f171",
+   "size": 2059
+  },
+  {
+   "architectures": [
+    "Param2MoEForCausalLM"
+   ],
+   "model_type": "param2moe",
+   "path": "fixtures/param2moe/bharatgenai__Param2-17B-A2.4B-Thinking.json",
+   "repo": "bharatgenai/Param2-17B-A2.4B-Thinking",
+   "repo_source": "csv",
+   "sha256": "75924e88529eeb742f9f76e8b1ecd603aecdbb90e0f372f853e9e3b552eb2a51",
+   "size": 1581
+  },
+  {
+   "architectures": [
+    "Phi4ForCausalLMV"
+   ],
+   "model_type": "phi4-siglip",
+   "path": "fixtures/phi4-siglip/microsoft__Phi-4-reasoning-vision-15B.json",
+   "repo": "microsoft/Phi-4-reasoning-vision-15B",
+   "repo_source": "csv",
+   "sha256": "7b7ff89262b61d52fd806a64dad827b2d5231bb3a9fdf33661220e378f6aec22",
+   "size": 1650
+  },
+  {
+   "architectures": [
+    "QianfanOCRForConditionalGeneration"
+   ],
+   "model_type": "qianfan_ocr",
+   "path": "fixtures/qianfan_ocr/baidu__Qianfan-OCR.json",
+   "repo": "baidu/Qianfan-OCR",
+   "repo_source": "csv",
+   "sha256": "038026e7011e3a575c29f8c5c2cbaa151ab329a2c59461c8f1b51bd5f43a4a1b",
+   "size": 1983
+  },
+  {
+   "architectures": [
+    "FireRedASR2ForConditionalGeneration"
+   ],
+   "model_type": "qwen2",
+   "path": "fixtures/qwen2/allendou__FireRedASR2-LLM-vllm.json",
+   "repo": "allendou/FireRedASR2-LLM-vllm",
+   "repo_source": "csv",
+   "sha256": "b30e06c98321f17dcf53c88b10ea0bd2cb5f0b6446f2126b86c5094638d29d22",
+   "size": 874
+  },
+  {
+   "architectures": [
+    "FunASRForConditionalGeneration"
+   ],
+   "model_type": "qwen3",
+   "path": "fixtures/qwen3/FunAudioLLM__Fun-ASR-Nano-2512-vllm.json",
+   "repo": "FunAudioLLM/Fun-ASR-Nano-2512-vllm",
+   "repo_source": "csv",
+   "sha256": "5e72ae4baf304d65bfdf0e779be19817a71f7d65441b096f1dcff377c63ed0e5",
+   "size": 1395
+  },
+  {
+   "architectures": [
+    "Qwen3ForCausalLM"
+   ],
+   "model_type": "qwen3",
+   "path": "fixtures/qwen3/Qwen__Qwen3-8B.json",
+   "repo": "Qwen/Qwen3-8B",
+   "repo_source": "csv",
+   "sha256": "f7c4eadfbbf522470667b797a3c89be2524832d2d599797248dc304fff447c30",
+   "size": 728
+  },
+  {
+   "architectures": [
+    "Qwen3XPressModel"
+   ],
+   "model_type": "qwen3",
+   "path": "fixtures/qwen3/UIUC-SSAIL__Qwen3-8B-XPress-b16.json",
+   "repo": "UIUC-SSAIL/Qwen3-8B-XPress-b16",
+   "repo_source": "csv",
+   "sha256": "1d380d912bde24a459ac611a877037e803fae458679b09c10590cbd91e3be877",
+   "size": 1254
+  },
+  {
+   "architectures": [
+    "Qwen3DSparkModel"
+   ],
+   "model_type": "qwen3",
+   "path": "fixtures/qwen3/deepseek-ai__dspark_qwen3_8b_block7.json",
+   "repo": "deepseek-ai/dspark_qwen3_8b_block7",
+   "repo_source": "csv",
+   "sha256": "e470e70a553616f0dce8f783f42cfd25b7bd7dfdcd57ead680a0623040725611",
+   "size": 1201
+  },
+  {
+   "architectures": [
+    "JinaForRanking"
+   ],
+   "model_type": "qwen3",
+   "path": "fixtures/qwen3/jinaai__jina-reranker-v3.json",
+   "repo": "jinaai/jina-reranker-v3",
+   "repo_source": "csv",
+   "sha256": "625aea6b08e6062e334c4a5009af01ba50140d2d3994084f6f1b05c67dadf98a",
+   "size": 828
+  },
+  {
+   "architectures": [
+    "DFlash2BeamDraftModel"
+   ],
+   "model_type": "qwen3",
+   "path": "fixtures/qwen3/reflection__Beam-1.0-501B-A23B-DFlash2.json",
+   "repo": "reflection/Beam-1.0-501B-A23B-DFlash2",
+   "repo_source": "csv",
+   "sha256": "baf609fba9dd9c8c42b5dd49deff50ee52d515ff8a25758ba166607b1385648b",
+   "size": 1296
+  },
+  {
+   "architectures": [
+    "Qwen3ForCausalLM"
+   ],
+   "model_type": "qwen3",
+   "path": "fixtures/qwen3/voyageai__voyage-4-nano.json",
+   "repo": "voyageai/voyage-4-nano",
+   "repo_source": "csv",
+   "sha256": "bcba1ed5644d9bc592aa6bf0e36e11c6642294b5aef0fe65fdc2d0c8cf098cae",
+   "size": 1041
+  },
+  {
+   "architectures": [
+    "DFlashDraftModel"
+   ],
+   "model_type": "qwen3",
+   "path": "fixtures/qwen3/z-lab__Qwen3-Coder-Next-DFlash.json",
+   "repo": "z-lab/Qwen3-Coder-Next-DFlash",
+   "repo_source": "csv",
+   "sha256": "70b336d6d85f0253ee30ba606740be306355b7b11960931536cafbe15234be1f",
+   "size": 1167
+  },
+  {
+   "architectures": [
+    "DFlash2DraftModel"
+   ],
+   "model_type": "qwen3",
+   "path": "fixtures/qwen3/z-lab__Qwen3.8-27B-DFlash2.json",
+   "repo": "z-lab/Qwen3.8-27B-DFlash2",
+   "repo_source": "csv",
+   "sha256": "873e3556509b0da06e29654ba00d4944888d4b5e8a33afde25f7eb27d321e980",
+   "size": 1239
+  },
+  {
+   "architectures": [
+    "Qwen3_5ForConditionalGeneration"
+   ],
+   "model_type": "qwen3_5",
+   "path": "fixtures/qwen3_5/Cloudflare__clef-flash.json",
+   "repo": "Cloudflare/clef-flash",
+   "repo_source": "csv",
+   "sha256": "66f87f6fb2616b46604daf2a9c67ddc87938296d07156efa34d59b5be49e3238",
+   "size": 2832
+  },
+  {
+   "architectures": [
+    "Qwen3_5ForConditionalGeneration"
+   ],
+   "model_type": "qwen3_5",
+   "path": "fixtures/qwen3_5/Qwen__Qwen3.5-0.8B.json",
+   "repo": "Qwen/Qwen3.5-0.8B",
+   "repo_source": "csv",
+   "sha256": "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204",
+   "size": 2907
+  },
+  {
+   "architectures": [
+    "Qwen3_5ForConditionalGeneration"
+   ],
+   "model_type": "qwen3_5",
+   "path": "fixtures/qwen3_5/Qwen__Qwen3.5-4B.json",
+   "repo": "Qwen/Qwen3.5-4B",
+   "repo_source": "csv",
+   "sha256": "ddc63e1c717afa86c865bb5e01313d89d72bb53b97ad4a8a03ba8510c0621670",
+   "size": 3161
+  },
+  {
+   "architectures": [
+    "ColQwen3_5"
+   ],
+   "model_type": "qwen3_5",
+   "path": "fixtures/qwen3_5/athrael-soju__colqwen3.5-4.5B-v3.json",
+   "repo": "athrael-soju/colqwen3.5-4.5B-v3",
+   "repo_source": "csv",
+   "sha256": "3dfe8743e32defd98768c7777570dbc2d746e8a23295b43c8f9e974ff3f164d2",
+   "size": 2970
+  },
+  {
+   "architectures": [
+    "Qwen3_5Model"
+   ],
+   "model_type": "qwen3_5",
+   "path": "fixtures/qwen3_5/vllm-sr__d3-edge.json",
+   "repo": "vllm-sr/d3-edge",
+   "repo_source": "csv",
+   "sha256": "5e529d9aea2f8d387750acf5b02cc32a47d7e87dc65d6d008fba98e5d15acc4d",
+   "size": 2572
+  },
+  {
+   "architectures": [
+    "Qwen3_5MoeForConditionalGeneration"
+   ],
+   "model_type": "qwen3_5_moe",
+   "path": "fixtures/qwen3_5_moe/Qwen__Qwen3.5-35B-A3B.json",
+   "repo": "Qwen/Qwen3.5-35B-A3B",
+   "repo_source": "csv",
+   "sha256": "5e4d7f74fec2f360eb9cfbfcd6ec0c4c76e684d3a11caaed259d9fd9bfbc7944",
+   "size": 3544
+  },
+  {
+   "architectures": [
+    "Qwen3_5MoeForCausalLM"
+   ],
+   "model_type": "qwen3_5_moe_text",
+   "path": "fixtures/qwen3_5_moe_text/Qwen__Qwen3.8-2.4T-A95B.json",
+   "repo": "Qwen/Qwen3.8-2.4T-A95B",
+   "repo_source": "csv",
+   "sha256": "4e3819548967e319ab435d044a3a331dbe3b078590ce822e9d74b79430533987",
+   "size": 3951
+  },
+  {
+   "architectures": [
+    "Qwen3_5ForCausalLM"
+   ],
+   "model_type": "qwen3_5_text",
+   "path": "fixtures/qwen3_5_text/codecho__Qwen3.5-0.8B-text-only.json",
+   "repo": "codecho/Qwen3.5-0.8B-text-only",
+   "repo_source": "csv",
+   "sha256": "11a3367bbce9d92fed9288289cfe68ef92cfc6b0cec85dc2f9eb237e7a0daf1c",
+   "size": 1742
+  },
+  {
+   "architectures": [
+    "Qwen3ASRForConditionalGeneration"
+   ],
+   "model_type": "qwen3_asr",
+   "path": "fixtures/qwen3_asr/Qwen__Qwen3-ASR-0.6B.json",
+   "repo": "Qwen/Qwen3-ASR-0.6B",
+   "repo_source": "csv",
+   "sha256": "76d3ae4601ce939830b2517f4a6cadb86cc51316c3900af6b020b051c21a478c",
+   "size": 6193
+  },
+  {
+   "architectures": [
+    "Qwen3ASRForConditionalGeneration"
+   ],
+   "model_type": "qwen3_asr",
+   "path": "fixtures/qwen3_asr/Qwen__Qwen3-ForcedAligner-0.6B.json",
+   "repo": "Qwen/Qwen3-ForcedAligner-0.6B",
+   "repo_source": "csv",
+   "sha256": "d616c65d46c4b90bdc651b0a0963ea932732241140f337f9bb6b0335a9c8ef09",
+   "size": 5982
+  },
+  {
+   "architectures": [
+    "Qwen3OmniMoeForConditionalGeneration"
+   ],
+   "model_type": "qwen3_omni_moe",
+   "path": "fixtures/qwen3_omni_moe/Cloudflare__clef-omni.json",
+   "repo": "Cloudflare/clef-omni",
+   "repo_source": "csv",
+   "sha256": "eab5093d47807aaf894119506b238b2b1cee70d08456e894fee9a012d88f2e0d",
+   "size": 13671
+  },
+  {
+   "architectures": [
+    "Qwen3OmniMoeForConditionalGeneration"
+   ],
+   "model_type": "qwen3_omni_moe",
+   "path": "fixtures/qwen3_omni_moe/Qwen__Qwen3-Omni-30B-A3B-Instruct.json",
+   "repo": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+   "repo_source": "csv",
+   "sha256": "eab5093d47807aaf894119506b238b2b1cee70d08456e894fee9a012d88f2e0d",
+   "size": 13671
+  },
+  {
+   "architectures": [
+    "Qwen3VLForConditionalGeneration"
+   ],
+   "model_type": "qwen3_vl",
+   "path": "fixtures/qwen3_vl/Qwen__Qwen3-VL-8B-Instruct.json",
+   "repo": "Qwen/Qwen3-VL-8B-Instruct",
+   "repo_source": "csv",
+   "sha256": "5cd452860dc1e9c29dd71cc3cef7f39b338b7a40793f7a260655c2d3568f3661",
+   "size": 1474
+  },
+  {
+   "architectures": [
+    "Qwen3VLNemotronEmbedModel"
+   ],
+   "model_type": "qwen3_vl_nemotron_embed",
+   "path": "fixtures/qwen3_vl_nemotron_embed/nvidia__nemotron-colembed-vl-4b-v2.json",
+   "repo": "nvidia/nemotron-colembed-vl-4b-v2",
+   "repo_source": "csv",
+   "sha256": "eb531e7f4069d4362cefd0f5a553c7ec9209a825ff118c54704f3e037bf2b3e8",
+   "size": 2068
+  },
+  {
+   "architectures": [
+    "Qwen4ExpForConditionalGeneration"
+   ],
+   "model_type": "qwen4_exp",
+   "path": "fixtures/qwen4_exp/Qwen__Qwen3.8-Flash-Next.json",
+   "repo": "Qwen/Qwen3.8-Flash-Next",
+   "repo_source": "csv",
+   "sha256": "889658f2508e8c61d409b02e70e0d78d8d4452ec65aaafbe129805d213d2e74b",
+   "size": 4745
+  },
+  {
+   "architectures": [
+    "RobertaForTokenClassification"
+   ],
+   "model_type": "roberta",
+   "path": "fixtures/roberta/Jean-Baptiste__roberta-large-ner-english.json",
+   "repo": "Jean-Baptiste/roberta-large-ner-english",
+   "repo_source": "csv",
+   "sha256": "639a9091157fc28a286db1dd27b919b316a7d579c57f24feaf6504d823a472e4",
+   "size": 849
+  },
+  {
+   "architectures": [
+    "SarvamMLAForCausalLM"
+   ],
+   "model_type": "sarvam_mla",
+   "path": "fixtures/sarvam_mla/sarvamai__sarvam-105b.json",
+   "repo": "sarvamai/sarvam-105b",
+   "repo_source": "csv",
+   "sha256": "f5f015b8f7a7d036cb368ee186348365a7f0f9a3061e0a754976fd88195ce1f9",
+   "size": 1472
+  },
+  {
+   "architectures": [
+    "SarvamMoEForCausalLM"
+   ],
+   "model_type": "sarvam_moe",
+   "path": "fixtures/sarvam_moe/sarvamai__sarvam-30b.json",
+   "repo": "sarvamai/sarvam-30b",
+   "repo_source": "csv",
+   "sha256": "db5a70c723fc5bd1ca123ab94d1c0a99d914a20c25eefcf041d137906e2341e9",
+   "size": 1433
+  },
+  {
+   "architectures": [
+    "Step1ForCausalLM"
+   ],
+   "model_type": "step1",
+   "path": "fixtures/step1/stepfun-ai__Step-Audio-EditX.json",
+   "repo": "stepfun-ai/Step-Audio-EditX",
+   "repo_source": "csv",
+   "sha256": "593253b2e70af8c2c9922cf7613b825d4fec6aaad4c8476df3f4692c100af266",
+   "size": 568
+  },
+  {
+   "architectures": [
+    "Step3p5ForCausalLM"
+   ],
+   "model_type": "step3p5",
+   "path": "fixtures/step3p5/stepfun-ai__Step-3.5-Flash.json",
+   "repo": "stepfun-ai/Step-3.5-Flash",
+   "repo_source": "csv",
+   "sha256": "794dcd0ea3e925efd9f8bd98745e2246ae73eab58fb0113c3338d7cab619ea3d",
+   "size": 4930
+  },
+  {
+   "architectures": [
+    "Step3p7ForConditionalGeneration"
+   ],
+   "model_type": "step3p7",
+   "path": "fixtures/step3p7/stepfun-ai__Step-3.7-Flash.json",
+   "repo": "stepfun-ai/Step-3.7-Flash",
+   "repo_source": "csv",
+   "sha256": "8d740ba5819e574b7a606ea7aa6d7d381142ed5cc77cab96dde2892c10414042",
+   "size": 6300
+  },
+  {
+   "architectures": [
+    "Step5ForConditionalGeneration"
+   ],
+   "model_type": "step5_vl",
+   "path": "fixtures/step5_vl/stepfun-ai__Step-5-Preview.json",
+   "repo": "stepfun-ai/Step-5-Preview",
+   "repo_source": "csv",
+   "sha256": "e535c5c9e6385e5c39d55daf346fc0b42dd93496bf5e540ea442168b2524bb63",
+   "size": 78447
+  },
+  {
+   "architectures": [
+    "StepVLForConditionalGeneration"
+   ],
+   "model_type": "step_robotics",
+   "path": "fixtures/step_robotics/stepfun-ai__Step3-VL-10B.json",
+   "repo": "stepfun-ai/Step3-VL-10B",
+   "repo_source": "csv",
+   "sha256": "104e95be67d00d67f88b3cb83c2c6514e41351ff7e7241d4848b65542c7a2f63",
+   "size": 1912
+  },
+  {
+   "architectures": [
+    "TeleChat3ForCausalLM"
+   ],
+   "model_type": "telechat3",
+   "path": "fixtures/telechat3/Tele-AI__TeleChat3-36B-Thinking.json",
+   "repo": "Tele-AI/TeleChat3-36B-Thinking",
+   "repo_source": "csv",
+   "sha256": "e556336f28c8f093df12cc0cfbdd679404ec5f45ca151ef6f218a8d5e80fd49f",
+   "size": 1093
+  },
+  {
+   "architectures": [
+    "UltraVBertModel"
+   ],
+   "model_type": "ultravbert",
+   "path": "fixtures/ultravbert/athrael-soju__ColUltraVBERT.json",
+   "repo": "athrael-soju/ColUltraVBERT",
+   "repo_source": "csv",
+   "sha256": "bfc87993bb361468a52fbe54fb53b0e4d1fe9fd13d34f21451a46d2a93b41dd5",
+   "size": 2612
+  },
+  {
+   "architectures": [
+    "UnlimitedOCRForCausalLM"
+   ],
+   "model_type": "unlimited_ocr",
+   "path": "fixtures/unlimited_ocr/baidu__Unlimited-OCR.json",
+   "repo": "baidu/Unlimited-OCR",
+   "repo_source": "csv",
+   "sha256": "55e6c5179eea054a3fca99e3e41424649d22f574fba4c5f0737ef9c9095526e4",
+   "size": 2881
+  },
+  {
+   "architectures": [
+    "VibeVoiceAsrForConditionalGeneration"
+   ],
+   "model_type": "vibevoice_asr",
+   "path": "fixtures/vibevoice_asr/microsoft__VibeVoice-ASR-HF.json",
+   "repo": "microsoft/VibeVoice-ASR-HF",
+   "repo_source": "csv",
+   "sha256": "89e5f9e4932e72cd8ace355e80b8c5c0e4ac6f6a92e97bf47e8b8ffdca1035e0",
+   "size": 2920
+  },
+  {
+   "architectures": [
+    "VoxtralRealtimeForConditionalGeneration"
+   ],
+   "model_type": "voxtral_realtime",
+   "path": "fixtures/voxtral_realtime/mistralai__Voxtral-Mini-4B-Realtime-2602.json",
+   "repo": "mistralai/Voxtral-Mini-4B-Realtime-2602",
+   "repo_source": "csv",
+   "sha256": "96582f5809ad179531d47f9f89d76c696058fbdeff608d6611dcb7e076ea7e93",
+   "size": 1572
+  },
+  {
+   "architectures": [
+    "XLMRobertaModel"
+   ],
+   "model_type": "xlm-roberta",
+   "path": "fixtures/xlm-roberta/BAAI__bge-m3.json",
+   "repo": "BAAI/bge-m3",
+   "repo_source": "csv",
+   "sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+   "size": 687
+  },
+  {
+   "architectures": [
+    "XLMRobertaForTokenClassification"
+   ],
+   "model_type": "xlm-roberta",
+   "path": "fixtures/xlm-roberta/Davlan__xlm-roberta-base-ner-hrl.json",
+   "repo": "Davlan/xlm-roberta-base-ner-hrl",
+   "repo_source": "csv",
+   "sha256": "b39f5cdaa31793288077859feb3d4e742b2d5a1226fe3374e97fc0220c02222f",
+   "size": 980
+  }
+ ],
+ "kind": "config-only (no weights)",
+ "model_types": 134,
+ "schema": 1,
+ "skipped": [],
+ "unfetched": [
+  {
+   "reason": "no-file",
+   "repo": "CohereLabs/cohere-transcribe-03-2026"
+  },
+  {
+   "reason": "no-file",
+   "repo": "nvidia/Eagle2.5-8B"
+  },
+  {
+   "reason": "no-file",
+   "repo": "none public"
+  },
+  {
+   "reason": "no-file",
+   "repo": "mistralai/Mistral-Large-3-675B-Instruct-2512"
+  },
+  {
+   "reason": "no-file",
+   "repo": "inceptionai/Jais-2-8B-Chat"
+  },
+  {
+   "reason": "no-file",
+   "repo": "Qwen/Qwen3-8B (target)"
+  },
+  {
+   "reason": "no-file",
+   "repo": "XiaomiMiMo/MiMo-V2.5-Omni"
+  },
+  {
+   "reason": "no-file",
+   "repo": "openbmb/MiniCPM-V-4_7 (not public)"
+  },
+  {
+   "reason": "no-file",
+   "repo": "meta-models/Muse-Spark-Open-816B-A42B-NVFP4"
+  },
+  {
+   "reason": "no-file",
+   "repo": "nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B"
+  },
+  {
+   "reason": "no-file",
+   "repo": "FreedomIntelligence/openPangu-Ultra-MoE-718B-V1.1"
+  },
+  {
+   "reason": "no-file",
+   "repo": "pfnet/plamo-3-nict-2b-base"
+  },
+  {
+   "reason": "no-file",
+   "repo": "none public (tiny random fixture)"
+  },
+  {
+   "reason": "no-file",
+   "repo": "google/vaultgemma-1b"
+  }
+ ]
+}

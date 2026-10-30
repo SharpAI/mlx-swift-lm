@@ -1,0 +1,206 @@
+{
+  "architectures": [
+    "Granite4VisionForConditionalGeneration"
+  ],
+  "auto_map": {
+    "AutoConfig": "configuration.Granite4VisionConfig",
+    "AutoModel": "modeling.Granite4VisionForConditionalGeneration",
+    "AutoModelForVision2Seq": "modeling.Granite4VisionForConditionalGeneration",
+    "AutoModelForImageTextToText": "modeling.Granite4VisionForConditionalGeneration",
+    "AutoProcessor": "processing.Granite4VisionProcessor"
+  },
+  "spatial_target_layers": [
+    12,
+    15,
+    18,
+    21
+  ],
+  "spatial_stride": 2,
+  "spatial_vision_layer": -1,
+  "downsample_rate": "4/8",
+  "dtype": "bfloat16",
+  "image_grid_pinpoints": [
+    [
+      384,
+      384
+    ],
+    [
+      384,
+      768
+    ],
+    [
+      384,
+      1152
+    ],
+    [
+      384,
+      1536
+    ],
+    [
+      384,
+      1920
+    ],
+    [
+      384,
+      2304
+    ],
+    [
+      384,
+      2688
+    ],
+    [
+      384,
+      3072
+    ],
+    [
+      384,
+      3456
+    ],
+    [
+      384,
+      3840
+    ],
+    [
+      768,
+      384
+    ],
+    [
+      768,
+      768
+    ],
+    [
+      768,
+      1152
+    ],
+    [
+      768,
+      1536
+    ],
+    [
+      768,
+      1920
+    ],
+    [
+      1152,
+      384
+    ],
+    [
+      1152,
+      768
+    ],
+    [
+      1152,
+      1152
+    ],
+    [
+      1536,
+      384
+    ],
+    [
+      1536,
+      768
+    ],
+    [
+      1920,
+      384
+    ],
+    [
+      1920,
+      768
+    ],
+    [
+      2304,
+      384
+    ],
+    [
+      2688,
+      384
+    ],
+    [
+      3072,
+      384
+    ],
+    [
+      3456,
+      384
+    ],
+    [
+      3840,
+      384
+    ]
+  ],
+  "image_seq_length": 576,
+  "image_token_index": 100266,
+  "initializer_range": 0.02,
+  "model_type": "granite4_vision",
+  "projector_dropout": 0.1,
+  "projector_hidden_act": "gelu",
+  "text_config": {
+    "architectures": [
+      "GraniteForCausalLM"
+    ],
+    "attention_bias": false,
+    "attention_dropout": 0.0,
+    "attention_multiplier": 0.015625,
+    "bos_token_id": 100257,
+    "embedding_multiplier": 12.0,
+    "eos_token_id": 100257,
+    "hidden_act": "silu",
+    "hidden_size": 2560,
+    "initializer_range": 0.1,
+    "intermediate_size": 8192,
+    "logits_scaling": 10.0,
+    "max_position_embeddings": 131072,
+    "mlp_bias": false,
+    "model_type": "granite",
+    "num_attention_heads": 40,
+    "num_hidden_layers": 40,
+    "num_key_value_heads": 8,
+    "pad_token_id": 100256,
+    "residual_multiplier": 0.22,
+    "rms_norm_eps": 1e-05,
+    "rope_scaling": null,
+    "rope_theta": 10000000,
+    "tie_word_embeddings": true,
+    "torch_dtype": "bfloat16",
+    "transformers_version": "4.53.3",
+    "use_cache": true,
+    "vocab_size": 100352
+  },
+  "tie_word_embeddings": true,
+  "transformers_version": "4.57.3",
+  "use_spatial_sampling": true,
+  "use_image_newline_parameter": true,
+  "vision_config": {
+    "attention_dropout": 0.0,
+    "hidden_act": "gelu_pytorch_tanh",
+    "hidden_size": 1152,
+    "image_size": 384,
+    "intermediate_size": 4304,
+    "layer_norm_eps": 1e-06,
+    "model_type": "siglip_vision_model",
+    "num_attention_heads": 16,
+    "num_channels": 3,
+    "num_hidden_layers": 27,
+    "patch_size": 16
+  },
+  "vision_feature_select_strategy": "full",
+  "deepstack_layer_map": [
+    [
+      -19,
+      9
+    ],
+    [
+      -13,
+      6
+    ],
+    [
+      -7,
+      3
+    ],
+    [
+      -1,
+      0
+    ]
+  ]
+}

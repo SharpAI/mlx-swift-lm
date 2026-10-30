@@ -1,0 +1,1 @@
+{"R":2,"dtype":"float32","group":"ties","inputs":{"scores":[5,3,3,3,1,3,5,3,1,3]},"kind":"topk","name":"topk_ties_at_threshold","nb":5,"outputs":{"select":[{"need":2,"strict":[0],"tie":[1,2,3]},{"need":2,"strict":[1],"tie":[0,2,4]}]},"tolerance":"exact","topk":3}

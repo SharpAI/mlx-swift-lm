@@ -1,0 +1,9 @@
+# Known public-func overlaps between this fork's Libraries/ and ml-explore/mlx-swift (mlx-swift-shadow.sh).
+# One entry per line: <KIND> <Context>.<name>(<labels>)  # reason. KIND is COLLISION or OVERLAP and must match the
+# finding exactly (an allowed OVERLAP does not silence a COLLISION of the same key). Every entry needs a reason
+# and an owner action.
+
+# Upstream-owned duplicate: identical Libraries/MLXEmbedders/Extensions/MLXArray+Helper.swift is in
+# ml-explore/mlx-swift-lm f5b0677 AND ml-explore/mlx-swift 78d3cc1d declares the same member. Not our code;
+# watch it when the mlx-swift pin advances (call sites in MLXEmbedders may become ambiguous). Report upstream if so.
+COLLISION MLXArray.l2Normalized(axis:eps:)  # upstream lm vs upstream mlx-swift

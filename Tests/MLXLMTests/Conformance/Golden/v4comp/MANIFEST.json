@@ -1,0 +1,206 @@
+{
+ "vllm_commit": "2eae56c",
+ "vllm_provenance": [
+  "vLLM 2eae56c4ba0cf12087fec035514eedede83c257d: EXISTS in vllm-project/vllm (checked 2026-10-29: git clone --bare --filter=tree:0 https://github.com/vllm-project/vllm, then git cat-file -t 2eae56c -> commit). Earlier notes that it was unfetchable came from `git fetch origin 2eae56c`, which cannot work with an abbreviated id; a shallow clone's HEAD (e.g. 335dd77) is just a different commit of a moving main. The oracles' file:line citations were transcribed from a source tree that had no .git and are NOT individually re-read against this commit, except vllm/model_executor/layers/activation.py:239-243 (SiluAndMulWithClamp.forward_native: gate clamped with max only, up two-sided), which was. The v4route, v4idx and v4comp cross-check scripts were re-run on 2026-10-29 against a tree extracted from this commit (git archive of vllm/, tests/kernels, tests/v1/attention) and print OK. Obtain: git clone https://github.com/vllm-project/vllm && git -C vllm checkout 2eae56c"
+ ],
+ "torch": "2.15.0",
+ "python": "3.15.0",
+ "numpy": "2.5.4",
+ "generator": {
+  "generate.py": "4ce31afd2a989e4ac0fd6e71e5e8dea233784f583ff860455a523348445ced2e",
+  "v4comp_ref.py": "7774bcf276b7f7cf41bb051d6cadd71a9fa40e40f3b9471ebcf735b038b1acf2"
+ },
+ "files": {
+  "ratio4.json": {
+   "sha256": "435bbd13a418b2d3b6550ea22cb7989a31e0be2bd25f3e6c9fcb6aaa9ed0bbd4",
+   "cases": 6
+  },
+  "ratio128.json": {
+   "sha256": "81836a0540896538eff47817d23a955f3b73144a14f62966ac976e0666e8cc2a",
+   "cases": 5
+  },
+  "bf16.json": {
+   "sha256": "a0e6c46cf40558bb6898a599508100be298db09a40e1525bbedbb8a737c793f1",
+   "cases": 2
+  },
+  "eps.json": {
+   "sha256": "2ca437371b520a9c358f73e0f7a356299c37cf236348f3a8e0c0141002bc6fd7",
+   "cases": 2
+  },
+  "yarn.json": {
+   "sha256": "462d98c8317ea25c77f5562eccf29817a07a65666aa5a7a9879ca3b6aff12bab",
+   "cases": 5
+  },
+  "wide.json": {
+   "sha256": "2edb6faf56bd8c9c3d6abd7cbe8f1d8a10afb63e3b92a969d411ed1a2ce1ac98",
+   "cases": 2
+  }
+ },
+ "tolerances": {
+  "bfloat16": {
+   "rtol": 0.004,
+   "atol": 2e-05,
+   "atol_per_position": 1.5e-07,
+   "reasoning": "The module computes in fp32 like vLLM (attention.py:698-703, compressor.py:261) and returns bfloat16 (the model dtype), so the output carries bf16 rounding: bf16 keeps 8 significant bits, a rounding is at most half an ulp = 2^-8 = 3.9e-3 relative (rtol 4e-3; NOT 2^-9). pooled_normed: one rounding, |err| <= rtol |golden|. RoPE'd entries: the rotation reads the already rounded pair (xe, xo) and rounds its output, so for a rope channel |err| <= rtol (|xe| + |xo| + |golden|) with xe, xo the golden pooled_normed pair (a cancelling output element is small relative to its inputs, so a per-element relative bound would be wrong); nope channels keep one rounding. atol and the per-position angle term as for float32. Tighter checks live in the Swift suite: the bf16 pooled output must equal the float32 result rounded once, exactly. It deliberately does NOT allow bf16 rounding of kv / score BEFORE the softmax pooling, which vLLM does not do."
+  },
+  "float32": {
+   "rtol": 2e-05,
+   "atol": 2e-05,
+   "atol_per_position": 1.5e-07,
+   "reasoning": "Inputs and weights are float32-exact, the oracle is float64, Swift runs float32 on Metal. pooled_normed: a <=8-term matmul (abs error ~3e-7 on kv/score of size ~3), exp of scores up to ~8 (relative error ~5e-7 per weight), a sum of <=256 weighted terms and an rsqrt: ~1e-6 observed scale, 2e-5 leaves >10x. entries (after RoPE) add the angle error: MLX forms position*freq in float32, so cos/sin carry an absolute error of about 2^-23 * angle, angle <= position (frequency of the first pair is 1): atol(entry b) = atol + atol_per_position * (b * ratio)."
+  }
+ },
+ "eps_sensitivity_max_abs_diff_if_eps_x10": {
+  "r4_hd16_rope8_T21_eps1e-2": 0.9580677855454334,
+  "r128_hd16_rope8_T260_eps1e-2": 0.9684046385406617
+ },
+ "scope": {
+  "covers": "the compressor algebra (projection, softmax pooling with the ratio-4 overlap, RMSNorm incl. a large eps, RoPE incl. the YaRN of the compressor layers with the real V4 config values) at head_dim 16..512, rope_dim 8..64, ratios 4 and 128, float32 and bfloat16",
+  "largest_hidden_size": 16,
+  "largest_head_dim": 512,
+  "does_not_cover": [
+   "production hidden size (4096 / 7168): fp32 accumulation order of a thousands-term projection is not exercised",
+   "fp8 / mxfp4 quantisation of the stored entry",
+   "batch size > 1",
+   "layer-level behaviour (sliding window, indexer top-k, attention sinks): other lanes"
+  ]
+ },
+ "crosscheck": {
+  "cases": 240,
+  "yarn_cases": 80,
+  "entries_compared": 1216,
+  "seed": 2025,
+  "gate_relative": 1e-10,
+  "max_relative_disagreement": {
+   "entries_vs_triton_ref_fp64": 9.523856275450902e-16,
+   "entries_vs_cpu_eager": 9.523856275450902e-16,
+   "prerope_vs_cpu_eager": 9.523856275450902e-16,
+   "state_rows_vs_save_eager": 0.0,
+   "triton_ref_unpatched_fp32_vs_fp64": 6.760718091664516e-07,
+   "yarn_cos_sin_vs_vllm_class_fp64": 0.0
+  }
+ },
+ "crosscheck_patches_to_vllm_reference_code": [
+  {
+   "fn": "_reference_kv_compress_norm_rope",
+   "replace": ".float()",
+   "with": ".double()",
+   "why": "run the fp32 reference in fp64"
+  },
+  {
+   "replace": "    if return_full_cache:\n",
+   "with": "    return result\n    if return_full_cache:\n",
+   "why": "return before quantisation (kvc:~2510)"
+  },
+  {
+   "replace": "        block_idx_kv = kv_slot // kv_cache_block_size\n",
+   "with": "        CAPTURE.append((normed.clone(), torch.cat([normed[:NOPE_DIM], rotated_rope])))\n        block_idx_kv = kv_slot // kv_cache_block_size\n",
+   "why": "capture normed (pre-RoPE) and the RoPE'd row before the fp8 store"
+  },
+  {
+   "fn": "DeepseekScalingRotaryEmbedding._compute_inv_freq / DeepseekV4ScalingRotaryEmbedding._compute_cos_sin_cache",
+   "replace": "torch.float / torch.float32",
+   "with": "torch.float64",
+   "why": "run the fp32 YaRN cache in fp64"
+  }
+ ],
+ "discriminators_max_abs_diff_of_wrong_readings_vs_golden": {
+  "r4_hd16_rope8_T37": {
+   "last_token_pos": 4.246760331956927,
+   "swap_halves": 3.7225276852632287,
+   "no_overlap_ratio4": 4.231739630299811
+  },
+  "r4_hd128_rope64_T22": {
+   "last_token_pos": 4.40300692051434,
+   "swap_halves": 6.388201440865866,
+   "no_overlap_ratio4": 6.203826210132344
+  },
+  "r4_hd32_rope16_T4": {
+   "last_token_pos": 2.7628567207581587,
+   "swap_halves": 4.534335694912837,
+   "no_overlap_ratio4": 4.534335694912837
+  },
+  "r4_hd32_rope16_T3": {},
+  "r4_hd16_rope8_T5": {
+   "last_token_pos": 2.0337497909856657,
+   "swap_halves": 2.9054260097032443,
+   "no_overlap_ratio4": 2.9054260097032443
+  },
+  "r4_hd24_rope8_T64_theta160k": {
+   "last_token_pos": 5.493132575111543,
+   "swap_halves": 4.20544853198637,
+   "no_overlap_ratio4": 4.310841439513978
+  },
+  "r128_hd16_rope8_T300": {
+   "last_token_pos": 2.994824014599922
+  },
+  "r128_hd128_rope64_T260": {
+   "last_token_pos": 8.057871676515486
+  },
+  "r128_hd16_rope8_T127": {},
+  "r128_hd16_rope8_T128": {
+   "last_token_pos": 3.0424321477369194
+  },
+  "r128_hd32_rope16_T385_theta160k": {
+   "last_token_pos": 2.7717079893360412
+  },
+  "r4_hd16_rope8_T37_bf16": {
+   "last_token_pos": 3.1734093381493214,
+   "swap_halves": 4.4733252279406,
+   "no_overlap_ratio4": 4.85308773074227
+  },
+  "r128_hd16_rope8_T300_bf16": {
+   "last_token_pos": 2.7276595292081427
+  },
+  "r4_hd16_rope8_T21_eps1e-2": {
+   "last_token_pos": 1.2336014508156423,
+   "swap_halves": 1.861318707487801,
+   "no_overlap_ratio4": 2.0399642290372073
+  },
+  "r128_hd16_rope8_T260_eps1e-2": {
+   "last_token_pos": 0.7945527229379515
+  },
+  "r4_hd16_rope8_T37_yarn_flash": {
+   "last_token_pos": 4.757813122325535,
+   "swap_halves": 4.4801917570004495,
+   "no_overlap_ratio4": 3.8101635485248764,
+   "plain_rope": 0.040543721589901605
+  },
+  "r4_hd128_rope64_T64_yarn_flash": {
+   "last_token_pos": 5.025690694290017,
+   "swap_halves": 5.920449068483496,
+   "no_overlap_ratio4": 6.972662731791329,
+   "plain_rope": 0.07431605929964769
+  },
+  "r128_hd16_rope8_T300_yarn_flash": {
+   "last_token_pos": 1.8461238739876529,
+   "plain_rope": 0.13942332578452954
+  },
+  "r128_hd128_rope64_T260_yarn_flash": {
+   "last_token_pos": 9.032850939757951,
+   "plain_rope": 0.07561125925411077
+  },
+  "r4_hd32_rope16_T40_yarn_small": {
+   "last_token_pos": 6.982467030378795,
+   "swap_halves": 5.312796745334227,
+   "no_overlap_ratio4": 5.387461418615034,
+   "plain_rope": 0.8033127464571355
+  },
+  "r4_hd512_rope64_T24_yarn_flash_wide": {
+   "last_token_pos": 4.677480502167665,
+   "swap_halves": 6.766970553946759,
+   "no_overlap_ratio4": 6.647732122162931,
+   "plain_rope": 0.012939110758599215
+  },
+  "r128_hd512_rope64_T260_yarn_flash_wide": {
+   "last_token_pos": 5.259927778505422,
+   "plain_rope": 0.07043268534033659
+  }
+ },
+ "inferred_points_not_from_vllm_source": [
+  "head_dim / rope_dim are parameters in the oracle (the C++ hard-codes 512/64 and 128/64; vLLM's torch reference is generic)",
+  "cos/sin cache built in float64 (vLLM builds it in float32)",
+  "YaRN cos/sin built in float64 (vLLM: float32); yarn.json uses the real config values with mscale forced to 0 (rope.py:51-52), i.e. NO cos/sin scaling; the deepseek_llama_scaling variant (attention_factor == 1.0, rope.py:33) selects the same class and the same maths",
+  "ratio4/ratio128/bf16/eps fixtures use plain RoPE (theta only); only yarn.json models the YaRN rope of the compressor layers"
+ ]
+}

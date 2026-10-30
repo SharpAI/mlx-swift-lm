@@ -1,0 +1,1 @@
+{"blocks":4,"dtype":"int","group":"ratio4","kind":"visibility","length":6,"name":"vis_r4_chunk_start10","outputs":{"visible":[[true,true,false,false],[true,true,true,false],[true,true,true,false],[true,true,true,false],[true,true,true,false],[true,true,true,true]]},"ratio":4,"start":10,"tolerance":"exact"}

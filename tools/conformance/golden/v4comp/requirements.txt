@@ -1,0 +1,4 @@
+# Inputs of generate.py (CPU only). Exactly the versions that produced the committed fixtures (MANIFEST.json "torch", "numpy", "python").
+# Python 3.15.0. vLLM source: commit 2eae56c (a checkout, passed with --vllm or VLLM_ROOT; not installed).
+torch==2.15.0
+numpy==2.5.4
