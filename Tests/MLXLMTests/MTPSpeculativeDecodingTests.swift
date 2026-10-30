@@ -457,7 +457,9 @@ extension MLXTestingSuite {
             }
             let config = try makeDeepseekV4Config(numMTPLayers: 2)
             let model = DeepseekV4Model(config)
-            #expect(model.model.layers.count == config.numHiddenLayers - config.numNextnPredictLayers,
+            // num_hidden_layers counts the main layers only; the MTP block is index num_hidden_layers
+            // (HF config: compress_ratios has num_hidden_layers + num_nextn_predict_layers entries).
+            #expect(model.model.layers.count == config.numHiddenLayers,
                     "DeepseekV4Model.layers count should exclude MTP layers when SWIFTLM_MTP_ENABLE is not set")
         }
 

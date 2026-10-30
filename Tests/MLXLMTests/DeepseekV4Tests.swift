@@ -73,8 +73,8 @@ public class DeepseekV4Tests: XCTestCase {
         let config = makeSmallConfig()
         let model = DeepseekV4Model(config)
 
-        // Main layers should be numHiddenLayers - numNextnPredictLayers = 3
-        let expectedLayers = config.numHiddenLayers - config.numNextnPredictLayers
+        // num_hidden_layers counts the main layers only; the MTP block is index num_hidden_layers
+        let expectedLayers = config.numHiddenLayers
         XCTAssertEqual(model.model.layers.count, expectedLayers,
                        "Layer count should exclude MTP layers")
 
@@ -89,7 +89,7 @@ public class DeepseekV4Tests: XCTestCase {
     func testKVHeadsCount() {
         let config = makeSmallConfig()
         let model = DeepseekV4Model(config)
-        let expected = config.numHiddenLayers - config.numNextnPredictLayers
+        let expected = config.numHiddenLayers
         XCTAssertEqual(model.kvHeads.count, expected)
         XCTAssertTrue(model.kvHeads.allSatisfy { $0 == 1 },
                       "V4 uses unified KV with single head per layer")
@@ -160,22 +160,22 @@ public class DeepseekV4Tests: XCTestCase {
         let config = makeSmallConfig()
         let model = DeepseekV4Model(config)
 
-        // Build fake weights including MTP layer (index numHiddenLayers - 1 = 3)
+        // Build fake weights including the MTP block (index numHiddenLayers)
         var fakeWeights: [String: MLXArray] = [:]
-        for l in 0 ..< config.numHiddenLayers {
+        for l in 0 ..< config.numHiddenLayers + config.numNextnPredictLayers {
             fakeWeights["model.layers.\(l).attn_norm.weight"] = zeros([config.hiddenSize])
         }
         fakeWeights["model.norm.weight"] = zeros([config.hiddenSize])
 
         let sanitized = model.sanitize(weights: fakeWeights)
 
-        // MTP layer (index 3) should be removed; layers 0,1,2 kept
-        let mainCount = config.numHiddenLayers - config.numNextnPredictLayers  // 3
+        // MTP block (index numHiddenLayers) should be removed; the main layers are kept
+        let mainCount = config.numHiddenLayers
         for l in 0 ..< mainCount {
             XCTAssertNotNil(sanitized["model.layers.\(l).attn_norm.weight"],
                             "Layer \(l) should be present")
         }
-        for l in mainCount ..< config.numHiddenLayers {
+        for l in mainCount ..< config.numHiddenLayers + config.numNextnPredictLayers {
             XCTAssertNil(sanitized["model.layers.\(l).attn_norm.weight"],
                          "MTP layer \(l) should be filtered out")
         }
