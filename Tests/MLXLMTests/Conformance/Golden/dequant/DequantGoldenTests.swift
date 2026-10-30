@@ -172,7 +172,10 @@ enum DequantGolden {
     /// Known (oracle != shipping) cases: id -> reason. EMPTY means shipping code agrees with the oracle everywhere.
     static let knownGaps: [String: String] = [
         "e8m0/0": subnormalFlush, "mxfp4/scale_byte_0": subnormalFlush, "mxfp4/scale_byte_1": subnormalFlush,
+        "fp8_ue8m0_edge/0": ue8m0ByteZero,
     ]
+    static let ue8m0ByteZero =
+        "dequantFP8Blocks(ue8m0: true) decodes byte 0 as 0.0 (bits << 23) where the oracle gives 2^-127 (a float32 subnormal); real scales avoid byte 0 (OPEN)"
     static let subnormalFlush =
         "MLX mxfp4 dequantize flushes float32 SUBNORMAL results to zero (vLLM float32 keeps them); absolute error <= 2^-126 (1.2e-38), only for scale bytes 0/1 (OPEN)"
 
@@ -371,6 +374,69 @@ struct DequantGoldenTests {
         G.check("fp8_block/\(id)/FP8Linear", G.mismatch(G.floats(out.transposed()), want, rtol: t.rtol, atol: t.atol))
     }
 
+    /// One fp8 block case, optionally cropped to a NON-divisible shape (rows - (bs-1), cols - 1: the scale grid
+    /// is unchanged because ceil(n'/bs) == n/bs). Elementwise dequantisation depends only on the element's own block
+    /// scale, so the cropped golden is the corner of the full golden (no new maths; I6: vLLM asserts divisibility).
+    struct BlockCase {
+        let n: Int, k: Int, bs: Int
+        let weight: [Int], scale: [Double], shape: [Int], want: [Double]
+        init(_ id: String, cropped: Bool) {
+            let c = G.entry("fp8_scaled.json", id, key: "block")
+            let (fn, fk, bs) = (c["rows"] as! Int, c["cols"] as! Int, c["block"] as! Int)
+            let (n, k) = cropped ? (fn - (bs - 1), fk - 1) : (fn, fk)
+            let w = G.ints(c["weight"]), e = G.doubles(c["expected"])
+            let keep = (0 ..< n).flatMap { r in (0 ..< k).map { r * fk + $0 } }
+            self.n = n
+            self.k = k
+            self.bs = bs
+            weight = keep.map { w[$0] }
+            want = keep.map { e[$0] }
+            scale = G.doubles(c["scale"])
+            shape = G.ints(c["scale_shape"])
+        }
+        var weightArray: MLXArray { G.fp8Weight(weight, n, k) }
+        func scaleArray(_ dt: DType = .float32) -> MLXArray { MLXArray(scale.map { Float($0) }, shape).asType(dt) }
+    }
+
+    /// FP8Linear's single-token branch (x.size == inputDims: the custom Metal GEMV with its own e4m3 decoder, bf16
+    /// scale reads and block indexing). x = e_j picks column j of the dequantised weight.
+    /// Tolerance: the kernel reads the scale as bfloat16 and writes a bfloat16 result: two roundings of <= 2^-9 each,
+    /// so <= 2^-8 + 2^-18 relative (0.00392); 0.004 is that bound, a wrong exponent bias (factor 2) is far outside it.
+    static func decodeColumns(_ b: BlockCase) -> [Float] {
+        let layer = FP8Linear(weight: b.weightArray, weightScaleInv: b.scaleArray(.bfloat16), bias: nil, blockSize: b.bs)
+        var out = [Float](repeating: 0, count: b.n * b.k)
+        for j in 0 ..< b.k {
+            let x = MLXArray((0 ..< b.k).map { $0 == j ? Float(1) : Float(0) }, [1, b.k]).asType(.bfloat16)
+            let col = G.floats(layer(x))
+            precondition(col.count == b.n)
+            for r in 0 ..< b.n { out[r * b.k + j] = col[r] }
+        }
+        return out
+    }
+
+    @Test("FP8Linear single-token decode (Metal GEMV) equals the golden within bfloat16 rounding", arguments: G.ids("fp8_scaled.json", "block"))
+    func fp8Decode(id: String) {
+        let b = BlockCase(id, cropped: false)
+        G.check("fp8_decode/\(id)", G.mismatch(Self.decodeColumns(b), b.want, rtol: 0.004, atol: 0))
+    }
+
+    @Test("non-divisible fp8 shapes (zero-pad and crop): dequantFP8Blocks, FP8Linear prefill and decode equal the cropped golden",
+        arguments: G.ids("fp8_scaled.json", "block").filter { G.entry("fp8_scaled.json", $0, key: "block")["block"] as! Int >= 2 })
+    func fp8NonDivisible(id: String) {
+        let b = BlockCase(id, cropped: true)
+        #expect(b.n % b.bs != 0 && b.k % b.bs != 0 && b.n > 0 && b.k > 1, "case must be non-divisible")
+        let exact = G.tolerance("float32_product")
+        let deq = SharpAIOverlay.dequantFP8Blocks(
+            weight: MLXFast.fromFp8(b.weightArray, dtype: .float32), scaleInv: b.scaleArray(), blockSize: b.bs, ue8m0: false)
+        #expect(deq.shape == [b.n, b.k])
+        G.check("fp8_nondiv/\(id)/dequantFP8Blocks", G.mismatch(G.floats(deq), b.want, rtol: exact.rtol, atol: exact.atol))
+        let layer = FP8Linear(weight: b.weightArray, weightScaleInv: b.scaleArray(), bias: nil, blockSize: b.bs)
+        let out = layer(MLXArray.identity(b.k, dtype: .float32))  // b.k * b.k != inputDims: prefill branch
+        #expect(out.shape == [b.k, b.n])
+        G.check("fp8_nondiv/\(id)/FP8Linear", G.mismatch(G.floats(out.transposed()), b.want, rtol: exact.rtol, atol: exact.atol))
+        G.check("fp8_nondiv/\(id)/decode", G.mismatch(Self.decodeColumns(b), b.want, rtol: 0.004, atol: 0))
+    }
+
     @Test("fp8 ue8m0 block scales (byte -> 2^(byte-127)) through dequantFP8Blocks(ue8m0: true)",
         arguments: G.ids("fp8_scaled.json", "ue8m0_block"))
     func fp8Ue8m0(id: String) {
@@ -382,6 +448,23 @@ struct DequantGoldenTests {
             weight: MLXFast.fromFp8(w, dtype: .float32), scaleInv: sb, blockSize: bs, ue8m0: true)
         let t = G.tolerance("float32_exact")
         G.check("fp8_ue8m0/\(id)", G.mismatch(G.floats(got), G.doubles(c["expected"]), rtol: t.rtol, atol: t.atol))
+    }
+
+    @Test("ue8m0 edge scale bytes 0/1/254/255 through dequantFP8Blocks (oracle: 2^(byte-127); 255 = vLLM formula, inf)",
+        arguments: [0, 1, 254, 255])
+    func fp8Ue8m0EdgeBytes(byte: Int) {
+        let e8 = G.load("e8m0.json")
+        let want: Double
+        if byte == 255 {
+            want = G.d((e8["special"] as! [String: Any])["vllm_formula_float32"]!)
+        } else {
+            want = G.d((e8["bytes"] as! [[String: Any]]).first { $0["byte"] as? Int == byte }!["value"]!)
+        }
+        let w = G.fp8Weight([0x38], 1, 1)  // e4m3 0x38 = 1.0, so the result is the decoded scale
+        let sb = MLXArray([UInt8(byte)], [1, 1])
+        let got = SharpAIOverlay.dequantFP8Blocks(
+            weight: MLXFast.fromFp8(w, dtype: .float32), scaleInv: sb, blockSize: 1, ue8m0: true)
+        G.check("fp8_ue8m0_edge/\(byte)", G.mismatch(G.floats(got), [want], rtol: 0, atol: 0))
     }
 
     // MARK: int4 (compressed-tensors pack-quantized) and AWQ
