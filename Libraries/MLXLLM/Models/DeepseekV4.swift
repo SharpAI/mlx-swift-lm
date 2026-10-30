@@ -119,7 +119,14 @@ private func headRmsNorm(_ x: MLXArray, eps: Float) -> MLXArray {
 /// Split mixes into (pre, post, comb) with Sinkhorn normalization.
 /// mixes: [B, S, mix_hc] where mix_hc = (2+hc)*hc
 /// Returns pre [B,S,hc], post [B,S,hc], comb [B,S,hc,hc]
-private func hcSplitSinkhorn(
+///
+/// Maths as vLLM `mhc_pre_torch` (vllm/model_executor/kernels/mhc/torch.py:108-123; the same in
+/// tests/kernels/mhc/test_mhc_kernels.py `sinkhorn_normalize_ref` / `mhc_pre_ref`):
+///   pre  = sigmoid(mix * scale[0] + base) + eps                 (not normalised)
+///   post = sigmoid(mix * scale[1] + base) * 2.0                 (hc_post_alpha, models/deepseek_v4/cpu/model.py:263)
+///   comb = softmax(mix * scale[2] + base, last axis) + eps; comb /= colsum(comb) + eps;
+///          then (iters - 1) times: comb /= rowsum(comb) + eps; comb /= colsum(comb) + eps
+func hcSplitSinkhorn(
     _ mixes: MLXArray,
     hcScale: MLXArray,    // [3]
     hcBase: MLXArray,     // [mix_hc]
@@ -140,19 +147,17 @@ private func hcSplitSinkhorn(
     let postBase = hcBase[hc ..< 2 * hc]
     let combBase = hcBase[(2 * hc)...]
 
-    // Apply scale, add bias, then sigmoid + eps
-    var pre = sigmoid(preMix * hcScale[0] + preBase) + eps   // [B, S, hc]
-    let post = sigmoid(postMix * hcScale[1] + postBase) + eps  // [B, S, hc]
-    var comb = (sigmoid(combMix * hcScale[2] + combBase) + eps)
-        .reshaped(B, S, hc, hc)                               // [B, S, hc, hc]
+    let pre = sigmoid(preMix * hcScale[0] + preBase) + eps
+    let post = sigmoid(postMix * hcScale[1] + postBase) * Float(2)
+    let combLogits = (combMix * hcScale[2] + combBase).reshaped(B, S, hc, hc)
+    var comb = softmax(combLogits, axis: -1) + eps
 
-    // Normalize pre so it sums to 1 across hc copies
-    pre = pre / pre.sum(axis: -1, keepDims: true)
-
-    // Sinkhorn normalization for comb (alternating column/row normalize)
-    for _ in 0 ..< sinkhornIters {
-        comb = comb / comb.sum(axis: -2, keepDims: true)  // column normalize
-        comb = comb / comb.sum(axis: -1, keepDims: true)  // row normalize
+    comb = comb / (comb.sum(axis: -2, keepDims: true) + eps)  // column normalize
+    if sinkhornIters > 1 {
+        for _ in 0 ..< (sinkhornIters - 1) {
+            comb = comb / (comb.sum(axis: -1, keepDims: true) + eps)  // row normalize
+            comb = comb / (comb.sum(axis: -2, keepDims: true) + eps)  // column normalize
+        }
     }
 
     return (pre, post, comb)
@@ -160,14 +165,15 @@ private func hcSplitSinkhorn(
 
 /// Hyper-Connection pre-step: reduce [B,S,hc,D] → [B,S,D] with Sinkhorn weights.
 /// Returns (reduced_x, post_weights, comb_matrix).
-private func hcPre(
+func hcPre(
     x: MLXArray,           // [B, S, hc, D]
     hcFn: MLXArray,        // [mix_hc, hc*D]
     hcScale: MLXArray,     // [3]
     hcBase: MLXArray,      // [mix_hc]
     hcMult: Int,
     sinkhornIters: Int,
-    eps: Float
+    rmsEps: Float,         // model rms_norm_eps: RMS scale (vLLM cpu/model.py:327)
+    eps: Float             // hc_eps: pre / sinkhorn eps (cpu/model.py:328-329)
 ) -> (MLXArray, MLXArray, MLXArray) {
     let dtype = x.dtype
     let B = x.dim(0), S = x.dim(1), hc = x.dim(2), D = x.dim(3)
@@ -176,7 +182,7 @@ private func hcPre(
     let xFlat = x.reshaped(B, S, hc * D).asType(.float32)
 
     // RMS-style normalization scale
-    let normScale = rsqrt(xFlat.square().mean(axis: -1, keepDims: true) + eps)
+    let normScale = rsqrt(xFlat.square().mean(axis: -1, keepDims: true) + rmsEps)
 
     // Linear projection: [B, S, mix_hc]
     let mixes = matmul(xFlat, hcFn.T) * normScale
@@ -193,7 +199,7 @@ private func hcPre(
 
 /// Hyper-Connection post-step: expand sublayer output back to [B,S,hc,D].
 /// y[b,s,j,:] = post[b,s,j]*x[b,s,:] + sum_i(comb[b,s,i,j]*residual[b,s,i,:])
-private func hcPost(
+func hcPost(
     x: MLXArray,        // [B, S, D] - sublayer output
     residual: MLXArray, // [B, S, hc, D] - input to this block
     post: MLXArray,     // [B, S, hc]
@@ -231,18 +237,19 @@ class HCParams: Module {
 
 /// Final HC head: reduce [B,S,hc,D] → [B,S,D] for lm_head.
 /// No Sinkhorn – just sigmoid + eps weighted sum.
-private func hcHead(
+func hcHead(
     x: MLXArray,        // [B, S, hc, D]
     hcFn: MLXArray,     // [hc, hc*D]
     hcScale: MLXArray,  // [1]
     hcBase: MLXArray,   // [hc]
-    eps: Float
+    rmsEps: Float,      // model rms_norm_eps (vLLM cpu/model.py:619-626)
+    eps: Float          // hc_eps
 ) -> MLXArray {
     let dtype = x.dtype
     let B = x.dim(0), S = x.dim(1), hc = x.dim(2), D = x.dim(3)
 
     let xFlat = x.reshaped(B, S, hc * D).asType(.float32)
-    let normScale = rsqrt(xFlat.square().mean(axis: -1, keepDims: true) + eps)
+    let normScale = rsqrt(xFlat.square().mean(axis: -1, keepDims: true) + rmsEps)
     let mixes = matmul(xFlat, hcFn.T) * normScale           // [B, S, hc]
     let pre = sigmoid(mixes * hcScale + hcBase) + eps        // [B, S, hc]
 
@@ -574,7 +581,8 @@ class DeepseekV4Expert: Module, UnaryLayer {
         var gate = gateProj(x)
         var up = upProj(x)
         if swiguLimit > 0 {
-            gate = clip(gate, min: -swiguLimit, max: swiguLimit)
+            // vLLM SiluAndMulWithClamp (layers/activation.py:239-243): gate max-only, up two-sided.
+            gate = clip(gate, max: swiguLimit)
             up = clip(up, min: -swiguLimit, max: swiguLimit)
         }
         return downProj(silu(gate) * up)
@@ -630,7 +638,8 @@ class DeepseekV4Gate: Module {
     /// `tokenIds` ([B, S] ints) is required on hash layers and ignored on learned layers.
     func callAsFunction(_ x: MLXArray, tokenIds: MLXArray? = nil) -> (MLXArray, MLXArray) {
         // Compute expert scores
-        let logits = x.matmul(weight.T)       // [B, S, n_experts]
+        // float32 logits and scores for every input dtype (vLLM GateLinear out_dtype=float32, CM:136-142)
+        let logits = x.asType(.float32).matmul(weight.asType(.float32).T)  // [B, S, n_experts]
         var scores: MLXArray
         switch scoringFunc {
         case "softmax":
@@ -656,13 +665,15 @@ class DeepseekV4Gate: Module {
         // Gather weights using original (non-biased) scores
         var selectedScores = takeAlong(scores, inds, axis: -1)
 
-        if topK > 1 && normTopkProb {
+        // vLLM divides by the sum for every k, k == 1 included (kernels CU:191/469, reference TK:77-78).
+        if normTopkProb {
             let denominator = selectedScores.sum(axis: -1, keepDims: true) + 1e-20
             selectedScores = selectedScores / denominator
         }
         selectedScores = selectedScores * routedScalingFactor
 
-        return (inds, selectedScores)
+        // One rounding to the activation dtype, so the expert combine stays in x.dtype.
+        return (inds, selectedScores.asType(x.dtype))
     }
 }
 
@@ -678,18 +689,26 @@ class DeepseekV4MoE: Module, UnaryLayer {
         self.numExpertsPerTok = config.numExpertsPerTok
 
         // Routed experts (stacked via SwitchGLU, same as V3)
+        let limit: Float = config.swiguLimit
+        var routedProduct: (@Sendable (MLXArray, MLXArray) -> MLXArray)? = nil
+        if limit > 0 {
+            routedProduct = { (gate: MLXArray, up: MLXArray) -> MLXArray in
+                silu(clip(gate, max: limit)) * clip(up, min: -limit, max: limit)
+            }
+        }
         self._switchMLP.wrappedValue = SwitchGLU(
             inputDims: config.hiddenSize,
             hiddenDims: config.moeIntermediateSize,
             numExperts: config.nRoutedExperts,
             activation: { x in
-                // SwiGLU with limit
+                // SwiGLU with limit: gate clamped max-only (vLLM layers/activation.py:239-243)
                 if config.swiguLimit > 0 {
-                    let g = clip(x, min: -config.swiguLimit, max: config.swiguLimit)
-                    return silu(g)
+                    return silu(clip(x, max: config.swiguLimit))
                 }
                 return silu(x)
-            }
+            },
+            // The up half is clamped two-sided as well, so the product is supplied whole.
+            activationProduct: routedProduct
         )
         self.gate = DeepseekV4Gate(config: config, layerIndex: layerIndex)
 
@@ -777,6 +796,7 @@ public class DeepseekV4Block: Module {
             hcBase: hc_attn.base,
             hcMult: config.hcMult,
             sinkhornIters: config.hcSinkhornIters,
+            rmsEps: config.rmsNormEps,
             eps: config.hcEps
         )
 
@@ -794,6 +814,7 @@ public class DeepseekV4Block: Module {
             hcBase: hc_ffn.base,
             hcMult: config.hcMult,
             sinkhornIters: config.hcSinkhornIters,
+            rmsEps: config.rmsNormEps,
             eps: config.hcEps
         )
 
@@ -871,7 +892,7 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
         // HC head: [B, S, hc, D] → [B, S, D]
         h = hcHead(
             x: h, hcFn: hc_head.fn, hcScale: hc_head.scale,
-            hcBase: hc_head.base, eps: config.hcEps)
+            hcBase: hc_head.base, rmsEps: config.rmsNormEps, eps: config.hcEps)
 
         return norm(h)
     }
@@ -1034,7 +1055,7 @@ extension DeepseekV4Model: MTPLanguageModel {
             // Reduce back to [B, S, D]
             prevHidden = hcHead(
                 x: h, hcFn: model.hc_head.fn, hcScale: model.hc_head.scale,
-                hcBase: model.hc_head.base, eps: args.hcEps)
+                hcBase: model.hc_head.base, rmsEps: args.rmsNormEps, eps: args.hcEps)
                 
             let mtpLogits = lmHead(model.norm(prevHidden))
             result.append(mtpLogits)
