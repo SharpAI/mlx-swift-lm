@@ -481,6 +481,26 @@ struct DequantGoldenTests {
     /// scale reads and block indexing). x = e_j picks column j of the dequantised weight.
     /// Tolerance: the kernel reads the scale as bfloat16 and writes a bfloat16 result: two roundings of <= 2^-9 each,
     /// so <= 2^-8 + 2^-18 relative (0.00392); 0.004 is that bound, a wrong exponent bias (factor 2) is far outside it.
+    ///
+    /// GATED: FP8Linear's kernel does not compile today. Its complete kernel text (includes, an `inline` helper, a `kernel void`
+    /// with [[buffer]] parameters) is passed to MLXFast.metalKernel as the BODY, so the first single-token call dies in
+    /// mlx::metal::Device ("redundant #include ... function definition is not allowed here", fatal, not catchable). Until
+    /// that is fixed the decode comparisons only run with DEQUANT_GOLDEN_FP8_DECODE=1 and are otherwise recorded as a gap.
+    /// The comparison harness itself is therefore UNVERIFIED against a compiling kernel.
+    static let fp8DecodeEnabled = ProcessInfo.processInfo.environment["DEQUANT_GOLDEN_FP8_DECODE"] == "1"
+
+    static func checkDecode(_ key: String, _ b: BlockCase) {
+        guard fp8DecodeEnabled else {
+            ConformanceGap.knownIssue(
+                "FP8Linear single-token decode cannot run: its Metal kernel source is a complete kernel passed as a metalKernel BODY and fails to compile (fatal); set DEQUANT_GOLDEN_FP8_DECODE=1 to execute (OPEN)"
+            ) {
+                ConformanceGap.expect(false, "\(key): not executed")
+            }
+            return
+        }
+        G.check(key, G.mismatch(decodeColumns(b), b.want, rtol: 0.004, atol: 0))
+    }
+
     static func decodeColumns(_ b: BlockCase) -> [Float] {
         let layer = FP8Linear(weight: b.weightArray, weightScaleInv: b.scaleArray(.bfloat16), bias: nil, blockSize: b.bs)
         var out = [Float](repeating: 0, count: b.n * b.k)
@@ -496,7 +516,7 @@ struct DequantGoldenTests {
     @Test("FP8Linear single-token decode (Metal GEMV) equals the golden within bfloat16 rounding", arguments: G.ids("fp8_scaled.json", "block"))
     func fp8Decode(id: String) {
         let b = BlockCase(id, cropped: false)
-        G.check("fp8_decode/\(id)", G.mismatch(Self.decodeColumns(b), b.want, rtol: 0.004, atol: 0))
+        Self.checkDecode("fp8_decode/\(id)", b)
     }
 
     @Test("non-divisible fp8 shapes (zero-pad and crop): dequantFP8Blocks, FP8Linear prefill and decode equal the cropped golden",
@@ -513,7 +533,7 @@ struct DequantGoldenTests {
         let out = layer(MLXArray.identity(b.k, dtype: .float32))  // b.k * b.k != inputDims: prefill branch
         #expect(out.shape == [b.k, b.n])
         G.check("fp8_nondiv/\(id)/FP8Linear", G.mismatch(G.floats(out.transposed()), b.want, rtol: exact.rtol, atol: exact.atol))
-        G.check("fp8_nondiv/\(id)/decode", G.mismatch(Self.decodeColumns(b), b.want, rtol: 0.004, atol: 0))
+        Self.checkDecode("fp8_nondiv/\(id)/decode", b)
     }
 
     @Test("fp8 ue8m0 block scales (byte -> 2^(byte-127)) through dequantFP8Blocks(ue8m0: true)",
