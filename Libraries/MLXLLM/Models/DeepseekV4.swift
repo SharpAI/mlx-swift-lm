@@ -628,7 +628,8 @@ class DeepseekV4Gate: Module {
     /// `tokenIds` ([B, S] ints) is required on hash layers and ignored on learned layers.
     func callAsFunction(_ x: MLXArray, tokenIds: MLXArray? = nil) -> (MLXArray, MLXArray) {
         // Compute expert scores
-        let logits = x.matmul(weight.T)       // [B, S, n_experts]
+        // float32 logits and scores for every input dtype (vLLM GateLinear out_dtype=float32, CM:136-142)
+        let logits = x.asType(.float32).matmul(weight.asType(.float32).T)  // [B, S, n_experts]
         var scores: MLXArray
         switch scoringFunc {
         case "softmax":
@@ -661,7 +662,8 @@ class DeepseekV4Gate: Module {
         }
         selectedScores = selectedScores * routedScalingFactor
 
-        return (inds, selectedScores)
+        // One rounding to the activation dtype, so the expert combine stays in x.dtype.
+        return (inds, selectedScores.asType(x.dtype))
     }
 }
 

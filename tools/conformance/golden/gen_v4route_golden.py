@@ -102,14 +102,13 @@ TOL = {
                "logit plus ~4 ulp (2.4e-7) from exp/log1p/add/sqrt. Normalisation (sum of k<=6 values, one divide) "
                "and the routed scale add ~3 ulp (1.8e-7). Total <= ~1.0e-6; 5e-6 = that + 5x margin."},
     "route_w_bf16": {
-        "mode": "elementwise", "rtol": 2.5e-2, "atol": 0.0,
-        "why": "bfloat16 compute vs float64 truth of the bf16-rounded inputs. The Swift gate runs matmul in bf16 "
-               "(vLLM: GateLinear out_dtype=float32, CM:136-142), so the logit is rounded to bf16: relative 2^-9 = "
-               "1.95e-3 of |l| <= 4, i.e. <= 7.8e-3 absolute, which becomes <= 3.9e-3 relative in the score "
-               "(d ln score/dl <= 1/2). sqrtSoftplus then does exp, log1p, add, sqrt, each rounding to bf16: "
-               "5 x 1.95e-3 x (1/2 for the sqrt) + 1.95e-3 = 6.8e-3. takeAlong is exact; the k-term sum, the divide and "
-               "the scale multiply add 3 roundings = 5.9e-3. Total <= 1.66e-2; 2.5e-2 = that + 50% margin. "
-               "This tolerance documents bf16 precision; it is NOT a claim that bf16 logits equal fp32 logits."},
+        "mode": "elementwise", "rtol": 4.5e-3, "atol": 0.0,
+        "why": "bfloat16 inputs, float32 compute (vLLM: GateLinear out_dtype=float32, CM:136-142; the Swift gate "
+               "widens x and the weight to float32 before the matmul), then ONE rounding of the finished routing "
+               "weight to bfloat16 (the gate hands bf16 weights to the expert combine). Round to nearest gives "
+               "|round(v) - v| <= 2^-8 |v| = 3.906e-3 |v| (bf16 has 8 significant bits). The float32 part is the same "
+               "as route_w_fp32, <= ~1e-6 relative. 4.5e-3 = 3.906e-3 + 1e-6 + ~15% margin. A 1-2% error in the bf16 "
+               "path (a wrong eps or scale) now fails; the earlier 2.5e-2 bound existed only to absorb bf16 logits."},
     "out_fp32": {
         "mode": "normwise", "rtol": 5e-6, "atol": 1e-9,
         "why": "float32 compute vs float64 truth, max|got-want| <= atol + rtol * max|want| over the tensor (normwise "
