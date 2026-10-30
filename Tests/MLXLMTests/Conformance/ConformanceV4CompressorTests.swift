@@ -166,9 +166,11 @@ struct ConformanceV4CompressorTests {
         let diff = abs(got - expected).max().item(Float.self)
         #expect(diff < 1e-4, "max |diff| = \(diff)")
         // Non-vacuity: the compressed entries really change the result vs. a layer without compressor.
-        let plain = DeepseekV4Attention(config: try Self.attentionConfig(ratios: [0, 0, 0, 0]), layerIndex: 1)
-        plain.update(parameters: ModuleParameters.unflattened(attn.parameters().flattened().filter { !$0.0.hasPrefix("compressor.") }))
-        let without = plain(x, mask: .causal, cache: nil)
+        // Reference without any compressed entry: the dense reference of THIS layer with every compressed entry hidden.
+        // (It used to be a ratio-0 layer with the same weights; since the rope fix a ratio-0 layer uses rope_theta and plain RoPE while a
+        // compressed layer uses compress_rope_theta with YaRN, so that layer no longer shares the rope and cannot serve as the control.)
+        let without = Self.denseAttention(
+            attn: attn, x: x, compressed: concatenated(entries, axis: 0), ratio: 8, select: { _, _ in false })
         eval(without)
         #expect(abs(got[0, 7...] - without[0, 7...]).max().item(Float.self) > 1e-3)
         // causal: positions before the first block end (token 7) see no compressed entry at all.

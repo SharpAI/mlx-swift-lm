@@ -426,20 +426,18 @@ struct ConformanceV4CompressorGoldenTests {
     }
 
     @Test(
-        "YaRN: the real V4 config (no mscale keys) makes the shipping layer scale cos/sin by 0.1 ln(factor) + 1; vLLM forces mscale = 0 (rope.py:51-52)"
+        "YaRN: the real V4 config (no mscale keys) leaves the shipping layer's cos/sin unscaled; vLLM forces mscale = 0 (rope.py:51-52)"
     )
-    func yarnMscaleKnownGap() throws {
-        // KNOWN GAP in DeepseekV4.swift (`initializeRope(... scalingConfig: config.ropeScaling ...)`, not this lane's file): for the real
-        // rope_scaling {yarn, factor 16, original 65536, beta 32/1} YarnRoPE defaults mscale = 1 and mscale_all_dim = 0, giving
-        // 0.1 * ln(16) + 1 = 1.277 on the rope channels; vLLM's V4 rope disables the scale. Remove `withKnownIssue` once the layer passes
-        // mscale = 0 / mscale_all_dim = 0 (this test then fails with "known issue not recorded", which is the signal to do so).
+    func yarnMscaleIsDisabled() throws {
+        // Was a knownIssue (the layer passed config.ropeScaling as is, so YarnRoPE defaulted mscale = 1 and scaled the rope channels by
+        // 0.1 ln(16) + 1 = 1.277). The indexer lane's fix in DeepseekV4Attention (compressed layers force mscale = mscale_all_dim = 0)
+        // landed in the same merge, so this is a plain assertion now: the layer built from the REAL config (`vllmMscale: false`, no
+        // mscale keys) must match the golden.
         let m = try G.manifest()
         let c = try #require(Self.yarnCases.first { $0.name == "r4_hd16_rope8_T37_yarn_flash" })
         let (_, entries) = G.fullPath(c, rope: G.rope(c, vllmMscale: false))
-        withKnownIssue("shipped V4 rope scales cos/sin by yarn mscale, vLLM does not") {
-            let e = G.compare(entries, golden: c.entries, nb: c.blocks, c: c, positional: true, m)
-            #expect(e.ok, "worst excess \(e.worstExcess)")
-        }
+        let e = G.compare(entries, golden: c.entries, nb: c.blocks, c: c, positional: true, m)
+        #expect(e.ok, "worst excess \(e.worstExcess)")
     }
 
     @Test(
