@@ -12,8 +12,7 @@ float64) and executes them. The maths is vLLM's text, run in float64, so the com
   [FU]  vllm/model_executor/layers/fused_moe/utils.py::_swiglu_limit_torch (torch.compile decorator dropped)
 
 Needs a vLLM source tree (it is NOT part of this repo; one-time download, never from tests/CI). The oracle was
-transcribed from commit 2eae56c of https://github.com/vllm-project/vllm (the commit the lane was given; the tree it
-was read from had no .git, so that id is not re-verified). To reproduce:
+transcribed from commit 2eae56c of https://github.com/vllm-project/vllm (provenance statement: vllm_provenance.py). To reproduce:
     git clone https://github.com/vllm-project/vllm /some/dir/vllm && git -C /some/dir/vllm checkout 2eae56c
 The tree root is passed with --vllm or the VLLM_ROOT environment variable; there is no default path.
 

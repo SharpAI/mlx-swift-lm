@@ -103,10 +103,13 @@
    "sha256": "0b4e3bf17b617f9edb18bdcf4a640d58a7410e195eb3330003f8d812d660a637"
   },
   "gen_dequant_golden.py": {
-   "bytes": 18516,
-   "sha256": "66578fc9739dcf0ec8785618a10e20a1f70d41022b6fab409132bb44aa8fff19"
+   "bytes": 18651,
+   "sha256": "758a8b2fbb9ccc985e3f39513f68173376768a31387b9069f04df9d92c620513"
   }
  },
  "torch_version": "2.15.0",
- "vllm_commit": "739e5945d"
+ "vllm_commit": "739e5945d",
+ "vllm_provenance": [
+  "vLLM 739e5945dc4b3ba30d84bdf6e637657abd4136b8 (2026-04-13): VERIFIED. Read from a git checkout whose HEAD is exactly this commit (git rev-parse HEAD); it has no DeepSeek-V4 model. Obtain: git clone https://github.com/vllm-project/vllm && git -C vllm checkout 739e5945d"
+ ]
 }

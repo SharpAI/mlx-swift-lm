@@ -1,12 +1,14 @@
 {
  "vllm_commit": "2eae56c",
- "vllm_branch": "main (shallow clone)",
+ "vllm_provenance": [
+  "vLLM 2eae56c4ba0cf12087fec035514eedede83c257d: EXISTS in vllm-project/vllm (checked 2026-10-29: git clone --bare --filter=tree:0 https://github.com/vllm-project/vllm, then git cat-file -t 2eae56c -> commit). Earlier notes that it was unfetchable came from `git fetch origin 2eae56c`, which cannot work with an abbreviated id; a shallow clone's HEAD (e.g. 335dd77) is just a different commit of a moving main. The oracles' file:line citations were transcribed from a source tree that had no .git and are NOT individually re-read against this commit, except vllm/model_executor/layers/activation.py:239-243 (SiluAndMulWithClamp.forward_native: gate clamped with max only, up two-sided), which was. The v4route, v4idx and v4comp cross-check scripts were re-run on 2026-10-29 against a tree extracted from this commit (git archive of vllm/, tests/kernels, tests/v1/attention) and print OK. Obtain: git clone https://github.com/vllm-project/vllm && git -C vllm checkout 2eae56c"
+ ],
  "torch": "2.15.0",
  "python": "3.15.0",
  "numpy": "2.5.4",
  "generator": {
-  "generate.py": "12f5426cf80a740ffddab130d0ddccdd1f80ae8e568fe09a6fecd8f030e96d2c",
-  "v4comp_ref.py": "d86f3c3e9d717a554ef62bc2e5ebd2b402b445ab25b53737addb2f45070fd387"
+  "generate.py": "4ce31afd2a989e4ac0fd6e71e5e8dea233784f583ff860455a523348445ced2e",
+  "v4comp_ref.py": "7774bcf276b7f7cf41bb051d6cadd71a9fa40e40f3b9471ebcf735b038b1acf2"
  },
  "files": {
   "ratio4.json": {

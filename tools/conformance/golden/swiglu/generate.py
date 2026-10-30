@@ -12,6 +12,8 @@ import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, ".."))
+import vllm_provenance as VP  # noqa: E402
 import swiglu_ref as ref  # noqa: E402
 
 OUT = os.path.normpath(os.path.join(HERE, "../../../../Tests/MLXLMTests/Conformance/Golden/swiglu"))
@@ -119,6 +121,7 @@ def main():
                                   for n in ("generate.py", "swiglu_ref.py")},
                       "command": "VLLM_ROOT=<vLLM checkout at 739e5945d> venv/bin/python -I tools/conformance/golden/swiglu/generate.py"},
         "vllm": {"commit": VLLM_COMMIT, "path": "vllm/model_executor/layers/activation.py"},
+        "vllm_provenance": VP.statements("739e5945d", "2eae56c"),   # 2eae56c: the v4_clamped max-only gate clamp
         "torch": torch.__version__, "numpy": np.__version__,
         "oracle_crosscheck_max_relative_disagreement": worst,
         "oracle_provenance": {

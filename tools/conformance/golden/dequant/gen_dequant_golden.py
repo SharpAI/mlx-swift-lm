@@ -23,6 +23,8 @@ import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, ".."))
+import vllm_provenance as VP  # noqa: E402
 import dequant_crosscheck as CC  # noqa: E402
 import dequant_ref as R  # noqa: E402
 
@@ -294,7 +296,7 @@ def main():
     manifest = {
         "generator": "tools/conformance/golden/dequant/gen_dequant_golden.py",
         "reference": ["dequant_ref.py", "dequant_crosscheck.py"],
-        "vllm_commit": VLLM_COMMIT, "torch_version": torch.__version__, "numpy_version": np.__version__,
+        "vllm_commit": VLLM_COMMIT, "vllm_provenance": VP.statements("739e5945d"), "torch_version": torch.__version__, "numpy_version": np.__version__,
         "tolerances": TOL, "crosscheck": stats, "files": files,
         # the oracle + generator sources the fixtures were produced by; the Swift suite re-hashes them, so editing one
         # without regenerating (and committing) the fixtures is noticed

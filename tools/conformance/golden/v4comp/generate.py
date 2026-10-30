@@ -17,6 +17,8 @@ import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, ".."))
+import vllm_provenance as VP  # noqa: E402
 import v4comp_ref as ref  # noqa: E402
 
 F64 = torch.float64
@@ -403,7 +405,7 @@ def main():
         dump_fixture(os.path.join(OUT, fn), cases)
         files[fn] = {"sha256": sha(os.path.join(OUT, fn)), "cases": len(cases)}
     manifest = {
-        "vllm_commit": VLLM_COMMIT, "vllm_branch": "main (shallow clone)",
+        "vllm_commit": VLLM_COMMIT, "vllm_provenance": VP.statements("2eae56c"),
         "torch": torch.__version__, "python": platform.python_version(), "numpy": np.__version__,
         "generator": {"generate.py": sha(os.path.join(HERE, "generate.py")), "v4comp_ref.py": sha(os.path.join(HERE, "v4comp_ref.py"))},
         "files": files,

@@ -38,6 +38,7 @@ import zlib
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import vllm_provenance as VP  # noqa: E402
 import kda_ref  # noqa: E402
 
 F64 = torch.float64
@@ -324,6 +325,7 @@ def main():
         "oracle": "tools/conformance/golden/kda_ref.py",
         "oracleSha256": sha256(os.path.join(here, "kda_ref.py")),
         "vllmCommit": VLLM_COMMIT,
+        "vllm_provenance": VP.statements("739e5945d"),
         "torch": torch.__version__,
         "oracleDtype": "float64",
         "note": "Generated once and committed; tests never run python. Edit nothing by hand: rerun the generator. "

@@ -1,7 +1,7 @@
 """Generate the V4 routing / clamped SwiGLU / mHC golden fixtures for ConformanceV4RouteGoldenTests.
 
 PROVENANCE
-  Maths: vLLM commit 2eae56c (main, shallow clone; the clone has no .git, the commit is the one the lane was given),
+  Maths: vLLM commit 2eae56c (provenance statement: vllm_provenance.py, also written into MANIFEST.json),
     transcribed in tools/conformance/golden/v4route_ref.py with file:line citations; INFERRED points are I1..I5 in
     that header. v4route_crosscheck.py checks the oracle against vLLM's own torch reference code (extracted with ast
     and run in float64) on >= 200 random cases per component; it must print OK before this generator is run.
@@ -39,6 +39,7 @@ import zlib
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import vllm_provenance as VP  # noqa: E402
 import v4route_ref as R  # noqa: E402
 
 F64 = torch.float64
@@ -438,6 +439,7 @@ def main():
         "count": len(files),
         "files": files,
         "vllmCommit": VLLM_COMMIT,
+        "vllm_provenance": VP.statements("2eae56c"),
         "torch": torch.__version__,
         "generator": "tools/conformance/golden/gen_v4route_golden.py",
         "generatorSha256": sha256_file(os.path.join(HERE, "gen_v4route_golden.py")),
