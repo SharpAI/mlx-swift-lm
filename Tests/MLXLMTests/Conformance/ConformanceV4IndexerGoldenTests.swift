@@ -16,10 +16,21 @@
 //   CONFIRMED  k = min(index_topk, #candidates), nothing selected when no block is complete            (cpu_sparse.py:246-261)
 //   CONFIRMED  window branch and compressed branch share ONE softmax with the sink                     (cpu_sparse.py:630-641)
 //   CONFIRMED  indexer only on ratio-4 layers, compressor on ratio > 1                                  (attention.py:302,369)
+//   CONFIRMED  ratio-0 layers use rope_theta and plain RoPE, ratio>1 layers compress_rope_theta + YaRN  (common/rope.py:30-52; fixed in e56673c)
+//   CONFIRMED  YaRN mscale is forced to 0 (cos/sin scale 1)                                             (deepseek_scaling_rope.py:52-55; fixed in e56673c)
+//   CONFIRMED  YaRN inverse frequencies (find_correction_range, linear ramp, beta_fast/slow) of the compressed layers,
+//              three `yarn` fixtures against a float64 transcription of vLLM's generic YaRN code (common.py:32-68,
+//              deepseek_scaling_rope.py:73-101, vLLM 739e594). NOT covered: the rope_type selection of the current V4 tree
+//              (deepseek_llama_scaling when attention_factor == 1.0, nested per-layer-type rope dicts), see v4idx_ref.py I4.
 //   WRONG      the sliding window is never applied (sliding_window parsed, unused)                      (cpu_sparse.py:587-590)
-//   WRONG      ratio-0 layers use compress_rope_theta + YaRN instead of rope_theta, plain RoPE          (common/rope.py:30-52)
-//   WRONG      YaRN mscale: Swift defaults mscale to 1 (cos/sin scaled by 1.277), vLLM forces 0         (deepseek_scaling_rope.py:52-55)
 //   WRONG      sinks are dropped when attn_sink.sum() == 0                                              (DeepseekV4.swift:484)
+// COVERAGE, honestly: the sliding-window fixtures (swa_w1/w3/w4/w8, window < length) are NOT compared to Swift output;
+// they are knownIssue gaps, and the passing swa tests are weak controls (no future leaks; in-window dependence is not
+// silent). Only the window >= length case (swa_w8_l6) is compared to the oracle. With the 4 SWA gaps and the sink gap the
+// suite reports 5 known issues: green does not mean the sliding window is right.
+// The manifest sha256 checks detect an accidental or tampering edit of a fixture, the generator or the oracle. They are
+// not an independent anchor: MANIFEST.json itself is not pinned, and the generator
+// and oracle are hashed but never re-run in CI.
 // upstream-watch: Libraries/MLXLLM/Models/DeepseekV4Indexer.swift, DeepseekV4.swift.
 
 import CryptoKit
