@@ -4,9 +4,9 @@
 // fixtures are located through `#filePath` (no Package.swift resource change) and verified against MANIFEST.json (sha256
 // per file, plus the generator and the oracle), so a changed fixture fails loudly instead of silently moving the target.
 //
-// Generator: tools/conformance/golden/gen_v4idx_golden.py. Oracle: tools/conformance/golden/v4idx_ref.py (every line
+// Generator: tools/conformance/golden/v4idx/gen_v4idx_golden.py. Oracle: tools/conformance/golden/v4idx/v4idx_ref.py (every line
 // cites vLLM file:line; what is inferred or not modelled is I1..I6 in its header). Cross-check against vLLM's own torch
-// reference code: tools/conformance/golden/v4idx_crosscheck.py.
+// reference code: tools/conformance/golden/v4idx/v4idx_crosscheck.py.
 //
 // What this settles (see also the gap tests at the bottom; each gap is wrapped by ConformanceGap.knownIssue, run with
 // CONFORMANCE_GAP_RAW=1 to see them red):
@@ -231,7 +231,7 @@ enum V4IdxGolden {
             guard actual == pinned else {
                 throw LoadError(
                     description: "ORACLE/GENERATOR CHANGED: \(file.lastPathComponent) sha256 \(actual) != manifest \(pinned). "
-                        + "Rerun tools/conformance/golden/gen_v4idx_golden.py and commit the regenerated fixtures.")
+                        + "Rerun tools/conformance/golden/v4idx/gen_v4idx_golden.py and commit the regenerated fixtures.")
             }
         }
         var fixtures = [Fixture]()
@@ -242,7 +242,7 @@ enum V4IdxGolden {
             guard actual == entry.sha256 else {
                 throw LoadError(
                     description: "FIXTURE CHANGED: \(name) sha256 \(actual) != manifest \(entry.sha256). "
-                        + "Regenerate with tools/conformance/golden/gen_v4idx_golden.py and review the diff.")
+                        + "Regenerate with tools/conformance/golden/v4idx/gen_v4idx_golden.py and review the diff.")
             }
             let fixture = try GoldenKit.decode(Fixture.self, from: data, name: name)
             guard fixture.name + ".json" == name, fixture.kind == entry.kind, fixture.group == entry.group,
