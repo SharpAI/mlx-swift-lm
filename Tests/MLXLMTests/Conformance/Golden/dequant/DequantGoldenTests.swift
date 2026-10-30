@@ -51,17 +51,51 @@ enum DequantGolden {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// nil when `data` is what `files` (the manifest's "files") records for `name`. STUB (red): never reports a problem.
-    static func verify(_ name: String, data: Data, files: [String: [String: Any]]) -> String? { nil }
+    /// nil when `data` is what `files` (the manifest's "files") records for `name`; otherwise the problem.
+    static func verify(_ name: String, data: Data, files: [String: [String: Any]]) -> String? {
+        guard let info = files[name] else { return "\(name) is not in MANIFEST.json" }
+        if sha256(data) != info["sha256"] as? String {
+            return "\(name): sha256 differs from MANIFEST.json (regenerate with gen_dequant_golden.py)"
+        }
+        if let bytes = info["bytes"] as? Int, bytes != data.count {
+            return "\(name): \(data.count) bytes, MANIFEST.json records \(bytes) bytes"
+        }
+        return nil
+    }
 
-    /// Loads a fixture after checking its manifest sha256.
+    /// Parsed fixtures and their integrity problem, read once per process (tests run in parallel).
+    private final class Cache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [String: (json: [String: Any], problem: String?)] = [:]
+        func get(_ name: String, make: () -> (json: [String: Any], problem: String?)) -> (json: [String: Any], problem: String?) {
+            lock.lock()
+            defer { lock.unlock() }
+            if let e = entries[name] { return e }
+            let e = make()
+            entries[name] = e
+            return e
+        }
+    }
+    private static let cache = Cache()
+
+    /// Loads a fixture after checking it against the manifest. A mismatch is RECORDED as an issue of the calling test
+    /// (not trapped: a trap would kill the whole test process and every unrelated test after it).
     static func load(_ name: String) -> [String: Any] {
-        let files = manifest()["files"] as! [String: [String: Any]]
-        precondition(files[name] != nil, "\(name) is not in MANIFEST.json")
-        precondition(
-            sha256(dir.appendingPathComponent(name)) == files[name]!["sha256"] as! String,
-            "\(name): sha256 differs from MANIFEST.json (regenerate with gen_dequant_golden.py)")
-        return json(name)
+        let e = cache.get(name) {
+            let data = try! Data(contentsOf: dir.appendingPathComponent(name))
+            let files = manifest()["files"] as! [String: [String: Any]]
+            return (try! JSONSerialization.jsonObject(with: data) as! [String: Any], verify(name, data: data, files: files))
+        }
+        if let problem = e.problem { Issue.record(Comment(rawValue: problem)) }
+        return e.json
+    }
+
+    /// Fixture content without the integrity check; for test ARGUMENT lists, which are evaluated outside any test.
+    static func unverified(_ name: String) -> [String: Any] {
+        cache.get("raw/" + name) {
+            let data = try! Data(contentsOf: dir.appendingPathComponent(name))
+            return (try! JSONSerialization.jsonObject(with: data) as! [String: Any], nil)
+        }.json
     }
 
     static func cases(_ file: String, _ key: String = "cases") -> [[String: Any]] {
@@ -69,7 +103,7 @@ enum DequantGolden {
     }
 
     static func ids(_ file: String, _ key: String = "cases") -> [String] {
-        cases(file, key).map { $0["id"] as! String }
+        (unverified(file)[key] as! [[String: Any]]).map { $0["id"] as! String }
     }
 
     static func entry(_ file: String, _ id: String, key: String = "cases") -> [String: Any] {
@@ -200,8 +234,9 @@ struct DequantGoldenTests {
         #expect(m["vllm_commit"] as? String == "739e5945d")
         #expect((m["torch_version"] as? String)?.isEmpty == false)
         #expect(files.count == 8)
-        for (name, info) in files {
-            #expect(G.sha256(G.dir.appendingPathComponent(name)) == info["sha256"] as? String, "\(name)")
+        for name in files.keys.sorted() {
+            let data = try! Data(contentsOf: G.dir.appendingPathComponent(name))
+            #expect(G.verify(name, data: data, files: files) == nil, "\(G.verify(name, data: data, files: files) ?? "")")
         }
         let onDisk = Set(
             ((try? FileManager.default.contentsOfDirectory(atPath: G.dir.path)) ?? []).filter { $0.hasSuffix(".json") })
@@ -212,6 +247,11 @@ struct DequantGoldenTests {
         }
         let cc = m["crosscheck"] as! [String: Any]
         #expect(Set(cc.keys).isSuperset(of: ["nvfp4", "mxfp8_e8m0_decode", "fp8_scaled_dequantize", "int4"]))
+        // the crosscheck numbers are self-reported by the generator; at least pin that they claim real coverage
+        #expect((cc["nvfp4"] as! [String: Any])["cases"] as! Int >= 200)
+        #expect((cc["mxfp8_e8m0_decode"] as! [String: Any])["cases"] as! Int >= 200)
+        #expect((cc["fp8_scaled_dequantize"] as! [String: Any])["cases"] as! Int >= 200)
+        #expect((cc["int4"] as! [String: Any])["cases_each"] as! Int >= 200)
     }
 
     // MARK: fp4 e2m1 / e8m0
