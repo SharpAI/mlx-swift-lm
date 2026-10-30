@@ -41,8 +41,87 @@ enum DequantGolden {
     static func manifest() -> [String: Any] { json("MANIFEST.json") }
 
     static func json(_ name: String) -> [String: Any] {
-        let data = try! Data(contentsOf: dir.appendingPathComponent(name))
-        return try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        parseJSON(try! Data(contentsOf: dir.appendingPathComponent(name))) as! [String: Any]
+    }
+
+    /// Exact JSON parser for the fixtures (objects -> [String: Any], arrays -> [Any], integers -> NSNumber(Int),
+    /// other numbers -> NSNumber(Double) via Swift's correctly rounded Double(String), strings, Bool, null -> NSNull).
+    /// Foundation's JSONSerialization reads some decimals one ulp off: -0.024411658756434917 (an exact float32 rounding
+    /// tie, 0.5 ulp from two floats) came back as the other neighbour, so Float(parsed) flipped and the exact float32
+    /// comparison failed although MLX was right.
+    static func parseJSON(_ data: Data) -> Any {
+        let b = [UInt8](data)
+        var i = 0
+        func ws() { while i < b.count, b[i] == 0x20 || b[i] == 0x0A || b[i] == 0x0D || b[i] == 0x09 { i += 1 } }
+        func string() -> String {
+            i += 1  // opening quote
+            var bytes = [UInt8]()
+            while b[i] != 0x22 {
+                if b[i] == 0x5C {
+                    i += 1
+                    switch b[i] {
+                    case 0x6E: bytes.append(0x0A)
+                    case 0x74: bytes.append(0x09)
+                    case 0x72: bytes.append(0x0D)
+                    case 0x62: bytes.append(0x08)
+                    case 0x66: bytes.append(0x0C)
+                    case 0x75:
+                        let hex = String(decoding: b[(i + 1) ... (i + 4)], as: UTF8.self)
+                        bytes.append(contentsOf: Array(String(UnicodeScalar(UInt32(hex, radix: 16)!)!).utf8))
+                        i += 4
+                    default: bytes.append(b[i])  // \" \\ \/
+                    }
+                } else {
+                    bytes.append(b[i])
+                }
+                i += 1
+            }
+            i += 1
+            return String(decoding: bytes, as: UTF8.self)
+        }
+        func value() -> Any {
+            ws()
+            switch b[i] {
+            case 0x7B:
+                i += 1
+                var o = [String: Any]()
+                ws()
+                if b[i] == 0x7D { i += 1; return o }
+                while true {
+                    ws()
+                    let k = string()
+                    ws(); i += 1  // colon
+                    o[k] = value()
+                    ws()
+                    if b[i] == 0x2C { i += 1; continue }
+                    i += 1  // closing brace
+                    return o
+                }
+            case 0x5B:
+                i += 1
+                var a = [Any]()
+                ws()
+                if b[i] == 0x5D { i += 1; return a }
+                while true {
+                    a.append(value())
+                    ws()
+                    if b[i] == 0x2C { i += 1; continue }
+                    i += 1  // closing bracket
+                    return a
+                }
+            case 0x22: return string()
+            case 0x74: i += 4; return NSNumber(value: true)
+            case 0x66: i += 5; return NSNumber(value: false)
+            case 0x6E: i += 4; return NSNull()
+            default:
+                let start = i
+                while i < b.count, "+-0123456789.eE".utf8.contains(b[i]) { i += 1 }
+                let tok = String(decoding: b[start ..< i], as: UTF8.self)
+                if tok.contains(where: { ".eE".contains($0) }) { return NSNumber(value: Double(tok)!) }
+                return NSNumber(value: Int(tok)!)
+            }
+        }
+        return value()
     }
 
     static func sha256(_ url: URL) -> String { sha256(try! Data(contentsOf: url)) }
@@ -84,7 +163,7 @@ enum DequantGolden {
         let e = cache.get(name) {
             let data = try! Data(contentsOf: dir.appendingPathComponent(name))
             let files = manifest()["files"] as! [String: [String: Any]]
-            return (try! JSONSerialization.jsonObject(with: data) as! [String: Any], verify(name, data: data, files: files))
+            return (parseJSON(data) as! [String: Any], verify(name, data: data, files: files))
         }
         if let problem = e.problem { Issue.record(Comment(rawValue: problem)) }
         return e.json
@@ -94,7 +173,7 @@ enum DequantGolden {
     static func unverified(_ name: String) -> [String: Any] {
         cache.get("raw/" + name) {
             let data = try! Data(contentsOf: dir.appendingPathComponent(name))
-            return (try! JSONSerialization.jsonObject(with: data) as! [String: Any], nil)
+            return (parseJSON(data) as! [String: Any], nil)
         }.json
     }
 
@@ -610,6 +689,18 @@ struct DequantGoldenTests {
         #expect(!code.contains("in a line comment") && !code.contains("in a block") && !code.contains("trailing note"))
         #expect(code.contains("\"weight_packed\""))
         #expect(!code.contains("weight_global_scale"))
+    }
+
+    @Test("fixture JSON numbers are parsed exactly (Foundation's parser is one ulp off on a float32 rounding tie)")
+    func jsonNumbersAreExact() {
+        let v = G.parseJSON(Data(#"{"a":[-0.024411658756434917, 0.1, 1e-39, 3, -7, true, "x\"y"], "b":{}}"#.utf8)) as! [String: Any]
+        let a = v["a"] as! [Any]
+        let tie = (a[0] as! NSNumber).doubleValue
+        #expect(tie == -0.024411658756434917 && (a[1] as! NSNumber).doubleValue == 0.1 && (a[2] as! NSNumber).doubleValue == 1e-39)
+        // the tie is -0.01171875 * 2.0831282138824463 exactly; IEEE round-to-nearest-even of it is the CPU float32 product
+        #expect(Float(tie) == Float(-0.01171875) * Float(2.0831282138824463))
+        #expect(a[3] as? Int == 3 && a[4] as? Int == -7 && a[5] as? Bool == true && a[6] as? String == "x\"y")
+        #expect((v["b"] as! [String: Any]).isEmpty)
     }
 
     @Test("fixture integrity problems are reported as a problem string (no trap): tampered content, wrong size, unknown file")
