@@ -18,7 +18,7 @@ struct ConformanceGapGdnTests {
     typealias G = ConformanceGdn
     typealias Ref = SharpAIOverlayGdnReference
 
-    @Test("gap: the fused Metal kernel has no per-key-gate (KDA / GDN2?) path -- fed [B,T,Hv,Dk] it must equal the reference")
+    @Test("the per-key-gate (KDA) kernel SharpAIOverlayGatedDeltaKDA equals the reference (was a known gap: the scalar kernel misread rank-4 g)")
     func kernelPerKeyGate() {
         let c = G.makeCase(T: 8, Hk: 2, Hv: 4, Dk: 32, Dv: 16, perKey: true, seed: 71)
         let want = Ref.recurrent(q: c.q, k: c.k, v: c.v, logDecay: c.logDecay, beta: c.beta)
@@ -32,15 +32,11 @@ struct ConformanceGapGdnTests {
         #expect(G.maxDiff(scalar.y, want.y) > 1e-2, "per-key and mean-scalar gate must give different outputs")
 
         let zero = MLXArray.zeros([1, 4, 16, 32])
-        let (y, state) = gatedDeltaKernel(
+        let (y, state) = SharpAIOverlayGatedDeltaKDA.update(
             q: c.q, k: c.k, v: c.v, g: exp(c.logDecay), beta: c.beta, state: zero)
         eval(y, state)
         let dy = G.maxDiff(y, want.y), ds = G.maxDiff(state, want.state)
-        ConformanceGap.knownIssue(
-            "gatedDeltaKernel indexes g as [B,T,Hv] (g_[hv_idx]); a rank-4 per-key gate is silently read as scalars"
-        ) {
-            ConformanceGap.expect(dy < 1e-3 && ds < 1e-3, "kernel vs per-key reference: |dy|=\(dy) |dstate|=\(ds)")
-        }
+        #expect(dy < 1e-3 && ds < 1e-3, "kernel vs per-key reference: |dy|=\(dy) |dstate|=\(ds)")
     }
 
     @Test("gap: Qwen3.5 GDN config does not carry Qwen4Exp's output_gate_type (silu | sigmoid); the norm is hard-wired to silu")
