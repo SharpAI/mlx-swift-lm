@@ -257,10 +257,10 @@ struct ConformanceDequantGoldenTests {
         guard let cc = m["crosscheck"] as? [String: Any] else { Issue.record("MANIFEST.json has no crosscheck section"); return }
         #expect(Set(cc.keys).isSuperset(of: ["nvfp4", "mxfp8_e8m0_decode", "fp8_scaled_dequantize", "int4"]))
         // the crosscheck numbers are self-reported by the generator; at least pin that they claim real coverage
-        #expect((cc["nvfp4"] as! [String: Any])["cases"] as! Int >= 200)
-        #expect((cc["mxfp8_e8m0_decode"] as! [String: Any])["cases"] as! Int >= 200)
-        #expect((cc["fp8_scaled_dequantize"] as! [String: Any])["cases"] as! Int >= 200)
-        #expect((cc["int4"] as! [String: Any])["cases_each"] as! Int >= 200)
+        for (k, field) in [("nvfp4", "cases"), ("mxfp8_e8m0_decode", "cases"), ("fp8_scaled_dequantize", "cases"), ("int4", "cases_each")] {
+            let n = (cc[k] as? [String: Any])?[field] as? Int
+            #expect((n ?? 0) >= 200, "crosscheck.\(k).\(field) is \(n.map(String.init) ?? "missing"), expected >= 200")
+        }
     }
 
     // MARK: fp4 e2m1 / e8m0
@@ -659,14 +659,16 @@ struct ConformanceDequantGoldenTests {
 
     @Test("fixture JSON numbers are parsed exactly (Foundation's parser is one ulp off on a float32 rounding tie)")
     func jsonNumbersAreExact() {
-        let v = G.parseJSON(Data(#"{"a":[-0.024411658756434917, 0.1, 1e-39, 3, -7, true, "x\"y"], "b":{}}"#.utf8)) as! [String: Any]
-        let a = v["a"] as! [Any]
-        let tie = (a[0] as! NSNumber).doubleValue
-        #expect(tie == -0.024411658756434917 && (a[1] as! NSNumber).doubleValue == 0.1 && (a[2] as! NSNumber).doubleValue == 1e-39)
+        guard let v = G.parseJSON(Data(#"{"a":[-0.024411658756434917, 0.1, 1e-39, 3, -7, true, "x\"y"], "b":{}}"#.utf8)) as? [String: Any],
+              let a = v["a"] as? [Any], a.count == 7,
+              let tie = (a[0] as? NSNumber)?.doubleValue,
+              let a1 = (a[1] as? NSNumber)?.doubleValue, let a2 = (a[2] as? NSNumber)?.doubleValue
+        else { Issue.record("parseJSON did not return the expected object"); return }
+        #expect(tie == -0.024411658756434917 && a1 == 0.1 && a2 == 1e-39)
         // the tie is -0.01171875 * 2.0831282138824463 exactly; IEEE round-to-nearest-even of it is the CPU float32 product
         #expect(Float(tie) == Float(-0.01171875) * Float(2.0831282138824463))
         #expect(a[3] as? Int == 3 && a[4] as? Int == -7 && a[5] as? Bool == true && a[6] as? String == "x\"y")
-        #expect((v["b"] as! [String: Any]).isEmpty)
+        #expect((v["b"] as? [String: Any])?.isEmpty == true)
     }
 
     @Test("fixture integrity problems are reported as a problem string (no trap): tampered content, wrong size, unknown file")
