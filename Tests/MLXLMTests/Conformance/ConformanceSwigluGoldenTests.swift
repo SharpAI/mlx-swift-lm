@@ -348,17 +348,33 @@ struct ConformanceSwigluGoldenTests {
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
     }
 
-    @Test("gap: float16 silu(gate)*up loses precision for gate below about -8 (all three silu paths)")
+    /// sigmoid(gate) ~ exp(gate) leaves float16's normal range (min normal 2^-14 = 6.1e-5) at gate = ln(2^-14) = -9.70, and
+    /// rounds to zero once it is below half the smallest subnormal (2^-25 = 3e-8) at gate = ln(2^-25) = -17.33.
+    static let fp16SigmoidSubnormalGate = -9.70
+    static let fp16SigmoidZeroGate = -17.33
+
+    @Test("gap: float16 silu(gate)*up is off for strongly negative gates (all three silu paths)")
     func siluFloat16Gap() throws {
-        // Measured (run log, fp16): golden 3.8e-7 / 2.1e-7 / 4.3e-7 come out as exactly 0.0 (relative error 1.0; below fp16 min
-        // normal 6.1e-5, subnormal flushed or underflowed), and golden -1.3903e-4 comes out as -1.4031e-4 (0.9% off, rtol is 0.2%).
-        // The failing inputs are gates of about -9 to -20, where silu is tiny and exp's argument is rounded to half precision.
-        // vLLM's CUDA silu kernel computes in fp32 internally, so the oracle's hardware does not show this. Not a wrong formula;
-        // the absolute size of these errors is ~1e-6 .. 1e-5 (the large 0.72 abs error in the stats line is a ~4e4 output, within rtol).
+        // Measured (run log, 32 bad elements of the float16 cases, identical in all three paths): every bad element has
+        // gate <= -11.9; relative error grows with |gate| (0.4% at -11.9, 3.8% at -14.3, 27% at -16.3, 96% at -17.3) and the output
+        // is exactly 0.0 for the 10 gates between -17.9 and -19.3. That fits float16 ROUNDING OF sigmoid(gate): below gate -9.7
+        // sigmoid is a float16 subnormal (absolute step 2^-24 = 6e-8, so the relative step grows like e^|gate|) and below -17.33
+        // it rounds to zero. It does NOT fit exp overflow (exp(-gate) > 65504 at gate < -11.09 would zero every output from
+        // -11.09 on; the outputs at -11.9 .. -17.3 are non-zero). That sigmoid is rounded to float16 inside the fused silu*up is
+        // INFERRED from this fit, not read from the MLX kernel. vLLM's CUDA silu computes in fp32, so the oracle's hardware does
+        // not show it. The formula is right; the dtype of the intermediate is the issue, and an fp32 intermediate would be the
+        // fix (not tried). Absolute errors are ~1e-6 .. 1e-4 (the 0.72 abs error in the stats line is a ~4e4 output, within rtol).
         let only: (S.Case) -> Bool = { $0.dtype == "float16" }
         let a = try Self.check("silu_and_mul.json", label: "compiledSiluProduct fp16", only: only) { c, l in S.viaCompiledSiluProduct(c, layout: l) }
         let b = try Self.check("silu_and_mul.json", label: "SwitchGLU fp16", only: only) { c, l in S.viaSwitchGLUDefault(c, layout: l) }
         let d = try Self.check("silu_and_mul.json", label: "V4Expert fp16", only: only) { c, l in S.viaV4Dense(c, layout: l, limit: 0) }
+        // Always-on classification of the out-of-tolerance elements (the evidence behind the text above).
+        let zeroed = a.bad.filter { $0.out == 0 }
+        print("[swiglu][fp16-silu] bad=\(a.bad.count) zero-output=\(zeroed.count) max gate of bad=\(a.bad.map(\.gate).max() ?? 0) max gate of zero-output=\(zeroed.map(\.gate).max() ?? 0)")
+        #expect(!a.bad.isEmpty, "the gap went away: remove the knownIssue")
+        #expect(a.bad.allSatisfy { $0.gate < Self.fp16SigmoidSubnormalGate }, "bad element with sigmoid still in float16's normal range: \(a.bad.filter { $0.gate >= Self.fp16SigmoidSubnormalGate }.prefix(3))")
+        #expect(zeroed.allSatisfy { $0.gate < Self.fp16SigmoidZeroGate }, "zero output where sigmoid(gate) is representable: \(zeroed.filter { $0.gate >= Self.fp16SigmoidZeroGate }.prefix(3))")
+        #expect(a.bad.count == b.bad.count && a.bad.count == d.bad.count, "the three silu paths fail on different elements")
         ConformanceGap.knownIssue("float16 silu(gate)*up misses rtol 2e-3 / atol 1e-7 for strongly negative gates (compiledSiluProduct, SwitchGLU, DeepseekV4Expert limit 0)") {
             ConformanceGap.expect(a.failures.isEmpty, "compiledSiluProduct: \(a.failures.prefix(2))")
             ConformanceGap.expect(b.failures.isEmpty, "SwitchGLU: \(b.failures.prefix(2))")
