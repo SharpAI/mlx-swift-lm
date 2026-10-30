@@ -46,7 +46,8 @@ struct SharpAIV4OverlayTests {
         let twice = SharpAIDeepseekV4Overlay.applying(to: once)
         #expect(once.keys.sorted() == ["deepseek_v4"])
         #expect(twice.keys.sorted() == ["deepseek_v4"])
-        let model = try #require(twice["deepseek_v4"])(try ConformanceDeepseekV4.tinyJSON())
+        let creator = try #require(twice["deepseek_v4"])
+        let model = try creator(try ConformanceDeepseekV4.tinyJSON())
         #expect(String(describing: type(of: model)) == "SharpAIDeepseekV4Model")
     }
 
