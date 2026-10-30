@@ -157,4 +157,17 @@ cl 'Updating https://github.com/swiftlang/swift-syntax.git'; [ $? -eq 71 ]; chec
 cl 'Cloning https://github.com/swiftlang/swift-syntax.git'; [ $? -eq 71 ]; check "resolve-log: a bare 'Cloning https' is flagged (71)" $?
 cl '[1/1] Fetching https://github.com/apple/swift-numerics'; [ $? -eq 71 ]; check "resolve-log: a progress-prefixed fetch is flagged (71)" $?
 
+# 10. ci.yml sealed-offline job (SL-28): pinned MLX wheel, no silent metallib copy, explicit PASS/FAIL line, still non-blocking.
+ci="$here/../../.github/workflows/ci.yml"
+sealed=$(awk '/^  sealed-offline:/{p=1} p' "$ci")
+[ -n "$sealed" ]; check "ci.yml: sealed-offline job exists" $?
+! printf '%s\n' "$sealed" | grep -Eq 'pip install[^\n]* mlx *$'; check "ci.yml sealed job: no unpinned 'pip install mlx'" $?
+printf '%s\n' "$sealed" | grep -q 'mlx==\$MLX_VER'; check "ci.yml sealed job: mlx wheel pinned to the version of the mlx-swift checkout" $?
+printf '%s\n' "$sealed" | grep -q 'MLX_VERSION_MAJOR'; check "ci.yml sealed job: version derived from mlx-swift's mlx/version.h" $?
+! printf '%s\n' "$sealed" | grep -q '2>/dev/null || true'; check "ci.yml sealed job: no silent '2>/dev/null || true'" $?
+printf '%s\n' "$sealed" | grep -q 'metallib not installed'; check "ci.yml sealed job: a metallib copy that installs nothing fails loudly" $?
+printf '%s\n' "$sealed" | grep -q 'SEALED-OFFLINE: '; check "ci.yml sealed job: summary prints an explicit SEALED-OFFLINE: PASS/FAIL line" $?
+printf '%s\n' "$sealed" | grep -q 'continue-on-error: true'; check "ci.yml sealed job: still continue-on-error (observation phase)" $?
+printf '%s\n' "$sealed" | grep -q 'rev-parse HEAD'; check "ci.yml sealed job: records the mlx-swift revision it ran against" $?
+
 exit "$fail"
