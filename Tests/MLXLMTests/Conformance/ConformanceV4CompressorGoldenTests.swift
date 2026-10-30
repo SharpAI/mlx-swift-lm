@@ -63,7 +63,7 @@ enum V4CompGolden {
         return d
     }()
     static let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Golden/v4comp")
-    static let files = ["ratio4.json", "ratio128.json", "bf16.json"]
+    static let files = ["ratio4.json", "ratio128.json", "bf16.json", "eps.json"]
 
     static func manifest() throws -> Manifest {
         try decoder.decode(Manifest.self, from: Data(contentsOf: dir.appendingPathComponent("MANIFEST.json")))
@@ -221,7 +221,10 @@ struct ConformanceV4CompressorGoldenTests {
         #expect(raw["vllm_commit"] as? String == "2eae56c")
         let xc = raw["crosscheck"] as? [String: Any]
         #expect((xc?["cases"] as? Int ?? 0) >= 200, "crosscheck must cover >= 200 cases")
-        #expect(Self.cases.count == 11 && Self.bf16Cases.count == 2)
+        #expect(Self.allCases.count == m.files.values.map(\.cases).reduce(0, +), "a fixture failed to load")
+        #expect(Self.bf16Cases.count == 2)
+        // eps is observable: some fixture has an rms_norm_eps large enough (with a small pooled magnitude) to move the output
+        #expect(Self.cases.contains { $0.eps >= 1e-2 && $0.ratio == 4 } && Self.cases.contains { $0.eps >= 1e-2 && $0.ratio == 128 })
         #expect(Set(Self.cases.map(\.ratio)) == [4, 128])
     }
 
@@ -294,13 +297,13 @@ struct ConformanceV4CompressorGoldenTests {
             #expect(!G.compare(pooled, golden: badP, nb: c.blocks, c: c, positional: false, m).ok, "\(c.name) pooled accepted a perturbed golden")
             rejected += 1
         }
-        #expect(rejected == 9)
+        #expect(rejected == 11)
         // the three recorded wrong readings differ from the golden by >> tolerance
         let raw = try JSONSerialization.jsonObject(with: Data(contentsOf: G.dir.appendingPathComponent("MANIFEST.json"))) as! [String: Any]
         let disc = raw["discriminators_max_abs_diff_of_wrong_readings_vs_golden"] as! [String: [String: Double]]
         var n = 0
         for (_, d) in disc { for (_, v) in d { #expect(v > 1e-3); n += 1 } }
-        #expect(n == 23)
+        #expect(n == 27)
     }
 
     @Test("bfloat16 (production dtype): fp32 projection and pooling like vLLM (full-sequence and cached)", arguments: bf16Cases)

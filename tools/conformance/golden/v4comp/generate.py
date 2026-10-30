@@ -192,18 +192,27 @@ CASES_BF16 = [
 ]
 
 
-def build_case(idx, spec, seed=11, dtype="float32"):
+# eps sensitivity: tiny pooled magnitude (wkv scale 0.05 -> mean square ~1e-2) and a large rms_norm_eps, so that eps changes the output
+# by ~tens of percent. With the default fixtures (pooled magnitude 2-5, eps 1e-6) eps*10 moves the output by ~5e-7 relative, below the
+# tolerance: a wrong or unwired eps would pass. MUTATION CHECK recorded in the manifest ("eps_sensitivity").
+CASES_EPS = [
+    ("r4_hd16_rope8_T21_eps1e-2", 4, 16, 8, 8, 21, 10000.0),
+    ("r128_hd16_rope8_T260_eps1e-2", 128, 16, 8, 8, 260, 10000.0),
+]
+EPS_LARGE, EPS_WKV_SCALE = 1e-2, 0.05
+
+
+def build_case(idx, spec, seed=11, dtype="float32", eps=1e-6, wkv_scale=0.6):
     name, ratio, hd, rd, hidden, T, theta = spec
     rnd_in = b16 if dtype == "bfloat16" else f32
     g = torch.Generator().manual_seed(seed * 1000 + idx)
     overlap = ratio == 4
     W = (1 + int(overlap)) * hd
     x = rnd_in(torch.randn(T, hidden, generator=g, dtype=F64))
-    wkv = rnd_in(torch.randn(W, hidden, generator=g, dtype=F64) * 0.6)
+    wkv = rnd_in(torch.randn(W, hidden, generator=g, dtype=F64) * wkv_scale)
     wg = rnd_in(torch.randn(W, hidden, generator=g, dtype=F64) * 2.0 / np.sqrt(hidden))
     ape = f32(torch.randn(ratio, W, generator=g, dtype=F64))
     nw = rnd_in(1 + 0.2 * torch.randn(hd, generator=g, dtype=F64))
-    eps = 1e-6
     pre, ent = ref.compress_sequence(x, wkv, wg, ape, nw, eps, ratio, hd, rd, theta)
     nb = T // ratio
     assert ent.shape == (nb, hd)
@@ -238,7 +247,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     xc = None if a.skip_crosscheck else crosscheck(a.vllm)
     print("crosscheck:", json.dumps(xc))
-    groups = {"ratio4.json": [], "ratio128.json": [], "bf16.json": []}
+    groups = {"ratio4.json": [], "ratio128.json": [], "bf16.json": [], "eps.json": []}
     discs = {}
     for i, spec in enumerate(CASES):
         c, d = build_case(i, spec)
@@ -250,6 +259,20 @@ def main():
         c, d = build_case(len(CASES) + j, spec, dtype="bfloat16")
         groups["bf16.json"].append(c)
         discs[c["name"]] = d
+    eps_sens = {}
+    for k, spec in enumerate(CASES_EPS):
+        c, d = build_case(len(CASES) + len(CASES_BF16) + k, spec, eps=EPS_LARGE, wkv_scale=EPS_WKV_SCALE)
+        groups["eps.json"].append(c)
+        discs[c["name"]] = d
+        # how far the output moves if eps is 10x too large (the mutation a reviewer made): must exceed the fp32 tolerance by >> 10x
+        x_, wkv_, wg_, ape_, nw_ = (torch.tensor(c[key], dtype=F64) for key in ("x", "wkv", "wgate", "ape", "norm"))
+        sp = spec
+        W = (1 + int(sp[1] == 4)) * sp[2]
+        _, e10 = ref.compress_sequence(x_.reshape(sp[5], sp[4]), wkv_.reshape(W, sp[4]), wg_.reshape(W, sp[4]), ape_.reshape(sp[1], W),
+                                       nw_, EPS_LARGE * 10, sp[1], sp[2], sp[3], sp[6])
+        e1 = torch.tensor(c["entries"], dtype=F64).reshape(-1, sp[2])
+        eps_sens[c["name"]] = float((e10 - e1).abs().max())
+        assert eps_sens[c["name"]] > 1e-2, (c["name"], eps_sens[c["name"]])
     files = {}
     for fn, cases in groups.items():
         with open(os.path.join(OUT, fn), "w") as f:
@@ -282,6 +305,7 @@ def main():
                              "absolute error of about 2^-23 * angle, angle <= position (frequency of the first pair is 1): "
                              "atol(entry b) = atol + atol_per_position * (b * ratio)."},
         },
+        "eps_sensitivity_max_abs_diff_if_eps_x10": eps_sens,
         "crosscheck": xc,
         "crosscheck_patches_to_vllm_reference_code": PATCHES,
         "discriminators_max_abs_diff_of_wrong_readings_vs_golden": discs,

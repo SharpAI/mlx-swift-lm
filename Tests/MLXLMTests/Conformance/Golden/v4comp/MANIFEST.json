@@ -5,7 +5,7 @@
  "python": "3.15.0",
  "numpy": "2.5.4",
  "generator": {
-  "generate.py": "fd42bdba16fda2d106ad7d14f34982180bfd4a9ea462bce9d895f4c2348099df",
+  "generate.py": "df1144876d2cf5bb783a4d0c18986c6cf3194785113d37afbf062abf36efb19b",
   "v4comp_ref.py": "93b556e8ddf24d1f1f63b102eb44f3b795318c178f868a93b44c0f60b2ec0036"
  },
  "files": {
@@ -19,6 +19,10 @@
   },
   "bf16.json": {
    "sha256": "532ec30c11b612dd08867f4a5d2912d41ed2ae69600fa8cfc93872aa6ad0e545",
+   "cases": 2
+  },
+  "eps.json": {
+   "sha256": "5cdd6c506c6537dd62e3d788f0be08b07379f82668d8195c0e0f404eea2c30e6",
    "cases": 2
   }
  },
@@ -35,6 +39,10 @@
    "atol_per_position": 1.5e-07,
    "reasoning": "Inputs and weights are float32-exact, the oracle is float64, Swift runs float32 on Metal. pooled_normed: a <=8-term matmul (abs error ~3e-7 on kv/score of size ~3), exp of scores up to ~8 (relative error ~5e-7 per weight), a sum of <=256 weighted terms and an rsqrt: ~1e-6 observed scale, 2e-5 leaves >10x. entries (after RoPE) add the angle error: MLX forms position*freq in float32, so cos/sin carry an absolute error of about 2^-23 * angle, angle <= position (frequency of the first pair is 1): atol(entry b) = atol + atol_per_position * (b * ratio)."
   }
+ },
+ "eps_sensitivity_max_abs_diff_if_eps_x10": {
+  "r4_hd16_rope8_T21_eps1e-2": 0.9580677855454334,
+  "r128_hd16_rope8_T260_eps1e-2": 0.9684046385406617
  },
  "crosscheck": {
   "cases": 240,
@@ -114,6 +122,14 @@
   },
   "r128_hd16_rope8_T300_bf16": {
    "last_token_pos": 2.7276595292081427
+  },
+  "r4_hd16_rope8_T21_eps1e-2": {
+   "last_token_pos": 1.2336014508156423,
+   "swap_halves": 1.861318707487801,
+   "no_overlap_ratio4": 2.0399642290372073
+  },
+  "r128_hd16_rope8_T260_eps1e-2": {
+   "last_token_pos": 0.7945527229379515
   }
  },
  "inferred_points_not_from_vllm_source": [
