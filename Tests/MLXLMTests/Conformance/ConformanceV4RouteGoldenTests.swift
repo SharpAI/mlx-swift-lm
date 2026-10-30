@@ -227,19 +227,10 @@ enum V4RouteGolden {
     static let k1Gap =
         "top_k == 1: vLLM still renormalises (kernels divide by the sum, CU:191/469; reference TK:77-78), DeepseekV4Gate "
         + "skips normalisation when topK <= 1. Unreachable for shipped V4 (num_experts_per_tok = 6)."
-    static let swigluGap =
-        "clamped SwiGLU: vLLM clamps the gate ONE-SIDED (max only) and the up half two-sided (AC:239-243, FU "
-        + "_swiglu_limit_torch); DeepseekV4Expert clips the gate two-sided."
-    static let moeSwigluGap =
-        "clamped SwiGLU: vLLM clamps gate max-only and up two-sided for routed AND shared experts (AC:239-243, FU); "
-        + "the routed SwitchGLU activation clips only the gate, two-sided, and never clamps up; the shared expert "
-        + "clips the gate two-sided."
     static let gaps: [String: String] = {
         var g: [String: String] = [
             "gate_fp32_k1_renorm": k1Gap, "hash_fp32_k1_renorm": k1Gap,
         ]
-        for n in ["expert_up_outside", "expert_gate_above", "expert_gate_below", "expert_all_clamps"] { g[n] = swigluGap }
-        for n in ["moe_learned_limit_active", "moe_hash_limit_active"] { g[n] = moeSwigluGap }
         return g
     }()
 

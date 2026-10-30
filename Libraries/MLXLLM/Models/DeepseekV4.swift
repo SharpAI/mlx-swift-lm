@@ -571,7 +571,8 @@ class DeepseekV4Expert: Module, UnaryLayer {
         var gate = gateProj(x)
         var up = upProj(x)
         if swiguLimit > 0 {
-            gate = clip(gate, min: -swiguLimit, max: swiguLimit)
+            // vLLM SiluAndMulWithClamp (layers/activation.py:239-243): gate max-only, up two-sided.
+            gate = clip(gate, max: swiguLimit)
             up = clip(up, min: -swiguLimit, max: swiguLimit)
         }
         return downProj(silu(gate) * up)
@@ -675,18 +676,26 @@ class DeepseekV4MoE: Module, UnaryLayer {
         self.numExpertsPerTok = config.numExpertsPerTok
 
         // Routed experts (stacked via SwitchGLU, same as V3)
+        let limit: Float = config.swiguLimit
+        var routedProduct: (@Sendable (MLXArray, MLXArray) -> MLXArray)? = nil
+        if limit > 0 {
+            routedProduct = { (gate: MLXArray, up: MLXArray) -> MLXArray in
+                silu(clip(gate, max: limit)) * clip(up, min: -limit, max: limit)
+            }
+        }
         self._switchMLP.wrappedValue = SwitchGLU(
             inputDims: config.hiddenSize,
             hiddenDims: config.moeIntermediateSize,
             numExperts: config.nRoutedExperts,
             activation: { x in
-                // SwiGLU with limit
+                // SwiGLU with limit: gate clamped max-only (vLLM layers/activation.py:239-243)
                 if config.swiguLimit > 0 {
-                    let g = clip(x, min: -config.swiguLimit, max: config.swiguLimit)
-                    return silu(g)
+                    return silu(clip(x, max: config.swiguLimit))
                 }
                 return silu(x)
-            }
+            },
+            // The up half is clamped two-sided as well, so the product is supplied whole.
+            activationProduct: routedProduct
         )
         self.gate = DeepseekV4Gate(config: config, layerIndex: layerIndex)
 
