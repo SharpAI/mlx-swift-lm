@@ -5,20 +5,30 @@
  "python": "3.15.0",
  "numpy": "2.5.4",
  "generator": {
-  "generate.py": "341c69e3f80a5ec983d3538b97739694f2b7dd634077cea37eec554c9eb7f02c",
+  "generate.py": "e7c53279b7d68b608569db79c5c5b8a462852d33476cacce68ab703bca055a65",
   "v4comp_ref.py": "93b556e8ddf24d1f1f63b102eb44f3b795318c178f868a93b44c0f60b2ec0036"
  },
  "files": {
   "ratio4.json": {
-   "sha256": "15518cda85fffdd21f93eca4e2b0eb47e7b3d3fa33c1f9a22041e210bb3a4768",
+   "sha256": "e97ea4eb80f374766a0a51239b2545350f30490e0ce0e6e6c46b45701b00bf13",
    "cases": 6
   },
   "ratio128.json": {
-   "sha256": "fa52f2242aa08182051550760b6ddc61ad5aab3b6d67a0bf68472283c865f927",
+   "sha256": "67672721e1b5fbf5276d458f803d41cdb07a24d43a1253e9324d45d213039b97",
    "cases": 5
+  },
+  "bf16.json": {
+   "sha256": "532ec30c11b612dd08867f4a5d2912d41ed2ae69600fa8cfc93872aa6ad0e545",
+   "cases": 2
   }
  },
  "tolerances": {
+  "bfloat16": {
+   "rtol": 0.004,
+   "atol": 2e-05,
+   "atol_per_position": 1.5e-07,
+   "reasoning": "What an implementation gets if it multiplies the bf16 inputs with an fp32 output and pools in fp32 like vLLM (attention.py:698-703, compressor.py:261) and only then returns bfloat16: one final bf16 rounding, half an ulp = 2^-9 = 2e-3 relative, doubled for the RoPE rotation of already rounded pairs -> rtol 4e-3; atol and the per-position angle term as for float32. It deliberately does NOT allow bf16 rounding of kv / score BEFORE the softmax pooling, which vLLM does not do."
+  },
   "float32": {
    "rtol": 2e-05,
    "atol": 2e-05,
@@ -96,6 +106,14 @@
   },
   "r128_hd32_rope16_T385_theta160k": {
    "last_token_pos": 2.7717079893360412
+  },
+  "r4_hd16_rope8_T37_bf16": {
+   "last_token_pos": 3.1734093381493214,
+   "swap_halves": 4.4733252279406,
+   "no_overlap_ratio4": 4.85308773074227
+  },
+  "r128_hd16_rope8_T300_bf16": {
+   "last_token_pos": 2.7276595292081427
   }
  },
  "inferred_points_not_from_vllm_source": [

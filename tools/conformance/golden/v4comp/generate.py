@@ -161,6 +161,10 @@ def f32(t):
     return t.to(torch.float32).to(F64)
 
 
+def b16(t):
+    return t.to(torch.bfloat16).to(F64)
+
+
 def flat(t):
     return [float(v) for v in t.reshape(-1).tolist()]
 
@@ -179,18 +183,26 @@ CASES = [
     ("r128_hd16_rope8_T128", 128, 16, 8, 8, 128, 10000.0),   # last token of block 0
     ("r128_hd32_rope16_T385_theta160k", 128, 32, 16, 8, 385, 160000.0),  # 3 entries + 1 pending
 ]
+# Production dtype: hidden / wkv / wgate / norm are bfloat16-exact (the checkpoint dtype), ape stays float32 (comp:261 state_dtype).
+# vLLM multiplies bf16 x bf16 with an fp32 OUTPUT (attention.py:698-703 out_dtype=torch.float32) and pools in fp32 (compressor.py:261),
+# so the golden is the float64 result computed from the bf16-rounded inputs.
+CASES_BF16 = [
+    ("r4_hd16_rope8_T37_bf16", 4, 16, 8, 8, 37, 10000.0),
+    ("r128_hd16_rope8_T300_bf16", 128, 16, 8, 8, 300, 10000.0),
+]
 
 
-def build_case(idx, spec, seed=11):
+def build_case(idx, spec, seed=11, dtype="float32"):
     name, ratio, hd, rd, hidden, T, theta = spec
+    rnd_in = b16 if dtype == "bfloat16" else f32
     g = torch.Generator().manual_seed(seed * 1000 + idx)
     overlap = ratio == 4
     W = (1 + int(overlap)) * hd
-    x = f32(torch.randn(T, hidden, generator=g, dtype=F64))
-    wkv = f32(torch.randn(W, hidden, generator=g, dtype=F64) * 0.6)
-    wg = f32(torch.randn(W, hidden, generator=g, dtype=F64) * 2.0 / np.sqrt(hidden))
+    x = rnd_in(torch.randn(T, hidden, generator=g, dtype=F64))
+    wkv = rnd_in(torch.randn(W, hidden, generator=g, dtype=F64) * 0.6)
+    wg = rnd_in(torch.randn(W, hidden, generator=g, dtype=F64) * 2.0 / np.sqrt(hidden))
     ape = f32(torch.randn(ratio, W, generator=g, dtype=F64))
-    nw = f32(1 + 0.2 * torch.randn(hd, generator=g, dtype=F64))
+    nw = rnd_in(1 + 0.2 * torch.randn(hd, generator=g, dtype=F64))
     eps = 1e-6
     pre, ent = ref.compress_sequence(x, wkv, wg, ape, nw, eps, ratio, hd, rd, theta)
     nb = T // ratio
@@ -205,7 +217,7 @@ def build_case(idx, spec, seed=11):
         _, e2 = ref.compress_sequence(x, wkv, wg, ape, nw, eps, ratio, hd, rd, theta, variant=v)
         disc[v] = float((e2 - ent).abs().max())
     case = {
-        "name": name, "ratio": ratio, "head_dim": hd, "rope_dim": rd, "hidden": hidden, "tokens": T, "eps": eps,
+        "name": name, "dtype": dtype, "ratio": ratio, "head_dim": hd, "rope_dim": rd, "hidden": hidden, "tokens": T, "eps": eps,
         "rope_theta": theta, "blocks": nb, "pending": T - nb * ratio,
         "x": flat(x), "wkv": flat(wkv), "wgate": flat(wg), "ape": flat(ape), "norm": flat(nw),
         "pooled_normed": flat(pre), "entries": flat(ent),
@@ -226,7 +238,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     xc = None if a.skip_crosscheck else crosscheck(a.vllm)
     print("crosscheck:", json.dumps(xc))
-    groups = {"ratio4.json": [], "ratio128.json": []}
+    groups = {"ratio4.json": [], "ratio128.json": [], "bf16.json": []}
     discs = {}
     for i, spec in enumerate(CASES):
         c, d = build_case(i, spec)
@@ -234,6 +246,10 @@ def main():
         discs[c["name"]] = d
         for k, v in d.items():
             assert v > 1e-3, (c["name"], k, v)   # the wrong reading must be clearly distinguishable
+    for j, spec in enumerate(CASES_BF16):
+        c, d = build_case(len(CASES) + j, spec, dtype="bfloat16")
+        groups["bf16.json"].append(c)
+        discs[c["name"]] = d
     files = {}
     for fn, cases in groups.items():
         with open(os.path.join(OUT, fn), "w") as f:
@@ -246,6 +262,13 @@ def main():
         "generator": {"generate.py": sha(os.path.join(HERE, "generate.py")), "v4comp_ref.py": sha(os.path.join(HERE, "v4comp_ref.py"))},
         "files": files,
         "tolerances": {
+            "bfloat16": {
+                "rtol": 4e-3, "atol": 2e-5, "atol_per_position": 1.5e-7,
+                "reasoning": "What an implementation gets if it multiplies the bf16 inputs with an fp32 output and pools in fp32 like vLLM "
+                             "(attention.py:698-703, compressor.py:261) and only then returns bfloat16: one final bf16 rounding, half an "
+                             "ulp = 2^-9 = 2e-3 relative, doubled for the RoPE rotation of already rounded pairs -> rtol 4e-3; atol and "
+                             "the per-position angle term as for float32. It deliberately does NOT allow bf16 rounding of kv / score "
+                             "BEFORE the softmax pooling, which vLLM does not do."},
             "float32": {
                 "rtol": 2e-5, "atol": 2e-5, "atol_per_position": 1.5e-7,
                 "reasoning": "Inputs and weights are float32-exact, the oracle is float64, Swift runs float32 on Metal. pooled_normed: a "
