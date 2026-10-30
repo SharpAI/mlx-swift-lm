@@ -123,6 +123,24 @@ struct ConformanceGapGdnReferenceTests {
         #expect(G.maxDiff(kda.y, r.y) < 1e-6 && G.maxDiff(kda.state, r.state) < 1e-6)
     }
 
+    @Test("softplus reference is relatively accurate for x << 0 (CI's logAddExp lost it: quantised to ~1e-7)")
+    func softplusRelativeAccuracy() {
+        // python float64 math.log1p(math.exp(x)) for x < 0, x + log1p(exp(-x)) otherwise.
+        let xs: [Float] = [-35, -20, -15.5, -9, -5.85, -2.4, -0.5, 0, 0.7, 3, 25]
+        let want: [Double] = [
+            6.305116760146987e-16, 2.061153620314381e-09, 1.8553911904921443e-07, 0.00012340218972325883,
+            0.0028757601931381368, 0.08683615215394969, 0.4740769841801067, 0.6931471805599453,
+            1.103186048885458, 3.048587351573742, 25.000000000013888,
+        ]
+        let got = G.values(Ref.softplus(MLXArray(xs)))
+        #expect(got.count == want.count)
+        for (i, (g, w)) in zip(got, want).enumerated() {
+            // The float32 input x is exact, so only the output rounding (u = 6e-8) and the exp of a float32-rounded x remain.
+            let relative = abs(Double(g) - w) / w
+            #expect(relative <= 2e-6, "softplus(\(xs[i])): got \(g), want \(w), relative error \(relative)")
+        }
+    }
+
     @Test("gate maths: softplus gate, KDA lower-bound safe gate, beta (and allow_neg_eigval), softplus threshold")
     func gateMaths() {
         let aLog = MLXArray([Float(0), Float(log(2.0))])

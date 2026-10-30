@@ -36,7 +36,31 @@ public enum SharpAIOverlayGdnReference {
 
     // MARK: gates and input prep
 
-    static func softplus(_ x: MLXArray) -> MLXArray { logAddExp(x, MLXArray.zeros(like: x)) }
+    /// log(1 + e^x), accurate for every x whatever the backend's log1p / logAddExp quality.
+    ///
+    /// CI evidence (PR #94, e6d4239): on the hosted runner `logAddExp(x, 0)` returned values quantised to ~1.2e-7
+    /// (float32 spacing at 1.0) for x << 0, i.e. up to 40% relative error where softplus(x) ~ e^x ~ 1e-7. The
+    /// reference must not inherit that, so it is computed in float64 on the CPU stream from `exp` alone:
+    /// with t = -|x| and e = exp(t) <= 1, softplus(x) = max(x, 0) + log(1 + e); for e < 0.1 the alternating series
+    /// e - e^2/2 + e^3/3 - ... (14 terms, truncation < 1e-15) replaces log(1 + e), which would lose e's low bits.
+    static func softplus(_ x: MLXArray) -> MLXArray {
+        let outType = x.dtype
+        return Device.withDefaultDevice(.cpu) { () -> MLXArray in
+            let xd = x.asType(.float64)
+            let e = exp(-abs(xd))
+            let terms = 14
+            var acc = MLXArray(Double(1) / Double(terms)).asType(.float64)
+            var k = terms - 1
+            while k >= 1 {
+                acc = MLXArray(Double(1) / Double(k)).asType(.float64) - e * acc
+                k -= 1
+            }
+            let series = e * acc
+            let direct = log(MLXArray(Double(1)).asType(.float64) + e)
+            let tail = which(e .< MLXArray(Double(0.1)).asType(.float64), series, direct)
+            return (maximum(xd, MLXArray(Double(0)).asType(.float64)) + tail).asType(outType)
+        }
+    }
 
     /// Scalar (per value head) GDN gate as a log-decay: `-exp(aLog) * softplus(a + dtBias)`.
     /// a: [B, T, Hv]; aLog, dtBias: [Hv]. Returns [B, T, Hv, 1]. `exp()` of it is `computeGatedDeltaG`.
