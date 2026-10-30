@@ -803,18 +803,13 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
+        let weights = SharpAIOverlay.mapMXFP4Experts(weights, expertDtype: args.expertDtype)  // SharpAI overlay (SL-35)
         var newWeights = weights
 
         // 1. Dequantize FP8 weights (weight_scale_inv pattern, same as V3)
+        let fp8 = SharpAIOverlay.FP8BlockConfig(quantizationConfig: args.quantizationConfig)  // SharpAI overlay (SL-35)
         func dequant(weight: MLXArray, scaleInv: MLXArray) -> MLXArray {
-            let bs = 128
-            let (m, n) = (weight.dim(0), weight.dim(1))
-            let padBottom = (bs - m % bs) % bs
-            let padSide = (bs - n % bs) % bs
-            var padded = MLX.padded(weight, widths: [.init((0, padBottom)), .init((0, padSide))])
-            padded = padded.reshaped([(m + padBottom) / bs, bs, (n + padSide) / bs, bs])
-            let scaled = padded * scaleInv[0..., .newAxis, 0..., .newAxis]
-            return scaled.reshaped([m + padBottom, n + padSide])[0 ..< m, 0 ..< n]
+            SharpAIOverlay.dequantFP8Blocks(weight: weight, scaleInv: scaleInv, blockSize: fp8.blockSize, ue8m0: fp8.ue8m0)
         }
 
         for (key, value) in weights {
