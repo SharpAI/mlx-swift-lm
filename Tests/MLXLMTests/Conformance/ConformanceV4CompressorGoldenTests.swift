@@ -88,14 +88,16 @@ enum V4CompGolden {
 
     static func arr(_ v: [Double], _ shape: [Int]) -> MLXArray { MLXArray(v.map { Float($0) }, shape) }
 
-    static func compressor(_ c: Case) -> SharpAIOverlay.V4Compressor {
+    /// `as`: build the module (weights) in another dtype than the fixture's; bf16-exact values convert to float32 exactly.
+    static func compressor(_ c: Case, as dt: DType? = nil) -> SharpAIOverlay.V4Compressor {
+        let dt = dt ?? dtype(c)
         let comp = SharpAIOverlay.V4Compressor(hiddenSize: c.hidden, headDim: c.headDim, ratio: c.ratio, eps: Float(c.eps))
         let coff = c.ratio == 4 ? 2 : 1
         comp.update(parameters: ModuleParameters.unflattened([
             ("ape", arr(c.ape, [c.ratio, coff * c.headDim])),
-            ("wkv.weight", arr(c.wkv, [coff * c.headDim, c.hidden]).asType(dtype(c))),
-            ("wgate.weight", arr(c.wgate, [coff * c.headDim, c.hidden]).asType(dtype(c))),
-            ("norm.weight", arr(c.norm, [c.headDim]).asType(dtype(c))),
+            ("wkv.weight", arr(c.wkv, [coff * c.headDim, c.hidden]).asType(dt)),
+            ("wgate.weight", arr(c.wgate, [coff * c.headDim, c.hidden]).asType(dt)),
+            ("norm.weight", arr(c.norm, [c.headDim]).asType(dt)),
         ]))
         eval(comp)
         return comp
@@ -105,7 +107,9 @@ enum V4CompGolden {
         initializeRope(dims: c.ropeDim, base: Float(c.ropeTheta), traditional: true, scalingConfig: nil, maxPositionEmbeddings: 4096)
     }
 
-    static func input(_ c: Case) -> MLXArray { arr(c.x, [1, c.tokens, c.hidden]).asType(dtype(c)) }
+    static func input(_ c: Case, as dt: DType? = nil) -> MLXArray {
+        arr(c.x, [1, c.tokens, c.hidden]).asType(dt ?? dtype(c))
+    }
 
     static func floats(_ a: MLXArray) -> [Float] {
         let f = a.asType(.float32)
@@ -299,12 +303,50 @@ struct ConformanceV4CompressorGoldenTests {
         let p = G.compare(pooled, golden: c.pooledNormed, nb: c.blocks, c: c, positional: false, m)
         let e = G.compare(entries, golden: c.entries, nb: c.blocks, c: c, positional: true, m)
         print("[v4comp][stats] bf16 \(c.name) full pooled maxAbs=\(p.maxAbs) excess=\(p.worstExcess) | entries maxAbs=\(e.maxAbs) excess=\(e.worstExcess) | out dtype \(pooled.dtype)")
+        // the output keeps the model dtype (the nb == 0 early return already does); float32 here would leak into
+        // the attention keys and every later activation
+        #expect(pooled.dtype == .bfloat16, "\(c.name) pooled dtype \(pooled.dtype)")
+        #expect(entries?.dtype == .bfloat16, "\(c.name) entries dtype \(String(describing: entries?.dtype))")
         #expect(p.ok, "\(c.name) pooled_normed: worst excess \(p.worstExcess), max abs \(p.maxAbs), \(p.firstBad ?? "")")
         #expect(e.ok, "\(c.name) entries: worst excess \(e.worstExcess), max abs \(e.maxAbs), \(e.firstBad ?? "")")
         for plan in G.plans(c) {
             let (fails, _) = G.cachedPath(c, chunks: plan, m)
             #expect(fails.isEmpty, "\(fails.prefix(2))")
         }
+    }
+
+    @Test("bfloat16: internal precision is float32 and the output is that result rounded ONCE to bf16 (full and cached)", arguments: bf16Cases)
+    func bf16RoundedOnce(_ c: G.Case) throws {
+        // bf16-exact inputs and weights convert to float32 exactly, so the float32 module computes the same
+        // float32 pooling; the bf16 module must return exactly that, rounded once. Rounding kv / score / the pooled
+        // sum earlier would flip many bf16 values.
+        let want = G.compressor(c, as: .float32)(G.input(c, as: .float32)).asType(.bfloat16)
+        let got = G.compressor(c)(G.input(c))
+        #expect(got.dtype == .bfloat16)
+        #expect(want.shape == got.shape)
+        let d = (want.asType(.float32) - got.asType(.float32)).abs().max()
+        eval(d)
+        #expect(d.item(Float.self) == 0, "\(c.name) bf16 output differs from the once-rounded float32 result by \(d.item(Float.self))")
+        // cached path: entries keep the model dtype too
+        var state = SharpAIOverlay.V4CompressorState(ratio: c.ratio)
+        let out = G.compressor(c).append(G.input(c), state: &state, rope: G.rope(c), ropeDim: c.ropeDim)
+        #expect(out?.dtype == .bfloat16, "\(c.name) cached entries dtype \(String(describing: out?.dtype))")
+    }
+
+    @Test("bfloat16 compressed entries do not promote the attention keys or output to float32")
+    func bf16AttentionDtype() throws {
+        let c = try #require(Self.bf16Cases.first { $0.ratio == 4 })
+        let (_, entries) = G.fullPath(c)
+        let compressed = try #require(entries)
+        let l = c.tokens
+        let q = MLXArray(Array(repeating: Float(0.25), count: 2 * l * c.headDim), [1, 2, l, c.headDim]).asType(.bfloat16)
+        let k = MLXArray(Array(repeating: Float(0.5), count: l * c.headDim), [1, 1, l, c.headDim]).asType(.bfloat16)
+        let vis = SharpAIOverlay.v4Visibility(length: l, blocks: c.blocks, ratio: c.ratio).expandedDimensions(axis: 0)
+        let out = try #require(
+            SharpAIOverlay.v4CompressedAttention(
+                queries: q, localKeys: k, compressed: compressed, compressedMask: vis, localMask: .causal,
+                scale: Float(0.25), sinks: nil))
+        #expect(out.dtype == .bfloat16, "attention output dtype \(out.dtype)")
     }
 
     @Test("every case of every fixture is compared (no silent skipping)")
