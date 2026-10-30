@@ -7,10 +7,15 @@
 // (it used to be, which broke users who export it with a cached model). It wraps the downloader instead:
 // `useLatest` is forced to false (no revalidation against the provider) and the call is served when it
 // completes without a transfer. A cache miss shows up as a transfer in progress (progress strictly between
-// 0 and its total); the wrapper then cancels the call and throws `networkBlocked`. This is a heuristic at the
-// `Downloader` layer (a cache hit is not otherwise distinguishable from a download here): a provider that
-// reports no progress for a miss is not detected, and a miss may open a connection before it is cut.
-// Use SWIFTLM_OFFLINE for a guarantee.
+// 0 and its total); the wrapper then throws `networkBlocked` at once, without waiting for the base download
+// (which is cancelled, and may keep running if it ignores cancellation).
+//
+// Limits, stated precisely: cache-hit detection is this progress heuristic, nothing more. (a) A provider that
+// reports no progress for a miss is not detected. (b) The HubClient cached-snapshot fast path may not match
+// (for example a pattern set or revision it does not recognise); the call then goes to the network (file
+// listing) BEFORE any progress is reported, so such a miss can surface as a transport error (for example a
+// URLError) instead of `networkBlocked`, and a connection may already have been opened. (c) A miss may open a
+// connection before it is cut. Only SWIFTLM_OFFLINE is a guarantee; HF_HUB_OFFLINE is best effort.
 //
 // With neither variable set, `guarded(_:)` returns the original downloader unchanged (identity), so
 // behaviour is byte-for-byte the same.
