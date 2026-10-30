@@ -365,7 +365,7 @@ def case_line(s):
 
 def _run(runner, dirpath):
     env = dict(os.environ)
-    env["KDA_DIFF_DIR"] = dirpath
+    env["KDA_DIFF_DIR"] = os.path.abspath(dirpath)  # the runner may run from another cwd (run_local.sh cd's to the repo root)
     return subprocess.call(runner, env=env)
 
 

@@ -168,5 +168,43 @@ class ShrinkTests(unittest.TestCase):
             D.shrink(d, name, [sys.executable, "-I", runner], log=open(os.devnull, "w"))
 
 
+class RelativeDirTests(unittest.TestCase):
+    """A relative --dir / dirpath must mean the same directory to python (caller's cwd) and to swift (run_local.sh cd's to the root)."""
+
+    def test_run_local_passes_an_absolute_dir_to_swift_and_python(self):
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix="kda-rel-test-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        rec = os.path.join(tmp, "rec.txt")
+        os.makedirs(os.path.join(tmp, "bin"))
+        fake_py = os.path.join(tmp, "fakepy.sh")
+        open(fake_py, "w").write('#!/usr/bin/env bash\nprintf "py %s\\n" "$*" >> "$REC"\nwhile [ $# -gt 0 ]; do case "$1" in --out) mkdir -p "$2";; esac; shift; done\nexit 0\n')
+        fake_swift = os.path.join(tmp, "bin", "swift")
+        open(fake_swift, "w").write('#!/usr/bin/env bash\nprintf "swift %s\\n" "$KDA_DIFF_DIR" >> "$REC"\nexit 0\n')
+        for f in (fake_py, fake_swift):
+            os.chmod(f, 0o755)
+        env = dict(os.environ, REC=rec, KDA_DIFF_PY=fake_py, PATH=os.path.join(tmp, "bin") + os.pathsep + os.environ["PATH"])
+        subprocess.check_call(["bash", os.path.join(HERE, "run_local.sh"), "--n", "1", "--dir", "out1"], cwd=tmp, env=env,
+                              stdout=subprocess.DEVNULL)
+        lines = open(rec).read().splitlines()
+        want = os.path.join(tmp, "out1")
+        self.assertTrue(os.path.isdir(want))
+        self.assertIn("swift " + want, lines)  # absolute, equal to where python wrote it
+        self.assertTrue(any(l.startswith("py ") and ("--out " + want) in l for l in lines), lines)
+
+    def test_run_passes_an_absolute_dir_to_the_runner(self):
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix="kda-rel-test-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        os.makedirs(os.path.join(tmp, "rel"))
+        rec = os.path.join(tmp, "rec.txt")
+        runner = [sys.executable, "-I", "-c", "import os,sys; open(%r,'w').write(os.environ['KDA_DIFF_DIR'])" % rec]
+        old = os.getcwd()
+        os.chdir(tmp)
+        try:
+            self.assertEqual(D._run(runner, "rel"), 0)
+        finally:
+            os.chdir(old)
+        self.assertEqual(open(rec).read(), os.path.join(tmp, "rel"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

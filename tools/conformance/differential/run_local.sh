@@ -31,9 +31,13 @@ run_swift() {
   (cd "$root" && KDA_DIFF_DIR="$1" ${KDA_DIFF_WRAP:-} swift test ${KDA_DIFF_SWIFT_ARGS:-} --filter ConformanceKdaDifferentialTests)
 }
 
+# run_swift cd's to the repo root, so a relative directory would mean different places to python (caller's cwd) and swift.
+abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac; }
+[ -z "$dir" ] || dir="$(abspath "$dir")"
+
 if [ "$swift_only" = 1 ]; then
   [ -n "${KDA_DIFF_DIR:-}" ] || { echo "--swift-only needs KDA_DIFF_DIR" >&2; exit 64; }
-  run_swift "$KDA_DIFF_DIR"
+  run_swift "$(abspath "$KDA_DIFF_DIR")"
   exit $?
 fi
 
