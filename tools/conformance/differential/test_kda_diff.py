@@ -8,6 +8,7 @@ output fails, and the generated cases honour the shape sweep and the tolerance-c
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -99,6 +100,72 @@ class DiffTests(unittest.TestCase):
             D.tol_class("float32", 128, 128)  # beyond the documented bound: never silently loosened
         with self.assertRaises(ValueError):
             D.tol_class("float16", 128, 32)
+
+
+FAKE_RUNNER = r"""
+import json, os, sys
+import numpy as np
+d = os.environ["KDA_DIFF_DIR"]
+idx = json.load(open(os.path.join(d, "cases.json")))
+os.makedirs(os.path.join(d, "out"), exist_ok=True)
+for e in idx["cases"]:
+    f = json.load(open(os.path.join(d, e["file"])))
+    y = [float(np.float32(v)) for v in f["outputs"]["y"]]
+    s = [float(np.float32(v)) for v in f["outputs"]["state1"]]
+    if FAULT(e):  # injected "kernel bug"
+        s = [v + 0.1 for v in s]
+    json.dump({"name": e["name"], "kernel": {"y": y, "state": s}, "fallback": {"y": y, "state": [float(np.float32(v)) for v in f["outputs"]["state1"]]}},
+              open(os.path.join(d, "out", e["name"] + ".json"), "w"))
+"""
+
+
+class ShrinkTests(unittest.TestCase):
+    def test_candidates_are_smaller_valid_and_keep_the_dispatch_path(self):
+        spec = dict(D.plan(60, 1)[52])  # a kernel-path float16 case, T=7, Dk=128
+        self.assertEqual(D.dispatch_path(spec["Dk"], spec["Dv"]), "kernel")
+        cands = D.candidates(spec)
+        self.assertGreater(len(cands), 5)
+        names = set()
+        for c in cands:
+            self.assertEqual(D.dispatch_path(c["Dk"], c["Dv"]), "kernel")
+            D.tol_class(c["dtype"], c["T"], c["Dk"])  # does not raise
+            self.assertLessEqual(D.size(c), D.size(spec))
+            self.assertNotEqual([c[k] for k in D.SHAPE_KEYS + D.FEATURE_KEYS], [spec[k] for k in D.SHAPE_KEYS + D.FEATURE_KEYS])
+            self.assertEqual(c["Hv"] % c["Hk"], 0)
+            self.assertNotIn(c["name"], names)
+            names.add(c["name"])
+
+    def run_shrink(self, fault_src):
+        tmp = tempfile.mkdtemp(prefix="kda-shrink-test-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        runner = os.path.join(tmp, "fake_runner.py")
+        open(runner, "w").write("FAULT = " + fault_src + "\n" + FAKE_RUNNER)
+        d = os.path.join(tmp, "g")
+        D.gen(d, 30, 3)
+        env = dict(os.environ)
+        # the original dir needs outputs too: run the fake runner on it
+        env["KDA_DIFF_DIR"] = d
+        subprocess.check_call([sys.executable, "-I", runner], env=env)
+        return d, runner
+
+    def test_shrink_finds_the_minimal_masked_case(self):
+        d, runner = self.run_shrink("lambda e: e['mask'] is not None")
+        victim = next(e["name"] for e in json.load(open(os.path.join(d, "cases.json")))["cases"] if e["mask"] and e["T"] > 7)
+        res = D.shrink(d, victim, [sys.executable, "-I", runner], log=open(os.devnull, "w"))
+        m = res["spec"]
+        self.assertTrue(m["mask"] is not None)  # the fault needs a mask, so shrink must keep it
+        self.assertEqual((m["B"], m["T"], m["Hk"], m["Hv"]), (1, 1, 1, 1))
+        self.assertEqual(D.dispatch_path(m["Dk"], m["Dv"]), res["orig_path"])
+        self.assertTrue(os.path.exists(res["fixture"]))
+        self.assertIn('case("%s"' % m["name"], res["case_line"])
+        fx = json.load(open(res["fixture"]))
+        self.assertEqual(fx["name"], m["name"])
+
+    def test_shrink_refuses_a_passing_case(self):
+        d, runner = self.run_shrink("lambda e: False")
+        name = json.load(open(os.path.join(d, "cases.json")))["cases"][0]["name"]
+        with self.assertRaises(SystemExit):
+            D.shrink(d, name, [sys.executable, "-I", runner], log=open(os.devnull, "w"))
 
 
 if __name__ == "__main__":

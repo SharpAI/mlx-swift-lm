@@ -35,8 +35,9 @@ import os
 import shlex
 import shutil
 import subprocess
+import subprocess
 import sys
-import zlib  # noqa: F401  (documentation: seeds are crc32(name), see D2)
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
@@ -270,6 +271,160 @@ def gen(dirpath, n, seed, oracle=None):
     print("wrote %d cases to %s (seed %d, oracle %s)" % (len(entries), dirpath, seed, oracle or "kda_ref.py (pinned)"))
     return entries
 
+# ----------------------------------------------------------------------------------------------
+# shrink
+# ----------------------------------------------------------------------------------------------
+T_LADDER = (1, 2, 3, 4, 7, 8, 16, 31, 32, 33, 64, 65, 127, 128)
+DK_LADDER = (1, 2, 3, 4, 8, 16, 24, 32, 48, 64, 96, 128)
+DV_LADDER = (1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 32)
+SHAPE_KEYS = ("B", "T", "Hk", "Hv", "Dk", "Dv")
+FEATURE_KEYS = ("dtype", "state", "mask", "decay", "beta", "l2", "scale")
+
+
+def size(s):
+    return s["B"] * s["T"] * s["Hv"] * s["Dk"] * s["Dv"]
+
+
+def spec_from_entry(e):
+    s = {k: e[k] for k in ("name", "seed", "idx", "dtype") + SHAPE_KEYS + ("state", "mask", "decay", "beta", "l2", "scale")}
+    s["expectedPathHint"] = dispatch_path(s["Dk"], s["Dv"])
+    return s
+
+
+def _derive(spec, base, **changes):
+    c = dict(spec)
+    c.update(changes)
+    c["expectedPathHint"] = dispatch_path(c["Dk"], c["Dv"])
+    key = tuple(c[k] for k in SHAPE_KEYS + FEATURE_KEYS)
+    c["name"] = "%s_B%dT%dHk%dHv%dDk%dDv%d_%08x" % ((base,) + tuple(c[k] for k in SHAPE_KEYS) + (zlib.crc32(repr(key).encode()),))
+    return c
+
+
+def candidates(spec, base=None):
+    """Every single-step simplification of `spec` (smaller shape or one feature removed) that is a valid case and has the
+    same dispatch path (D5). Each has its own deterministic name = its own seed (D2)."""
+    base = base or spec.get("base") or spec["name"]
+    out, seen = [], {spec["name"]}
+    path = dispatch_path(spec["Dk"], spec["Dv"])
+
+    def add(**ch):
+        c = _derive(spec, base, **ch)
+        c["base"] = base
+        if c["Hv"] % c["Hk"] != 0 or c["name"] in seen or dispatch_path(c["Dk"], c["Dv"]) != path:
+            return
+        try:
+            tol_class(c["dtype"], c["T"], c["Dk"])
+        except ValueError:
+            return
+        seen.add(c["name"])
+        out.append(c)
+
+    def smaller(ladder, v):
+        lo = [x for x in ladder if x < v]
+        return sorted(set(([lo[0]] if lo else []) + ([lo[-1]] if lo else []) + ([v // 2] if v // 2 >= 1 else []))) if lo or v > 1 else []
+
+    for T in smaller(T_LADDER, spec["T"]):
+        add(T=T)
+    for B in sorted(set([1, spec["B"] - 1])):
+        if 1 <= B < spec["B"]:
+            add(B=B)
+    if spec["Hk"] > 1:
+        add(Hk=1)
+    if spec["Hv"] > spec["Hk"]:
+        add(Hv=spec["Hk"])
+    if spec["Hk"] > 1:
+        add(Hk=1, Hv=1) if spec["Hv"] == spec["Hk"] else None
+    for Dk in smaller(DK_LADDER, spec["Dk"]):
+        add(Dk=Dk)
+    for Dv in smaller(DV_LADDER, spec["Dv"]):
+        add(Dv=Dv)
+    if spec["mask"] is not None:
+        add(mask=None)
+        if spec["mask"] != "partial":
+            add(mask="partial")
+    if spec["state"]:
+        add(state=False)
+    if spec["l2"]:
+        add(l2=False)
+    if spec["dtype"] != "float32":
+        add(dtype="float32")
+    if spec["decay"] != "rand":
+        add(decay="rand")
+    if spec["beta"] != "rand":
+        add(beta="rand")
+    if spec["scale"] != 1.0:
+        add(scale=1.0)
+    return out
+
+
+def case_line(s):
+    return 'case("%s", "diff", %d, %d, %d, %d, %d, B=%d, dtype="%s", state=%s, decay="%s", beta="%s", mask=%s, scale=%r, l2=%s, tol="%s"),' % (
+        s["name"], s["T"], s["Hk"], s["Hv"], s["Dk"], s["Dv"], s["B"], s["dtype"], s["state"], s["decay"], s["beta"],
+        ('"%s"' % s["mask"]) if s["mask"] else "None", s["scale"], s["l2"], tol_class(s["dtype"], s["T"], s["Dk"]))
+
+
+def _run(runner, dirpath):
+    env = dict(os.environ)
+    env["KDA_DIFF_DIR"] = dirpath
+    return subprocess.call(runner, env=env)
+
+
+def _failing_paths(dirpath, name):
+    rows = [r for r in evaluate(dirpath) if r["name"] == name]
+    if any(r["status"].startswith("MISSING") for r in rows):
+        raise SystemExit("runner produced no output for %s in %s" % (name, dirpath))
+    return {r["path"] for r in rows if r["status"] != "ok"}
+
+
+def shrink(dirpath, case, runner, oracle=None, max_rounds=12, log=None):
+    """Greedy minimisation of a failing case (D5). `runner` is the argv of a command that, with KDA_DIFF_DIR set, runs the
+    Swift suite (run_local.sh --swift-only). Returns dict(spec, fixture, case_line, orig_path, rounds)."""
+    log = log or sys.stdout
+    idx = _load_json(os.path.join(dirpath, "cases.json"))
+    entry = next((e for e in idx["cases"] if e["name"] == case), None)
+    if entry is None:
+        raise SystemExit("no case named %s in %s" % (case, dirpath))
+    orig_fail = _failing_paths(dirpath, case)
+    if not orig_fail:
+        raise SystemExit("case %s does not fail in %s: nothing to shrink" % (case, dirpath))
+    cur = spec_from_entry(entry)
+    cur["base"] = case
+    orig_path = dispatch_path(cur["Dk"], cur["Dv"])
+    print("shrinking %s (fails on %s), start size %d" % (case, sorted(orig_fail), size(cur)), file=log)
+    rounds = 0
+    for rounds in range(1, max_rounds + 1):
+        cands = candidates(cur, case)
+        if not cands:
+            break
+        rd = os.path.join(dirpath, "shrink", "r%d" % rounds)
+        os.makedirs(rd, exist_ok=True)
+        write_cases(rd, cands, oracle)
+        rc = _run(runner, rd)
+        if rc != 0:
+            raise SystemExit("runner exited %d in round %d (see its output); not guessing" % (rc, rounds))
+        failing = [c for c in cands if _failing_paths(rd, c["name"]) & orig_fail]
+        print("  round %d: %d candidates, %d still fail" % (rounds, len(cands), len(failing)), file=log)
+        if not failing:
+            break
+        cur = min(failing, key=lambda c: (size(c), c["T"], c["B"]))
+        print("    -> %s size %d" % (cur["name"], size(cur)), file=log)
+    final = cur
+    os.makedirs(os.path.join(dirpath, "shrunk"), exist_ok=True)
+    fixture = os.path.join(dirpath, "shrunk", final["name"] + ".json")
+    with open(fixture, "w") as f:
+        f.write(build_fixture(final, oracle) + "\n")
+    line = case_line(final)
+    with open(os.path.join(dirpath, "shrunk", final["name"] + ".case.txt"), "w") as f:
+        f.write(line + "\n")
+    print("\nSMALLEST FAILING CASE: %s  (B=%d T=%d Hk=%d Hv=%d Dk=%d Dv=%d %s state=%s mask=%s l2=%s)" % (
+        final["name"], final["B"], final["T"], final["Hk"], final["Hv"], final["Dk"], final["Dv"], final["dtype"], final["state"], final["mask"], final["l2"]), file=log)
+    print("golden fixture (step A format): %s" % fixture, file=log)
+    print("to promote it, paste into CASES in tools/conformance/golden/gen_kda_golden.py (the data is seeded by crc32(name), so the\n"
+          "line reproduces the fixture exactly) and rerun the generator, which rewrites the fixtures and MANIFEST.json:\n    %s" % line, file=log)
+    if oracle:
+        print("NOTE: produced with the alternative oracle %s, not the pinned kda_ref.py" % oracle, file=log)
+    return dict(spec=final, fixture=fixture, case_line=line, orig_path=orig_path, rounds=rounds)
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -281,12 +436,20 @@ def main(argv=None):
     g.add_argument("--oracle", help="alternative kda_ref.py (harness self-test with a mutated oracle; scratch only)")
     c = sub.add_parser("compare")
     c.add_argument("--dir", required=True)
+    k = sub.add_parser("shrink")
+    k.add_argument("--dir", required=True)
+    k.add_argument("--case", required=True)
+    k.add_argument("--runner", required=True, help="command that runs the Swift suite with KDA_DIFF_DIR set, e.g. 'tools/conformance/differential/run_local.sh --swift-only'")
+    k.add_argument("--oracle")
     a = ap.parse_args(argv)
     if a.cmd == "gen":
         gen(a.out, a.n, a.seed, a.oracle)
         return 0
     if a.cmd == "compare":
         return compare(a.dir)
+    if a.cmd == "shrink":
+        shrink(a.dir, a.case, shlex.split(a.runner), a.oracle)
+        return 0
     return 2
 
 
