@@ -4,6 +4,12 @@
 // decode steps (warm-up, then the median of several iterations), fit  time = a + b * layers  and
 // extrapolate to the real layer count read from an offline fixture.
 //
+// WHAT THIS SUITE CAN AND CANNOT FAIL ON: it exercises the extrapolation METHOD end to end (build models, time
+// real forwards, fit, extrapolate). It does NOT assert any performance property: R^2, monotonicity and the
+// extrapolated number are print-only, so a slow or noisy machine can never fail it and a perf regression can
+// never be caught by it. It fails only on the deterministic facts listed below (layer counts, cache advance,
+// positive finite times, a fit existing, extrapolation being exactly the fitted line).
+//
 // Determinism policy: wall-clock timing is machine-load dependent, so every timing outcome (R^2,
 // monotonicity, the extrapolated number) is REPORT-ONLY (a printed `[extrapolation]` line). The hard
 // assertions are the deterministic ones: the models really have the requested layer counts, the
@@ -118,6 +124,7 @@ enum ConformanceExtrapolation {
                     + "(R2>=0.9: \(fit.r2 >= 0.9))")
             // Deterministic: predicting at the target is just the line, and is finite.
             #expect(predicted.isFinite)
+            #expect(predicted == fit.intercept + fit.slope * Double(targetLayers), "extrapolate() is not the fitted line")
         }
     }
 }
