@@ -213,24 +213,29 @@ def plan(n, seed):
 
 
 _GEN = None
+_GEN_ORACLE = None  # abspath of the oracle `_GEN` was imported with (None = the pinned kda_ref.py)
 
 
 def load_gen(oracle=None):
     """Imports gen_kda_golden (whose make_recurrent is the generator of the golden fixtures). `oracle` is a path to an
     alternative kda_ref.py (the self-test of the harness uses a deliberately mutated copy); it is registered as the
-    module `kda_ref` BEFORE gen_kda_golden imports it."""
-    global _GEN
-    if oracle:
-        spec = importlib.util.spec_from_file_location("kda_ref", oracle)
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["kda_ref"] = mod
-        spec.loader.exec_module(mod)
-        _GEN = None
-    if _GEN is None:
+    module `kda_ref` BEFORE gen_kda_golden imports it. Switching oracle (including back to the pinned one) drops the
+    cached gen_kda_golden and kda_ref modules, so a mutated oracle never leaks into later calls and a later call never
+    silently gets a generator bound to an earlier oracle."""
+    global _GEN, _GEN_ORACLE
+    key = os.path.abspath(oracle) if oracle else None
+    if _GEN is None or key != _GEN_ORACLE:
+        sys.modules.pop("gen_kda_golden", None)
+        sys.modules.pop("kda_ref", None)
+        if oracle:
+            spec = importlib.util.spec_from_file_location("kda_ref", oracle)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["kda_ref"] = mod
+            spec.loader.exec_module(mod)
         if GOLDEN_TOOLS not in sys.path:
             sys.path.insert(0, GOLDEN_TOOLS)
         import gen_kda_golden
-        _GEN = gen_kda_golden
+        _GEN, _GEN_ORACLE = gen_kda_golden, key
     return _GEN
 
 

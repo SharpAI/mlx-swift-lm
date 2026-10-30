@@ -206,5 +206,17 @@ class RelativeDirTests(unittest.TestCase):
         self.assertEqual(open(rec).read(), os.path.join(tmp, "rel"))
 
 
+class LoadGenTests(unittest.TestCase):
+    def test_oracle_switches_do_not_reuse_a_stale_generator_module(self):
+        tmp = tempfile.mkdtemp(prefix="kda-oracle-test-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        alt = os.path.join(tmp, "kda_ref.py")
+        shutil.copy(os.path.join(D.GOLDEN_TOOLS, "kda_ref.py"), alt)
+        pinned = os.path.join(D.GOLDEN_TOOLS, "kda_ref.py")
+        self.assertEqual(os.path.realpath(D.load_gen(None).kda_ref.__file__), os.path.realpath(pinned))
+        self.assertEqual(os.path.realpath(D.load_gen(alt).kda_ref.__file__), os.path.realpath(alt))  # not the cached pinned one
+        self.assertEqual(os.path.realpath(D.load_gen(None).kda_ref.__file__), os.path.realpath(pinned))  # mutated oracle does not leak
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
