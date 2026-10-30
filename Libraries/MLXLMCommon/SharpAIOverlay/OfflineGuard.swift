@@ -10,8 +10,9 @@
 // 0 and its total); the wrapper then throws `networkBlocked` at once, without waiting for the base download.
 //
 // After that throw: the base download task is cancelled. A provider that ignores cancellation may keep running
-// and may keep writing into the cache, but no further callback reaches the caller: progress is no longer
-// forwarded to the caller's `progressHandler` once the call has produced its outcome.
+// and may keep writing into the cache. Progress is no longer forwarded to the caller's `progressHandler` once the
+// call has produced its outcome; the check and the forward are not one atomic step, so a callback already past
+// the check on another thread at that moment can still arrive (a window of a few instructions).
 // The first outcome wins: if the caller is cancelled before the base download finishes, the error is
 // `CancellationError`, even if the base would have thrown something else, and an outcome recorded first is
 // never replaced by a later miss or cancellation.
