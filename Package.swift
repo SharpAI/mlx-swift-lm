@@ -203,7 +203,9 @@ let package = Package(
             ],
             path: "Tests/MLXLMTests",
             exclude: [
-                "README.md"
+                "README.md",
+                // KDA golden fixtures: read through #filePath by ConformanceKdaGoldenTests, never as bundle resources.
+                "Conformance/Golden/kda",
             ],
             resources: [.process("Resources/1080p_30.mov"), .process("Resources/audio_only.mov")]
         ),
