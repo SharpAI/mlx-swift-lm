@@ -711,6 +711,18 @@ struct DequantGoldenTests {
         #expect(!code.contains("weight_global_scale"))
     }
 
+    @Test("the oracle and generator sources are pinned: editing dequant_ref / dequant_crosscheck / gen without regenerating fails")
+    func toolsArePinned() {
+        let tools = G.manifest()["tools"] as? [String: [String: Any]]
+        #expect(tools != nil, "MANIFEST.json has no \"tools\" section (regenerate with gen_dequant_golden.py)")
+        #expect(Set(tools?.keys ?? [:].keys) == ["dequant_ref.py", "dequant_crosscheck.py", "gen_dequant_golden.py"])
+        for (name, info) in tools ?? [:] {
+            let url = G.dir.deletingLastPathComponent().appendingPathComponent(name)
+            guard let data = try? Data(contentsOf: url) else { Issue.record("\(name) is not readable"); continue }
+            #expect(G.verify(name, data: data, files: [name: info]) == nil, "\(G.verify(name, data: data, files: [name: info]) ?? "")")
+        }
+    }
+
     @Test("fixture JSON numbers are parsed exactly (Foundation's parser is one ulp off on a float32 rounding tie)")
     func jsonNumbersAreExact() {
         let v = G.parseJSON(Data(#"{"a":[-0.024411658756434917, 0.1, 1e-39, 3, -7, true, "x\"y"], "b":{}}"#.utf8)) as! [String: Any]
