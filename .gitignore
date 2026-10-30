@@ -102,3 +102,8 @@ pyproject.toml
 uv.lock
 main.py
 
+
+# Python caches and the local KDA golden venv (tools/conformance)
+__pycache__/
+*.pyc
+.venv-golden/
