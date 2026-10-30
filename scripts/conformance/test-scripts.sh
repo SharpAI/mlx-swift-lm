@@ -127,4 +127,47 @@ for t in test-mlx-swift-shadow.sh test-run-periodic.sh test-shadow-check.sh; do
     check "$t: all checks pass (exit $s)" "$s"
 done
 
+# 8. run-blocked.sh SCRATCH validation (it rm -rf's SCRATCH): no personal path baked in, root derived from RUNNER_TEMP /
+#    TMPDIR, and the rm -rf safety rules still hold. `--validate-scratch` runs only the validation (no sandbox).
+rb="$here/offline-build/run-blocked.sh"
+vs() { env -u SCRATCH_ROOT "$@" bash "$rb" --validate-scratch >/dev/null 2>&1; }
+mkdir -p "$tmp/rt" "$tmp/tmpdir"; rt=$(cd "$tmp/rt" && pwd -P); td=$(cd "$tmp/tmpdir" && pwd -P)
+! grep -q "claude-501\|/scratchpad" "$rb"; check "run-blocked: no personal scratchpad path in the script" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$rt/swiftlm-blocked-build"; check "run-blocked: SCRATCH under RUNNER_TEMP/swiftlm-blocked* is accepted" $?
+vs -u RUNNER_TEMP TMPDIR="$td" SCRATCH="$td/swiftlm-blocked-build"; check "run-blocked: SCRATCH under TMPDIR/swiftlm-blocked* is accepted" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$rt/other-dir"; [ $? -ne 0 ]; check "run-blocked: an arbitrary dir under RUNNER_TEMP is refused" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$rt"; [ $? -ne 0 ]; check "run-blocked: RUNNER_TEMP itself is refused" $?
+vs RUNNER_TEMP="$rt" SCRATCH="/"; [ $? -ne 0 ]; check "run-blocked: / is refused" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$HOME"; [ $? -ne 0 ]; check "run-blocked: HOME is refused" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$here/../../swiftlm-blocked-x"; [ $? -ne 0 ]; check "run-blocked: a path with .. is refused" $?
+vs RUNNER_TEMP="$rt" SCRATCH="$rt/anything" SCRATCH_ROOT="$rt"; check "run-blocked: an explicit SCRATCH_ROOT still allows a dir strictly inside it" $?
+env RUNNER_TEMP="$rt" SCRATCH="$rt/anything" SCRATCH_ROOT="" bash "$rb" --validate-scratch >/dev/null 2>&1; [ $? -ne 0 ]; check "run-blocked: an empty SCRATCH_ROOT is not treated as the cwd" $?
+
+# 9. run-blocked.sh stage-1 "fetched from the network" detector (--check-resolve-log <file>: exit 71 = network fetch).
+#    Cache hits must pass under any SwiftPM wording that mentions the cache; a bare Fetching/Updating/Cloning https
+#    line without it is flagged; unrelated output is ignored.
+rb="$here/offline-build/run-blocked.sh"
+cl() { printf '%s\n' "$1" >"$tmp/resolve.log"; bash "$rb" --check-resolve-log "$tmp/resolve.log" >/dev/null 2>&1; }
+cl 'Fetching https://github.com/apple/swift-numerics from cache'; check "resolve-log: 'Fetching ... from cache' passes" $?
+cl 'Fetched https://github.com/apple/swift-numerics from cache (0.41s)'; check "resolve-log: 'Fetched ... from cache (0.41s)' passes" $?
+cl 'Fetching https://github.com/apple/swift-numerics (cached)'; check "resolve-log: a differently worded cache hit passes" $?
+cl 'Computing version for https://github.com/apple/swift-numerics'; check "resolve-log: 'Computing version' is not a fetch" $?
+cl 'Fetching https://github.com/apple/swift-numerics'; [ $? -eq 71 ]; check "resolve-log: a bare 'Fetching https' is flagged (71)" $?
+cl 'Updating https://github.com/swiftlang/swift-syntax.git'; [ $? -eq 71 ]; check "resolve-log: a bare 'Updating https' is flagged (71)" $?
+cl 'Cloning https://github.com/swiftlang/swift-syntax.git'; [ $? -eq 71 ]; check "resolve-log: a bare 'Cloning https' is flagged (71)" $?
+cl '[1/1] Fetching https://github.com/apple/swift-numerics'; [ $? -eq 71 ]; check "resolve-log: a progress-prefixed fetch is flagged (71)" $?
+
+# 10. ci.yml sealed-offline job (SL-28): pinned MLX wheel, no silent metallib copy, explicit PASS/FAIL line, still non-blocking.
+ci="$here/../../.github/workflows/ci.yml"
+sealed=$(awk '/^  sealed-offline:/{p=1} p' "$ci")
+[ -n "$sealed" ]; check "ci.yml: sealed-offline job exists" $?
+! printf '%s\n' "$sealed" | grep -Eq 'pip install[^\n]* mlx *$'; check "ci.yml sealed job: no unpinned 'pip install mlx'" $?
+printf '%s\n' "$sealed" | grep -q 'mlx==\$MLX_VER'; check "ci.yml sealed job: mlx wheel pinned to the version of the mlx-swift checkout" $?
+printf '%s\n' "$sealed" | grep -q 'MLX_VERSION_MAJOR'; check "ci.yml sealed job: version derived from mlx-swift's mlx/version.h" $?
+! printf '%s\n' "$sealed" | grep -q '2>/dev/null || true'; check "ci.yml sealed job: no silent '2>/dev/null || true'" $?
+printf '%s\n' "$sealed" | grep -q 'metallib not installed'; check "ci.yml sealed job: a metallib copy that installs nothing fails loudly" $?
+printf '%s\n' "$sealed" | grep -q 'SEALED-OFFLINE: '; check "ci.yml sealed job: summary prints an explicit SEALED-OFFLINE: PASS/FAIL line" $?
+printf '%s\n' "$sealed" | grep -q 'continue-on-error: true'; check "ci.yml sealed job: still continue-on-error (observation phase)" $?
+printf '%s\n' "$sealed" | grep -q 'rev-parse HEAD'; check "ci.yml sealed job: records the mlx-swift revision it ran against" $?
+
 exit "$fail"

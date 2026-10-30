@@ -1,6 +1,6 @@
 """float64 torch-CPU oracle for the DeepSeek-V4 KV compressor (lane V4COMP, sl36/v4-compressor-golden).
 
-Transcribed from the vLLM source at commit 2eae56c (main, shallow clone). Paths are relative to the
+Transcribed from the vLLM source at commit 2eae56c (provenance: vllm_provenance.py). Paths are relative to the
 vLLM repo root; "cpp:N" = csrc/cpu/sgl-kernels/compressor.cpp:N, "cpucomp:N" =
 vllm/models/deepseek_v4/cpu/cpu_compressor.py:N, "comp:N" = vllm/models/deepseek_v4/compressor.py:N,
 "cpuk:N" = tests/kernels/test_deepseek_v4_cpu_kernels.py:N, "kvc:N" = tests/kernels/test_compressor_kv_cache.py:N,

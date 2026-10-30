@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the dequant golden fixtures + MANIFEST.json (run once, outputs are committed; tests never run Python).
 
-  python gen_dequant_golden.py [--vllm DIR] [--out DIR]
+  VLLM_ROOT=<vLLM checkout at 739e5945d> python gen_dequant_golden.py [--vllm DIR] [--out DIR]
 
 Runs the cross-check against vLLM's own reference code first (dequant_crosscheck.py) and refuses to write anything if it
 fails. Fixtures are JSON, deterministic (fixed seeds). Non-finite numbers are the strings "nan" / "inf" / "-inf".
@@ -23,6 +23,8 @@ import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, ".."))
+import vllm_provenance as VP  # noqa: E402
 import dequant_crosscheck as CC  # noqa: E402
 import dequant_ref as R  # noqa: E402
 
@@ -272,9 +274,10 @@ TOL = {
 def main():
     global VLLM_DIR
     ap = argparse.ArgumentParser()
-    ap.add_argument("--vllm", default=CC.VLLM_DEFAULT)
+    ap.add_argument("--vllm", default=None, help="vLLM checkout root (commit 739e5945d); or set VLLM_ROOT")
     ap.add_argument("--out", default=os.path.join(HERE, "fixtures"))
     a = ap.parse_args()
+    a.vllm = CC.resolve_vllm(a.vllm)
     VLLM_DIR = a.vllm
     head = subprocess.run(["git", "-C", a.vllm, "rev-parse", "--short=9", "HEAD"], capture_output=True, text=True).stdout.strip()
     assert head == VLLM_COMMIT, f"vLLM checkout is {head}, expected {VLLM_COMMIT}"
@@ -293,7 +296,7 @@ def main():
     manifest = {
         "generator": "tools/conformance/golden/dequant/gen_dequant_golden.py",
         "reference": ["dequant_ref.py", "dequant_crosscheck.py"],
-        "vllm_commit": VLLM_COMMIT, "torch_version": torch.__version__, "numpy_version": np.__version__,
+        "vllm_commit": VLLM_COMMIT, "vllm_provenance": VP.statements("739e5945d"), "torch_version": torch.__version__, "numpy_version": np.__version__,
         "tolerances": TOL, "crosscheck": stats, "files": files,
         # the oracle + generator sources the fixtures were produced by; the Swift suite re-hashes them, so editing one
         # without regenerating (and committing) the fixtures is noticed

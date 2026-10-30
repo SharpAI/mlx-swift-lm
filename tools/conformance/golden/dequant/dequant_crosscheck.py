@@ -20,7 +20,20 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dequant_ref as R  # noqa: E402
 
-VLLM_DEFAULT = os.environ.get("VLLM_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "3rd_party", "vllm")
+
+
+def resolve_vllm(arg):
+    """--vllm or $VLLM_ROOT (the directory that contains vllm/). There is deliberately NO default path: vLLM is not part of
+    this repo (no 3rd_party/, no submodule); fetch commit 739e5945d yourself."""
+    root = arg or os.environ.get("VLLM_ROOT")
+    if not root:
+        sys.exit("need a vLLM checkout at commit 739e5945d: pass --vllm <root> or set VLLM_ROOT (the directory that contains "
+                 "vllm/). There is no default path.")
+    if not os.path.isdir(os.path.join(root, "vllm")):
+        sys.exit(f"VLLM_ROOT/--vllm {root!r} is not a vLLM checkout (no vllm/ directory inside)")
+    return root
+
+
 Q = "vllm/model_executor/layers/quantization/utils/"
 
 # STUBS (the only non-vLLM code that runs): scalar_types.float4_e2m1f.max() (6.0, the E2M1 maximum);
@@ -78,7 +91,7 @@ def _rel_ok(ours, theirs, tol):
     return float((d / scale).max()) if d.numel() else 0.0
 
 
-def run(vllm_dir=VLLM_DEFAULT, n=240, seed=20260101):
+def run(vllm_dir, n=240, seed=20260101):
     g = torch.Generator().manual_seed(seed)
     stats = {}
 
@@ -231,7 +244,7 @@ def run(vllm_dir=VLLM_DEFAULT, n=240, seed=20260101):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--vllm", default=VLLM_DEFAULT)
+    ap.add_argument("--vllm", default=None, help="vLLM checkout root (commit 739e5945d); or set VLLM_ROOT")
     a = ap.parse_args()
     import json
-    print(json.dumps(run(a.vllm), indent=2))
+    print(json.dumps(run(resolve_vllm(a.vllm)), indent=2))

@@ -14,14 +14,14 @@
   },
   "v4_clamped.json": {
    "cases": 90,
-   "sha256": "46189cbd0a6b21e4ab3b503c374b100b5e9062da0d422398b48c28ab1db04d66"
+   "sha256": "cdb06f6615419d6033ce3990847385a0f1f74b983dd9f1f0ac450b7bba2573c1"
   }
  },
  "generator": {
   "command": "VLLM_ROOT=<vLLM checkout at 739e5945d> venv/bin/python -I tools/conformance/golden/swiglu/generate.py",
   "scripts": {
-   "generate.py": "e6dde83e947d97cd46c75cebf4be5d7533c4bf1eee752228fd1f898b636840b6",
-   "swiglu_ref.py": "c1da43eeb88ac03eb51bb924111e2ac89f9f1c908c39d789c1773b6ad2f9def0"
+   "generate.py": "c47b735103873250cd74ef85e7fedebe8404edd7546b6125502c4e8d96d23eb2",
+   "swiglu_ref.py": "350de0bab3ad43cc93a1d43cf1717416680bc3ad65b30479b0448dbda593d03c"
   }
  },
  "numpy": "2.5.4",
@@ -35,13 +35,13 @@
   "silu_and_mul": "vLLM activation.py:137-141 (cross-checked)",
   "swigluoai_and_mul": "vLLM activation.py:319-327 (cross-checked)",
   "swiglustep_and_mul": "vLLM activation.py:359-365 (cross-checked; Triton kernel :27-52 emulation also agrees; llama.cpp llama-graph.cpp:1118-1135 corroborates silu-then-clamp)",
-  "v4_clamped": "INFERRED: vLLM 739e5945d has no DeepSeek-V4 model; formula from lane brief. Two golden columns: symmetric gate clamp (golden) and gate clamp(max) only (golden_gate_max_only)"
+  "v4_clamped": "golden = silu(min(gate, limit)) * clamp(up, -limit, limit): gate max-only, per vLLM SiluAndMulWithClamp.forward_native activation.py:239-243 as transcribed by the V4 routing lane at 2eae56c (not in the 739e5945d tree, which has no DeepSeek-V4 model). golden_gate_symmetric_control = the two-sided gate clamp that vLLM rules out, kept only to prove the fixture separates the two readings. INFERRED: chunk layout and the shared `limit` for up."
  },
  "tolerances": {
   "bfloat16": {
    "atol": 1e-30,
    "rtol": 0.02,
-   "why": "u=2^-9=2e-3; up to ~5 successive roundings if MLX keeps bf16 intermediates -> 1e-2; same rtol vLLM's own test_activation.py:90 uses for bf16."
+   "why": "bf16 has 8 significant bits: round-to-nearest u=2^-8=3.9e-3 (same convention as the kda, v4route and v4idx manifests); up to ~5 successive roundings if MLX keeps bf16 intermediates -> 5u=1.95e-2 <= 2e-2; same rtol vLLM's own test_activation.py:90 uses for bf16 (swigluoai/swiglustep)."
   },
   "enforced_in": "ConformanceSwigluGoldenTests.swift SwigluGolden.tolerances (this block only documents them; manifestComplete fails if they differ)",
   "float16": {
@@ -60,5 +60,9 @@
  "vllm": {
   "commit": "739e5945d",
   "path": "vllm/model_executor/layers/activation.py"
- }
+ },
+ "vllm_provenance": [
+  "vLLM 739e5945dc4b3ba30d84bdf6e637657abd4136b8 (2026-04-13): VERIFIED. Read from a git checkout whose HEAD is exactly this commit (git rev-parse HEAD); it has no DeepSeek-V4 model. Obtain: git clone https://github.com/vllm-project/vllm && git -C vllm checkout 739e5945d",
+  "vLLM 2eae56c4ba0cf12087fec035514eedede83c257d: EXISTS in vllm-project/vllm (checked 2026-10-29: git clone --bare --filter=tree:0 https://github.com/vllm-project/vllm, then git cat-file -t 2eae56c -> commit). Earlier notes that it was unfetchable came from `git fetch origin 2eae56c`, which cannot work with an abbreviated id; a shallow clone's HEAD (e.g. 335dd77) is just a different commit of a moving main. The oracles' file:line citations were transcribed from a source tree that had no .git and are NOT individually re-read against this commit, except vllm/model_executor/layers/activation.py:239-243 (SiluAndMulWithClamp.forward_native: gate clamped with max only, up two-sided), which was. The v4route, v4idx and v4comp cross-check scripts were re-run on 2026-10-29 against a tree extracted from this commit (git archive of vllm/, tests/kernels, tests/v1/attention) and print OK. Obtain: git clone https://github.com/vllm-project/vllm && git -C vllm checkout 2eae56c"
+ ]
 }

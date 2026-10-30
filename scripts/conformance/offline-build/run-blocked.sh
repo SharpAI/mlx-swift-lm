@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-blocked.sh [--self-test-only]
+# run-blocked.sh [--self-test-only | --validate-scratch | --check-resolve-log <file>]
 #
 # SL-28 A4: prove that a CLEAN build plus the offline conformance tests work with outbound network BLOCKED.
 # macOS only: uses sandbox-exec with a profile that denies network*. Prints a final  EXIT=<n>  line taken from the
@@ -16,7 +16,7 @@
 #   3. test        `swift test --skip-build --filter <f>` for each filter, with SWIFTLM_OFFLINE=1.
 #
 # Env:
-#   SCRATCH       build dir (default: $TMPDIR/swiftlm-blocked-build). Removed first => clean build.
+#   SCRATCH       build dir (default: ${RUNNER_TEMP:-$TMPDIR}/swiftlm-blocked-build). Removed first => clean build.
 #   FILTERS       space-separated test filters (default: "ConformanceOfflineGuard ConformanceOfflineBundleTests")
 #   LOCK_BUILD    optional command prefix for the build stages, e.g. "python3 with-lock.py build 3 --"
 #   LOCK_GPU      optional command prefix for the test stage
@@ -30,7 +30,8 @@
 set -u
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd) || { echo "EXIT=65"; exit 65; }
-SCRATCH=${SCRATCH:-${TMPDIR:-/tmp}/swiftlm-blocked-build}
+TMP_BASE=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+SCRATCH=${SCRATCH:-$TMP_BASE/swiftlm-blocked-build}
 FILTERS=${FILTERS:-"ConformanceOfflineGuard ConformanceOfflineBundleTests"}
 LOCK_BUILD=${LOCK_BUILD:-}
 LOCK_GPU=${LOCK_GPU:-}
@@ -40,25 +41,48 @@ PROFILE='(version 1)(allow default)(deny network*)'
 
 finish() { echo "EXIT=$1"; exit "$1"; }
 
-# SCRATCH is rm -rf'd below, so it must be a path we can prove is disposable: strictly inside the session
-# scratchpad, or a mktemp-style dir under the system temp dir. Never /, $HOME, the repo or any parent of them.
-SCRATCH_ROOT=${SCRATCH_ROOT:-/private/tmp/claude-501/-Users-simba-SwiftLM/85247f50-f34b-4898-b8ab-d9cdf7d9c026/scratchpad}
+# SCRATCH is rm -rf'd below, so it must be a path we can prove is disposable: a swiftlm-blocked* dir directly under the
+# runner/system temp dir (RUNNER_TEMP on GitHub Actions, else TMPDIR, else /tmp; the default SCRATCH is one), or strictly
+# inside an explicit SCRATCH_ROOT the caller names (empty by default: no personal path is baked in). Never /, $HOME,
+# the repo or any parent of them.
+SCRATCH_ROOT=${SCRATCH_ROOT:-}
 rp() { python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
 validate_scratch() {
     local p=$1 real root_real repo_real home_real tmp_real
     case "$p" in /*) ;; *) return 1 ;; esac
     case "$p" in *..*) return 1 ;; esac
     real=$(rp "$p") || return 1          # resolves symlinks, so a link cannot smuggle us out
-    root_real=$(rp "$SCRATCH_ROOT"); repo_real=$(rp "$REPO"); home_real=$(rp "$HOME"); tmp_real=$(rp "${TMPDIR:-/tmp}")
+    repo_real=$(rp "$REPO"); home_real=$(rp "$HOME"); tmp_real=$(rp "$TMP_BASE")
     [ "$real" = / ] && return 1
     [ "$real" = "$home_real" ] && return 1
     [ "$real" = "$repo_real" ] && return 1
     case "$real/" in "$repo_real"/*) return 1 ;; esac      # inside the repo
     case "$repo_real/" in "$real"/*) return 1 ;; esac      # a parent of the repo
-    case "$real" in "$root_real"/?*) return 0 ;; esac      # strictly inside the session scratchpad
+    if [ -n "$SCRATCH_ROOT" ]; then                         # explicit root: strictly inside it
+        root_real=$(rp "$SCRATCH_ROOT") || return 1
+        case "$real" in "$root_real"/?*) return 0 ;; esac
+    fi
     case "$real" in "$tmp_real"/swiftlm-blocked*|/private/tmp/swiftlm-blocked*) return 0 ;; esac   # mktemp-style dir
     return 1
 }
+
+# Stage-1 detector. LIMITS: the sandbox already denies network*, so a real fetch cannot succeed and `resolve` exiting
+# non-zero is the authoritative proof that a dependency is missing from the cache. This check is a second, advisory
+# signal on a SUCCESSFUL resolve, and it is deliberately lenient about SwiftPM's wording: a Fetching/Updating/Cloning
+# https line counts as a network fetch only if it does not mention the cache at all (any case), so "Fetched ... from
+# cache (0.4s)", "(cached)" etc. pass. If SwiftPM stops printing such lines the check goes silent (it never
+# false-fails); it then proves nothing beyond the sandbox + exit status.
+fetched_from_network() {   # <resolve.log>; prints the offending lines, returns 0 when there are any
+    grep -E "(Fetching|Updating|Cloning) https?://" "$1" | grep -viE "cache" | grep .
+}
+
+if [ "${1:-}" = "--check-resolve-log" ]; then     # test hook
+    fetched_from_network "${2:?log file}" && finish 71 || finish 0
+fi
+
+if [ "${1:-}" = "--validate-scratch" ]; then      # test hook: only the rm -rf safety check, no sandbox, no build
+    validate_scratch "$SCRATCH" && finish 0 || finish 64
+fi
 
 [ "$(uname -s)" = Darwin ] && command -v sandbox-exec >/dev/null || {
     echo "run-blocked: needs macOS sandbox-exec" >&2; finish 69; }
@@ -132,7 +156,7 @@ self_test || { echo "[run-blocked] self-test failed: refusing to claim anything"
 [ "${1:-}" = "--self-test-only" ] && finish 0
 
 cd "$REPO" || finish 65
-validate_scratch "$SCRATCH" || { echo "run-blocked: refusing SCRATCH=$SCRATCH (must be under $SCRATCH_ROOT or a swiftlm-blocked* mktemp dir; never /, HOME or the repo)" >&2; finish 64; }
+validate_scratch "$SCRATCH" || { echo "run-blocked: refusing SCRATCH=$SCRATCH (must be a swiftlm-blocked* dir under $TMP_BASE, or strictly inside SCRATCH_ROOT if set; never /, HOME or the repo)" >&2; finish 64; }
 [ "${KEEP:-0}" = 1 ] || rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH" || finish 65
 # --disable-sandbox: SwiftPM's own sandbox-exec cannot nest inside ours.
@@ -142,7 +166,7 @@ echo "[run-blocked] stage 1: resolve (network blocked)"
 sb swift package "${SW[@]}" resolve > "$SCRATCH/resolve.log" 2>&1; st=$?
 cat "$SCRATCH/resolve.log"
 [ $st -eq 0 ] || { echo "[run-blocked] resolve failed: dependency not in the SwiftPM cache (see log above)"; finish $st; }
-if grep -E "^(Fetching|Updating) https" "$SCRATCH/resolve.log" | grep -v "from cache" ; then
+if fetched_from_network "$SCRATCH/resolve.log"; then
     echo "[run-blocked] a dependency was fetched from the network, not the cache"; finish 71; fi
 
 echo "[run-blocked] stage 2: clean build (network blocked)"

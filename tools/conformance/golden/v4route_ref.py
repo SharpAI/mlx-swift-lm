@@ -1,7 +1,6 @@
 """Float64 torch-CPU oracle for the DeepSeek-V4 MoE routing, clamped SwiGLU and mHC residual stream.
 
-Everything here is transcribed from vLLM (commit 2eae56c, main, shallow clone; the clone has no .git so the commit
-is the one the lane was given, not re-verified). Every line cites the vLLM file:line it comes from. File names are
+Everything here is transcribed from vLLM (commit 2eae56c; provenance statement in vllm_provenance.py). Every line cites the vLLM file:line it comes from. File names are
 relative to the vLLM tree root:
 
   [TK]  tests/kernels/moe/test_topk_softplus_sqrt.py     (torch reference _torch_topk_softplus_sqrt, lines 20-81)

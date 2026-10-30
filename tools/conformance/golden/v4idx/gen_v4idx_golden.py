@@ -1,11 +1,11 @@
 """Generate the V4 sparse-indexer / sparse-attention golden fixtures for ConformanceV4IndexerGoldenTests.
 
 PROVENANCE
-  Maths: vLLM commit 2eae56c (main, shallow clone), transcribed in tools/conformance/golden/v4idx_ref.py with
+  Maths: vLLM commit 2eae56c, transcribed in tools/conformance/golden/v4idx_ref.py with
     file:line citations; v4idx_crosscheck.py checks the oracle against vLLM's own torch reference code (extracted from the
     vLLM tree with `ast`, run raw in float32 and mechanically converted to float64) on >= 200 random cases each.
     Items that are inferred rather than in vLLM: I1..I6 in v4idx_ref.py's header.
-  Provenance caveats (the cited commit is not re-fetchable, what the cross-check does and does not compare): v4idx_ref.py header.
+  Provenance: vllm_provenance.py (also in MANIFEST.json). What the cross-check does and does not compare: v4idx_ref.py header.
   Python: float64 torch CPU. The torch version is recorded in MANIFEST.json ("torch").
 
 HOW TO RUN (once, then commit the outputs; tests never run python, CI is air-gapped)
@@ -35,6 +35,8 @@ import zlib
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import vllm_provenance as VP  # noqa: E402
 import v4idx_ref as ref  # noqa: E402
 
 F64 = torch.float64
@@ -469,6 +471,7 @@ def main():
         "oracle": "tools/conformance/golden/v4idx_ref.py",
         "oracleSha256": sha256(os.path.join(here, "v4idx_ref.py")),
         "vllmCommit": VLLM_COMMIT,
+        "vllm_provenance": VP.statements("2eae56c", "739e5945d"),
         "torch": torch.__version__,
         "oracleDtype": "float64",
         "note": "Generated once and committed; tests never run python. Edit nothing by hand: rerun the generator. "

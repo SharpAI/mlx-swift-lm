@@ -1,7 +1,7 @@
 """Float64 torch-CPU oracle for the DeepSeek-V4 sparse indexer and the sparse-attention merge, transcribed from vLLM.
 
-Every function cites vLLM file:line. Paths are relative to the vLLM source root (the `src` directory of the shallow
-clone of vllm-project/vllm at commit 2eae56c). `cpu_sparse.py`, `cpu_mla.py` are under vllm/models/deepseek_v4/cpu/,
+Every function cites vLLM file:line. Paths are relative to the vLLM source root (a checkout of vllm-project/vllm at
+commit 2eae56c). `cpu_sparse.py`, `cpu_mla.py` are under vllm/models/deepseek_v4/cpu/,
 `attention.py` under vllm/models/deepseek_v4/, the tests under tests/.
 
 WHAT vLLM DOES (all CPU/CUDA kernels are C++/Triton; the torch code that EXISTS is the CPU path's eager glue and the
@@ -20,12 +20,10 @@ eager references in tests/kernels/test_deepseek_v4_cpu_kernels.py. This file tra
   compressed-key RoPE position of entry b is (position // ratio) * ratio = b*ratio  compressor.py:453 ; test :310 and :560 (compressed_pos)
 
 PROVENANCE CAVEATS (read before trusting a file:line)
-  * The commit named 2eae56c could not be fetched again by a reviewer (a fresh depth-1 clone had HEAD 335dd77 and
-    `git fetch origin 2eae56c` found no such ref), so the citations below cannot be checked against that exact tree. A reviewer
-    re-derived the score formula, RoPE, visibility, SWA window, short-context top-k and merge against 335dd77 and
-    v4idx_crosscheck.py printed OK there (5e-16 relative in f64); line numbers drift (e.g. cpu_sparse.py:246-261 is now
-    _fill_short_context_topk). That re-derivation is the reviewer's report, not something this repository records. The
-    YaRN helpers cite vLLM 739e594 (3rd_party/vllm), which has no deepseek_v4 directory at all.
+  * Provenance of the two vLLM commits cited here (2eae56c for the V4 maths, 739e5945d for the generic YaRN helpers, which
+    has no deepseek_v4 directory at all) is stated once in vllm_provenance.py and written into MANIFEST.json. The file:line
+    citations below are not individually re-read against 2eae56c (lines drift as main moves); v4idx_crosscheck.py was re-run
+    against a tree extracted from that commit and prints OK.
   * v4idx_crosscheck.py compares this oracle with vLLM's TEST-FILE eager references (_reference_paged_mqa_logits,
     _flash_mla_eager, _apply_gptj_rope), not with the CUDA/Triton/C++ kernels. The Triton visibility formula and the cpu_sparse
     window code are retyped, not extracted; the RoPE cos/sin cache in its R2 is built from this file's own inv_freq (circular);
@@ -46,7 +44,7 @@ INFERRED / NOT MODELLED (kept short, each is also listed in MANIFEST.json "note"
   I4  RoPE: the score/rope fixtures use plain GPT-J RoPE (theta given). That is exactly vLLM's `deepseek_yarn` with factor 1.0
       (the SWA layers, deepseek_scaling_rope.py:73-101 with scaling_factor == 1). The YaRN variant of the compressed layers is
       the `yarn` fixtures: yarn_inv_freq() below is the generic YaRN code that vLLM's DeepseekScalingRotaryEmbedding calls
-      (common.py:32-68, deepseek_scaling_rope.py:73-101), read from the vLLM 739e594 tree (3rd_party/vllm). INFERRED: that the
+      (common.py:32-68, deepseek_scaling_rope.py:73-101), read from the vLLM 739e594 tree (see vllm_provenance.py). INFERRED: that the
       V4 compressed layers feed it theta = compress_rope_theta and mscale = mscale_all_dim = 0 (so the cos/sin scale is
       exactly 1). The rope_type SELECTION of the current V4 tree (deepseek_yarn vs deepseek_llama_scaling when
       attention_factor == 1.0; nested per-layer-type rope dicts) is NOT modelled: that file is not in any tree available here.

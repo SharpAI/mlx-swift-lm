@@ -3,7 +3,7 @@ Run ONCE, commit the outputs; tests never run Python.
 
   uv venv --python 3.15 venv && uv pip install --python venv/bin/python -r tools/conformance/golden/v4comp/requirements.txt \\
       --extra-index-url https://download.pytorch.org/whl/cpu
-  venv/bin/python -B -I tools/conformance/golden/v4comp/generate.py --vllm <path to vllm repo root (commit 2eae56c)>
+  venv/bin/python -B -I tools/conformance/golden/v4comp/generate.py --vllm <path to vllm repo root (commit 2eae56c)>   # or VLLM_ROOT=<same path>
 
 Pinned inputs: requirements.txt (torch / numpy exactly as used for the committed fixtures; MANIFEST.json records the versions, the vLLM
 commit and the sha256 of this file and of v4comp_ref.py, which the Swift suite re-checks). Network is needed once, here; never in tests/CI.
@@ -17,6 +17,8 @@ import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, ".."))
+import vllm_provenance as VP  # noqa: E402
 import v4comp_ref as ref  # noqa: E402
 
 F64 = torch.float64
@@ -353,9 +355,12 @@ def sha(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--vllm", required=True)
+    ap.add_argument("--vllm", default=os.environ.get("VLLM_ROOT"),
+                    help="vLLM checkout root (commit 2eae56c; also needs tests/kernels); or set VLLM_ROOT")
     ap.add_argument("--skip-crosscheck", action="store_true")
     a = ap.parse_args()
+    if not a.vllm or not os.path.isdir(os.path.join(a.vllm, "vllm")):
+        ap.error("need a vLLM checkout: pass --vllm <root> or set VLLM_ROOT (the directory that contains vllm/ and tests/)")
     os.makedirs(OUT, exist_ok=True)
     xc = None if a.skip_crosscheck else crosscheck(a.vllm)
     print("crosscheck:", json.dumps(xc))
@@ -400,7 +405,7 @@ def main():
         dump_fixture(os.path.join(OUT, fn), cases)
         files[fn] = {"sha256": sha(os.path.join(OUT, fn)), "cases": len(cases)}
     manifest = {
-        "vllm_commit": VLLM_COMMIT, "vllm_branch": "main (shallow clone)",
+        "vllm_commit": VLLM_COMMIT, "vllm_provenance": VP.statements("2eae56c"),
         "torch": torch.__version__, "python": platform.python_version(), "numpy": np.__version__,
         "generator": {"generate.py": sha(os.path.join(HERE, "generate.py")), "v4comp_ref.py": sha(os.path.join(HERE, "v4comp_ref.py"))},
         "files": files,

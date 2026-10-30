@@ -12,10 +12,9 @@ float64) and executes them. The maths is vLLM's text, run in float64, so the com
   [FU]  vllm/model_executor/layers/fused_moe/utils.py::_swiglu_limit_torch (torch.compile decorator dropped)
 
 Needs a vLLM source tree (it is NOT part of this repo; one-time download, never from tests/CI). The oracle was
-transcribed from commit 2eae56c of https://github.com/vllm-project/vllm (the commit the lane was given; the tree it
-was read from had no .git, so that id is not re-verified). To reproduce:
+transcribed from commit 2eae56c of https://github.com/vllm-project/vllm (provenance statement: vllm_provenance.py). To reproduce:
     git clone https://github.com/vllm-project/vllm /some/dir/vllm && git -C /some/dir/vllm checkout 2eae56c
-The tree root is passed with --vllm or the VLLM_SRC environment variable; there is no default path.
+The tree root is passed with --vllm or the VLLM_ROOT environment variable; there is no default path.
 
 Run (python reads downloaded data, so -I):
     .venv-golden/bin/python -I tools/conformance/golden/v4route_crosscheck.py --vllm /some/dir/vllm
@@ -93,12 +92,12 @@ class Report:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--vllm", default=os.environ.get("VLLM_SRC"),
-                    help="vLLM source tree root (commit 2eae56c); or set VLLM_SRC")
+    ap.add_argument("--vllm", default=os.environ.get("VLLM_ROOT"),
+                    help="vLLM source tree root (commit 2eae56c); or set VLLM_ROOT")
     args = ap.parse_args()
     root = args.vllm
     if not root or not os.path.isdir(os.path.join(root, "vllm")):
-        ap.error("need a vLLM source tree: pass --vllm <root> or set VLLM_SRC (see the docstring for how to fetch "
+        ap.error("need a vLLM source tree: pass --vllm <root> or set VLLM_ROOT (see the docstring for how to fetch "
                  "commit 2eae56c)")
     g = torch.Generator()
     g.manual_seed(20261029)
