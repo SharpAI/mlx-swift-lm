@@ -7,10 +7,21 @@
 // (it used to be, which broke users who export it with a cached model). It wraps the downloader instead:
 // `useLatest` is forced to false (no revalidation against the provider) and the call is served when it
 // completes without a transfer. A cache miss shows up as a transfer in progress (progress strictly between
-// 0 and its total); the wrapper then cancels the call and throws `networkBlocked`. This is a heuristic at the
-// `Downloader` layer (a cache hit is not otherwise distinguishable from a download here): a provider that
-// reports no progress for a miss is not detected, and a miss may open a connection before it is cut.
-// Use SWIFTLM_OFFLINE for a guarantee.
+// 0 and its total); the wrapper then throws `networkBlocked` at once, without waiting for the base download.
+//
+// After that throw: the base download task is cancelled. A provider that ignores cancellation may keep running
+// and may keep writing into the cache, but no further callback reaches the caller: progress is no longer
+// forwarded to the caller's `progressHandler` once the call has produced its outcome.
+// The first outcome wins: if the caller is cancelled before the base download finishes, the error is
+// `CancellationError`, even if the base would have thrown something else, and an outcome recorded first is
+// never replaced by a later miss or cancellation.
+//
+// Limits, stated precisely: cache-hit detection is this progress heuristic, nothing more. (a) A provider that
+// reports no progress for a miss is not detected. (b) The HubClient cached-snapshot fast path may not match
+// (for example a pattern set or revision it does not recognise); the call then goes to the network (file
+// listing) BEFORE any progress is reported, so such a miss can surface as a transport error (for example a
+// URLError) instead of `networkBlocked`, and a connection may already have been opened. (c) A miss may open a
+// connection before it is cut. Only SWIFTLM_OFFLINE is a guarantee; HF_HUB_OFFLINE is best effort.
 //
 // With neither variable set, `guarded(_:)` returns the original downloader unchanged (identity), so
 // behaviour is byte-for-byte the same.
@@ -90,15 +101,40 @@ struct OfflineBlockingDownloader: Downloader {
 struct HubOfflineDownloader: Downloader {
     let base: any Downloader
 
-    private final class MissFlag: @unchecked Sendable {
+    /// First-outcome-wins hand-off between the base download, the miss signal and the caller. A result recorded
+    /// before the caller starts waiting is kept and delivered when it does.
+    private final class Outcome: @unchecked Sendable {
         private let lock = NSLock()
-        private var hit = false
-        private var cancel: (@Sendable () -> Void)?
-        var missed: Bool { lock.lock(); defer { lock.unlock() }; return hit }
-        func arm(_ cancel: @escaping @Sendable () -> Void) { lock.lock(); self.cancel = cancel; lock.unlock() }
-        func mark() {
-            lock.lock(); hit = true; let c = cancel; lock.unlock()
-            c?()
+        private var result: Result<URL, Error>?
+        private var waiter: CheckedContinuation<Result<URL, Error>, Never>?
+
+        func finish(_ value: Result<URL, Error>) {
+            lock.lock()
+            guard result == nil else { lock.unlock(); return }
+            result = value
+            let w = waiter
+            waiter = nil
+            lock.unlock()
+            w?.resume(returning: value)
+        }
+
+        var isFinished: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return result != nil
+        }
+
+        func wait() async -> Result<URL, Error> {
+            await withCheckedContinuation { (c: CheckedContinuation<Result<URL, Error>, Never>) in
+                lock.lock()
+                if let r = result {
+                    lock.unlock()
+                    c.resume(returning: r)
+                } else {
+                    waiter = c
+                    lock.unlock()
+                }
+            }
         }
     }
 
@@ -108,28 +144,37 @@ struct HubOfflineDownloader: Downloader {
     ) async throws -> URL {
         let blocked = SharpAIOverlay.OfflineError.networkBlocked(
             URL(string: "https://huggingface.co/\(id)") ?? URL(fileURLWithPath: id))
-        let flag = MissFlag()
+        let outcome = Outcome()
         let base = self.base
-        let task = Task<URL, Error> {
-            try await base.download(
-                id: id, revision: revision, matching: patterns, useLatest: false,
-                progressHandler: { progress in
-                    if progress.totalUnitCount > 0, progress.completedUnitCount > 0,
-                        progress.completedUnitCount < progress.totalUnitCount
-                    {
-                        flag.mark()
-                        return
-                    }
-                    progressHandler(progress)
-                })
+        let task = Task<Void, Never> {
+            do {
+                let url = try await base.download(
+                    id: id, revision: revision, matching: patterns, useLatest: false,
+                    progressHandler: { progress in
+                        if progress.totalUnitCount > 0, progress.completedUnitCount > 0,
+                            progress.completedUnitCount < progress.totalUnitCount
+                        {
+                            outcome.finish(.failure(blocked))
+                            return
+                        }
+                        if outcome.isFinished { return }
+                        progressHandler(progress)
+                    })
+                outcome.finish(.success(url))
+            } catch {
+                outcome.finish(.failure(error))
+            }
         }
-        flag.arm { task.cancel() }
+        // The caller gets the first outcome. A provider that ignores cancellation keeps running in the
+        // background, but it no longer holds the caller.
         let result: Result<URL, Error> = await withTaskCancellationHandler {
-            await task.result
+            let r = await outcome.wait()
+            if case .failure = r { task.cancel() }
+            return r
         } onCancel: {
             task.cancel()
+            outcome.finish(.failure(CancellationError()))
         }
-        if flag.missed { throw blocked }
         return try result.get()
     }
 }

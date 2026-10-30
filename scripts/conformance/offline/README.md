@@ -17,10 +17,16 @@ processors.** Part of the conformance harness (SharpAI/SwiftLM#254).
 
 ## Offline switch (SL-28 A1)
 
-`SWIFTLM_OFFLINE=1` (or `HF_HUB_OFFLINE=1`; accepted truthy values: 1/true/yes/on) makes every `Downloader.download`
-call issued by mlx-swift-lm throw `SharpAIOverlay.OfflineError.networkBlocked(url)` before any I/O. Unset = identity
+`SWIFTLM_OFFLINE=1` (accepted truthy values: 1/true/yes/on) makes every `Downloader.download`
+call issued by mlx-swift-lm throw `SharpAIOverlay.OfflineError.networkBlocked(url)` before any I/O; it is the only
+hard block and the only guarantee. `HF_HUB_OFFLINE=1` is the Hugging Face cache-only switch and is best effort: the
+downloader is wrapped, `useLatest` is forced off, a call that completes without a transfer (cache hit) is served, and
+a detected miss (a transfer in progress) throws `networkBlocked` at once. Detection is a progress heuristic: a
+provider that reports no progress for a miss is not detected, and when the HubClient cached-snapshot fast path does not
+match, the file listing touches the network before any progress is reported, so that miss can surface as a transport
+error (for example a URLError) instead of `networkBlocked`. Unset = identity
 (no behaviour change). Code: `Libraries/MLXLMCommon/SharpAIOverlay/OfflineGuard.swift`; hooks (one line each):
 `resolve` (ModelFactory.swift), `resolveForModelConversion` (ModelConversion.swift), `ModelAdapterFactory.load`.
 `Libraries/BenchmarkHelpers` is hooked too (`resolveTokenizerDirectory`, `benchmarkDownloadCacheHit`; r3-offline); `ConformanceOfflineGuardCoverageTests` fails on any unguarded `Downloader.download` call in `Libraries/`. Not covered: URLSession use in BenchmarkHelpers / IntegrationTestHelpers (`URLSession.shared.download`, text fetch), and the internals of external packages
-(swift-huggingface, swift-transformers) when a caller supplies its own non-`Downloader` path. Cache hits in a
+(swift-huggingface, swift-transformers) when a caller supplies its own non-`Downloader` path. Under `SWIFTLM_OFFLINE` cache hits in a
 Downloader are blocked too; offline runs use `.directory` sources. Tests: `ConformanceOfflineGuardTests`.

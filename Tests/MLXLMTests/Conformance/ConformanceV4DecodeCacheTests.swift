@@ -266,8 +266,7 @@ struct ConformanceV4CacheTrimTests {
 
     @Test("a layer entry trimmed beyond maxTrimCount keeps its local KV and compressor state in step")
     func layerEntryStaysInStep() async throws {
-        let (m, cache, t) = try await Self.prefilled(ratios: [0, 4, 8, 0], tokens: 30)
-        let plain = m(t, cache: nil)
+        let (_, cache, _) = try await Self.prefilled(ratios: [0, 4, 8, 0], tokens: 30)
         for c in cache {
             guard let list = c as? CacheList, let state = SharpAIOverlay.v4Split(c).state,
                 let local = SharpAIOverlay.v4Split(c).local
@@ -280,7 +279,6 @@ struct ConformanceV4CacheTrimTests {
             #expect(state.offset == 30 - limit, "state trimmed by the same amount")
             #expect(list.offset == 30 - limit, "the list offset follows")
         }
-        _ = (m, plain)
     }
 
     @Test("a speculative rollback within maxTrimCount re-decodes exactly; one beyond it is refused untouched")

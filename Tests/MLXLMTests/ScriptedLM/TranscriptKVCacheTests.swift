@@ -21,6 +21,49 @@ struct TranscriptKVCacheTests {
         return cache
     }
 
+    /// SL-37 clamp in `CacheList.trim` applies to every trimmable `AuxiliaryKVCache` child, a transcript included:
+    /// its `maxTrimCount` is its offset, so a trim beyond the transcript length is clamped to it, every child
+    /// rewinds by that same amount, and `trimPromptCache` refuses a request beyond it.
+    @Test func `a cache list holding a transcript clamps trims to the transcript length`() throws {
+        let kv = Self.attention(8)
+        let transcript = TranscriptKVCache(tokens: [1, 2, 3, 4, 5])
+        let list = CacheList(kv, transcript)
+        list.offset = 5
+        #expect(list.maxTrimCount == 5)
+        #expect(list.isTrimmable)
+
+        // within the limit: all children follow
+        #expect(list.trim(2) == 2)
+        #expect(kv.offset == 6)
+        #expect(transcript.tokens == [1, 2, 3])
+        #expect(list.offset == 3)
+
+        // beyond the limit: clamped to the transcript length, not to the larger KV
+        #expect(list.trim(7) == 3)
+        #expect(kv.offset == 3, "KV rewound by the same 3 as the transcript")
+        #expect(transcript.tokens.isEmpty)
+        #expect(list.offset == 0)
+        #expect(list.maxTrimCount == 0)
+        #expect(list.trim(1) == 0)
+        #expect(kv.offset == 3, "nothing left to rewind: untouched")
+    }
+
+    @Test func `trimPromptCache refuses beyond a transcript in a cache list and trims within it`() throws {
+        let kv = Self.attention(8)
+        let transcript = TranscriptKVCache(tokens: [1, 2, 3, 4, 5])
+        let cache: [KVCache] = [CacheList(kv, transcript)]
+        #expect(!canTrimPromptCache(cache, numTokens: 6))
+        // beyond the transcript length the request is refused and nothing changes
+        #expect(trimPromptCache(cache, numTokens: 6) == 0)
+        #expect(kv.offset == 8)
+        #expect(transcript.tokens.count == 5)
+        // within it, every child follows
+        #expect(canTrimPromptCache(cache, numTokens: 5))
+        #expect(trimPromptCache(cache, numTokens: 5) == 5)
+        #expect(kv.offset == 3)
+        #expect(transcript.tokens.isEmpty)
+    }
+
     @Test func `tokens follow append, trim, and copy`() throws {
         let transcript = TranscriptKVCache(tokens: [1, 2])
         transcript.append([3, 4, 5])
