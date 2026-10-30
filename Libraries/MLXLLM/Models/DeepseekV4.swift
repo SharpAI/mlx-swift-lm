@@ -903,6 +903,12 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         }
     }
 
+    public func prepareCheckpoint(_ checkpoint: ModelCheckpoint) throws -> ModelCheckpoint {
+        var checkpoint = checkpoint
+        checkpoint.weights = try sanitize(weights: checkpoint.weights, metadata: checkpoint.metadata)
+        return SharpAIOverlay.applyMXFP4ExpertQuantization(checkpoint, expertDtype: args.expertDtype)  // SharpAI overlay (SL-35)
+    }
+
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         let weights = SharpAIOverlay.mapMXFP4Experts(weights, expertDtype: args.expertDtype)  // SharpAI overlay (SL-35)
         var newWeights = weights

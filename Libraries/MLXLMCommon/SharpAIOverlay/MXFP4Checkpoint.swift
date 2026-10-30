@@ -45,6 +45,34 @@ extension SharpAIOverlay {
         return out
     }
 
+    /// Path marker of the stacked routed-expert layers after `DeepseekV4.sanitize` (`<...>.ffn.switch_mlp.<proj>`).
+    /// Inferred from the V4 module tree; the only place that names it.
+    private static let mxfp4ExpertPathMarker = ".switch_mlp."
+
+    /// Makes `quantize(model:)` build the mapped fp4 experts as mxfp4 layers: for an `expertDtype == "fp4"` checkpoint,
+    /// every `<path>.scales` (uint8) with a uint32 `<path>.weight` under a `.switch_mlp.` path gets a per-layer
+    /// `mxfp4Quantization` entry. Call it on the checkpoint AFTER `sanitize` (i.e. at the end of `prepareCheckpoint`).
+    /// The global default and existing per-layer entries are kept (an explicit entry for a path wins); returns
+    /// `checkpoint` unchanged for any other `expertDtype` or when no path qualifies.
+    public static func applyMXFP4ExpertQuantization(_ checkpoint: ModelCheckpoint, expertDtype: String?)
+        -> ModelCheckpoint
+    {
+        guard expertDtype == "fp4" else { return checkpoint }
+        var entries = [String: BaseConfiguration.QuantizationOption]()
+        for (key, scales) in checkpoint.weights where key.hasSuffix(".scales") && key.contains(mxfp4ExpertPathMarker) {
+            let path = String(key.dropLast(".scales".count))
+            guard scales.dtype == .uint8, checkpoint.weights[path + ".weight"]?.dtype == .uint32 else { continue }
+            entries[path] = .quantize(mxfp4Quantization)
+        }
+        guard !entries.isEmpty else { return checkpoint }
+        var out = checkpoint
+        let existing = checkpoint.perLayerQuantization
+        out.perLayerQuantization = .init(
+            quantization: existing?.quantization,
+            perLayerQuantization: entries.merging(existing?.perLayerQuantization ?? [:]) { _, explicit in explicit })
+        return out
+    }
+
     private static func isByte(_ a: MLXArray) -> Bool { a.dtype == .uint8 || a.dtype == .int8 }
 
     /// What the FP8 block dequant needs from a checkpoint's `quantization_config`.
