@@ -231,7 +231,7 @@ enum DequantGolden {
     }
 }
 
-struct DequantGoldenTests {
+struct ConformanceDequantGoldenTests {
     typealias G = DequantGolden
 
     // MARK: manifest

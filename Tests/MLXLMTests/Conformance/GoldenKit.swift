@@ -220,7 +220,7 @@ enum GoldenKit {
     }
 }
 
-struct GoldenKitTests {
+struct ConformanceGoldenKitTests {
     @Test("GoldenKit: exact parsers agree with Double(String) on a float32 rounding tie and a subnormal")
     func exactNumbers() throws {
         let text = "[-0.024411658756434917, 0.1, 1e-39, 3.4028234663852886e38, 7, -3]"
