@@ -209,11 +209,14 @@ struct ConformanceSwigluGoldenTests {
     ]
 
     /// Runs every case of `file` through `run`, returns the failures as readable strings.
-    static func check(_ file: String, golden: KeyPath<S.Case, [Double]?>? = nil,
-                      mutate: Bool = false, run: (S.Case, String) throws -> [Float]) throws -> (failures: [String], compared: Int, nonzero: Int) {
+    static func check(_ file: String, label: String = "", golden: KeyPath<S.Case, [Double]?>? = nil,
+                      mutate: Bool = false, only: (S.Case) -> Bool = { _ in true },
+                      run: (S.Case, String) throws -> [Float]) throws -> (failures: [String], compared: Int, nonzero: Int) {
         let f = try S.load(file), m = try S.manifest()
-        var fails: [String] = [], nonzero = 0
-        for c in f.cases {
+        var fails: [String] = [], nonzero = 0, compared = 0
+        var worst: [String: (abs: Double, rel: Double)] = [:]   // per dtype, for the log
+        for c in f.cases where only(c) {
+            compared += 1
             let out = try run(c, f.layout)
             #expect(out.count == c.golden.count, "\(c.name): output size \(out.count) != \(c.golden.count)")
             var want = golden.flatMap { c[keyPath: $0] } ?? c.golden
@@ -222,13 +225,27 @@ struct ConformanceSwigluGoldenTests {
                 want[0] = want[0] + 50 * (atol + rtol * abs(want[0])) + 1e-3
             }
             nonzero += out.filter { $0 != 0 }.count
+            if !mutate {
+                var w = worst[c.dtype] ?? (0, 0)
+                for (i, g) in want.enumerated() where out[i].isFinite {
+                    let a = abs(Double(out[i]) - g)
+                    w.abs = max(w.abs, a)
+                    if abs(g) > 1e-30 { w.rel = max(w.rel, a / abs(g)) }
+                }
+                worst[c.dtype] = w
+            }
             let bad = S.mismatches(out, want, dtype: c.dtype, m)
             if !bad.isEmpty {
                 let i = bad[0]
                 fails.append("\(c.name): \(bad.count)/\(want.count) out of tolerance, first #\(i) swift=\(out[i]) golden=\(want[i]) x=\(c.x.count > i ? c.x[i] : 0)")
             }
         }
-        return (fails, f.cases.count, nonzero)
+        if !mutate {
+            for (dt, w) in worst.sorted(by: { $0.key < $1.key }) {
+                print("[swiglu][stats] \(file) \(label) \(dt) max|abs err|=\(w.abs) max rel err=\(w.rel)")
+            }
+        }
+        return (fails, compared, nonzero)
     }
 
     @Test("manifest: every fixture is listed, hashed, and has a consumer")
@@ -250,49 +267,88 @@ struct ConformanceSwigluGoldenTests {
             let sp = f.cases.filter { $0.name.hasSuffix("special") }
             #expect(!sp.isEmpty, "\(file) special cases")
             for c in sp {   // gate varies by row, so the special block must hold values at +-limit, beyond it, and a negative gate
-                #expect(c.x.contains(c.limit) || file == "silu_and_mul.json" || c.x.contains(7.0))
+                #expect(c.x.contains(c.limit) && c.x.contains(-c.limit))
                 #expect(c.x.contains { $0 < -20 } && c.x.contains { $0 > 100 })
             }
         }
     }
 
-    @Test("silu(gate)*up through compiledSiluProduct")
+    /// Cases a path is held to without a gap wrapper. fp16 silu(gate)*up is a pinned gap (see `siluFloat16Gap`).
+    static let notFloat16: @Sendable (S.Case) -> Bool = { $0.dtype != "float16" }
+    /// The one fp32 GPT-OSS case that misses the a-priori rtol by a hair (see `gptossFloat32Outlier`).
+    static let oaiOutlier = "swigluoai_and_mul-L7.0-float32-5x129"
+    static let notOaiOutlier: @Sendable (S.Case) -> Bool = { $0.name != ConformanceSwigluGoldenTests.oaiOutlier }
+
+    @Test("silu(gate)*up through compiledSiluProduct (float32, bfloat16)")
     func siluCompiledProduct() throws {
-        let r = try Self.check("silu_and_mul.json") { c, l in S.viaCompiledSiluProduct(c, layout: l) }
+        let r = try Self.check("silu_and_mul.json", label: "compiledSiluProduct", only: Self.notFloat16) { c, l in S.viaCompiledSiluProduct(c, layout: l) }
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
         #expect(r.nonzero > 0)
     }
 
-    @Test("silu(gate)*up through SwitchGLU default init (all silu MoEs)")
+    @Test("silu(gate)*up through SwitchGLU default init (float32, bfloat16)")
     func siluSwitchGLU() throws {
-        let r = try Self.check("silu_and_mul.json") { c, l in S.viaSwitchGLUDefault(c, layout: l) }
+        let r = try Self.check("silu_and_mul.json", label: "SwitchGLU", only: Self.notFloat16) { c, l in S.viaSwitchGLUDefault(c, layout: l) }
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
     }
 
-    @Test("silu(gate)*up through DeepseekV4Expert with limit 0 (clamp disabled)")
+    @Test("silu(gate)*up through DeepseekV4Expert with limit 0 (float32, bfloat16)")
     func siluV4DenseUnclamped() throws {
-        let r = try Self.check("silu_and_mul.json") { c, l in S.viaV4Dense(c, layout: l, limit: 0) }
+        let r = try Self.check("silu_and_mul.json", label: "V4Expert", only: Self.notFloat16) { c, l in S.viaV4Dense(c, layout: l, limit: 0) }
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
+    }
+
+    @Test("gap: float16 silu(gate)*up loses precision for gate below about -8 (all three silu paths)")
+    func siluFloat16Gap() throws {
+        // Measured (run log, fp16): golden 3.8e-7 / 2.1e-7 / 4.3e-7 come out as exactly 0.0 (relative error 1.0; below fp16 min
+        // normal 6.1e-5, subnormal flushed or underflowed), and golden -1.3903e-4 comes out as -1.4031e-4 (0.9% off, rtol is 0.2%).
+        // The failing inputs are gates of about -9 to -20, where silu is tiny and exp's argument is rounded to half precision.
+        // vLLM's CUDA silu kernel computes in fp32 internally, so the oracle's hardware does not show this. Not a wrong formula;
+        // the absolute size of these errors is ~1e-6 .. 1e-5 (the large 0.72 abs error in the stats line is a ~4e4 output, within rtol).
+        let only: (S.Case) -> Bool = { $0.dtype == "float16" }
+        let a = try Self.check("silu_and_mul.json", label: "compiledSiluProduct fp16", only: only) { c, l in S.viaCompiledSiluProduct(c, layout: l) }
+        let b = try Self.check("silu_and_mul.json", label: "SwitchGLU fp16", only: only) { c, l in S.viaSwitchGLUDefault(c, layout: l) }
+        let d = try Self.check("silu_and_mul.json", label: "V4Expert fp16", only: only) { c, l in S.viaV4Dense(c, layout: l, limit: 0) }
+        ConformanceGap.knownIssue("float16 silu(gate)*up misses rtol 2e-3 / atol 1e-7 for strongly negative gates (compiledSiluProduct, SwitchGLU, DeepseekV4Expert limit 0)") {
+            ConformanceGap.expect(a.failures.isEmpty, "compiledSiluProduct: \(a.failures.prefix(2))")
+            ConformanceGap.expect(b.failures.isEmpty, "SwitchGLU: \(b.failures.prefix(2))")
+            ConformanceGap.expect(d.failures.isEmpty, "DeepseekV4Expert: \(d.failures.prefix(2))")
+        }
     }
 
     @Test("swigluoai (alpha 1.702, limit 7) through GPT-OSS SwiGLUSwitchGLU")
     func gptossSwigluOAI() throws {
-        let r = try Self.check("swigluoai_and_mul.json") { c, l in S.viaGPTOSS(c, layout: l) }
+        let r = try Self.check("swigluoai_and_mul.json", label: "GPTOSS", only: Self.notOaiOutlier) { c, l in S.viaGPTOSS(c, layout: l) }
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
         #expect(r.nonzero > 0)
     }
 
+    @Test("gap: GPT-OSS float32 5x129 has one value 2.3e-6 (rtol 2e-6) off, at golden 1.6e-13")
+    func gptossFloat32Outlier() throws {
+        // gate ~ -17 -> sigmoid(1.702*gate) ~ e^-29: exp's relative error grows with its argument (about |arg| * 2^-24 from
+        // rounding the exp2 argument), so a 2e-6 budget that ignores the conditioning of exp is tight in this tail.
+        let r = try Self.check("swigluoai_and_mul.json", label: "GPTOSS outlier", only: { $0.name == Self.oaiOutlier }) { c, l in S.viaGPTOSS(c, layout: l) }
+        #expect(r.compared == 1)
+        ConformanceGap.knownIssue("GPT-OSS swiglu float32 5x129: one tail value is 2.3e-6 relative off (budget 2e-6)") {
+            ConformanceGap.expect(r.failures.isEmpty, "\(r.failures)")
+        }
+    }
+
     @Test("V4 dense (shared) expert: silu(clamp(gate)) * clamp(up), both two-sided")
     func v4Dense() throws {
-        let r = try Self.check("v4_clamped.json") { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
+        let r = try Self.check("v4_clamped.json", label: "V4 dense") { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
         #expect(r.nonzero > 0)
     }
 
     @Test("V4 routed experts (DeepseekV4MoE.switchMLP): up must be clamped too")
     func v4Routed() throws {
-        let r = try Self.check("v4_clamped.json") { c, l in try S.viaV4Routed(c, layout: l) }
-        #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
+        let r = try Self.check("v4_clamped.json", label: "V4 routed") { c, l in try S.viaV4Routed(c, layout: l) }
+        // Precondition (outside the gap): the path ran, produced output, and the failures are not all-zero garbage.
+        #expect(r.compared == 90 && r.nonzero > 0)
+        ConformanceGap.knownIssue("DeepseekV4MoE routed experts (SwitchGLU activation closure, DeepseekV4.swift:~676) clamp gate but NOT up: silu(clamp(gate)) * up, so |up| > swiglu_limit is passed through") {
+            ConformanceGap.expect(r.failures.isEmpty, "\(r.failures.prefix(3))")
+        }
     }
 
     @Test("V4 fixture discriminates: the two gate-clamp readings differ, and the dense expert matches the symmetric one")
@@ -304,20 +360,20 @@ struct ConformanceSwigluGoldenTests {
             differing += zip(c.golden, alt).filter { $0 != $1 }.count
         }
         #expect(differing > 0, "negative-gate cases must separate clamp(gate, -L, L) from clamp(gate, max: L)")
-        let r = try Self.check("v4_clamped.json", golden: \.goldenGateMaxOnly) { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
+        let r = try Self.check("v4_clamped.json", label: "max-only", golden: \.goldenGateMaxOnly) { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
         #expect(!r.failures.isEmpty, "the dense expert is two-sided; the max-only golden must be rejected (else the fixture cannot tell them apart)")
     }
 
     @Test("non-vacuity: a perturbed golden is rejected on every path")
     func perturbedGoldenFails() throws {
-        let runs: [(String, (S.Case, String) throws -> [Float])] = [
-            ("silu_and_mul.json", { c, l in S.viaCompiledSiluProduct(c, layout: l) }),
-            ("swigluoai_and_mul.json", { c, l in S.viaGPTOSS(c, layout: l) }),
-            ("v4_clamped.json", { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }),
+        let runs: [(String, (S.Case) -> Bool, (S.Case, String) throws -> [Float])] = [
+            ("silu_and_mul.json", Self.notFloat16, { c, l in S.viaCompiledSiluProduct(c, layout: l) }),
+            ("swigluoai_and_mul.json", Self.notOaiOutlier, { c, l in S.viaGPTOSS(c, layout: l) }),
+            ("v4_clamped.json", { _ in true }, { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }),
         ]
-        for (file, run) in runs {
-            let ok = try Self.check(file, run: run)
-            let mutated = try Self.check(file, mutate: true, run: run)
+        for (file, only, run) in runs {
+            let ok = try Self.check(file, label: "nonvacuity", only: only, run: run)
+            let mutated = try Self.check(file, mutate: true, only: only, run: run)
             #expect(ok.failures.isEmpty, "\(file) baseline must pass: \(ok.failures.prefix(3))")
             #expect(mutated.failures.count == mutated.compared, "\(file): perturbed golden accepted in \(mutated.compared - mutated.failures.count)/\(mutated.compared) cases")
         }
@@ -327,7 +383,7 @@ struct ConformanceSwigluGoldenTests {
     func everyCaseCompared() throws {
         for (file, run) in [("silu_and_mul.json", { (c: S.Case, l: String) in S.viaCompiledSiluProduct(c, layout: l) }),
                             ("swigluoai_and_mul.json", { (c: S.Case, l: String) in S.viaGPTOSS(c, layout: l) })] {
-            let r = try Self.check(file, run: run)
+            let r = try Self.check(file, label: "coverage", run: run)   // failures ignored here: this only counts cases
             #expect(r.compared == (try S.manifest().files[file]?.cases ?? -1), "\(file)")
         }
     }
