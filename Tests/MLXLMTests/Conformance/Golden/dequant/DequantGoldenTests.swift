@@ -1,7 +1,13 @@
 // Dequantisation golden conformance (lane SL-36 r8-dequant).
 //
-// Oracle: float64 torch reference transcribed from vLLM 739e5945d (tools/conformance/golden/dequant/dequant_ref.py,
-// cross-checked against vLLM's own code on >= 200 random cases per format, see MANIFEST.json "crosscheck").
+// Oracle: float64 torch reference transcribed from vLLM 739e5945d (tools/conformance/golden/dequant/dequant_ref.py).
+// CROSS-CHECKED against vLLM's own code on >= 200 random cases (MANIFEST.json "crosscheck"): nvfp4
+// (nvfp4_emulation_utils.dequantize_to_dtype), mxfp8 e8m0 decode, fp8 scaled_dequantize (channel + block), int4 / AWQ
+// pack-unpack, and the fp8 e4m3fn / e5m2 / e8m0 value tables against the torch dtypes.
+// NOT cross-checked against any vLLM code: mxfp4 (vLLM delegates to amd-quark, absent from the snapshot; the golden is
+// nvfp4's nibble order (I1) glued to the mxfp8 e8m0 decode (I2)) and the ue8m0 FP8 weight-scale composition (I4); both
+// are the author's reading. Green mxfp4 / ue8m0 rows therefore show "MLX == this reading", not "MLX == a real
+// checkpoint": check them against a real MXFP4 sample or the OCP MX spec vectors before relying on them.
 // Fixtures: tools/conformance/golden/dequant/fixtures/*.json, loaded via #filePath (no Package.swift resource);
 // the manifest sha256 is verified before any fixture is used. Tests never run Python.
 //
@@ -341,7 +347,7 @@ struct DequantGoldenTests {
         let s = MLXArray(G.doubles(c["scale"]).map { Float($0) }, [n, k / g])
         var zp = MLXArray.ones([n, k / g], dtype: .float32) * MLXArray(Float(8))  // uint4b8: symmetric zero point is 8
         if !(c["symmetric"] as! Bool) {
-            // zero point nibbles are packed along dim 0 (inferred, see dequant_ref.py I7); unpack in test code
+            // zero point nibbles are packed along dim 0 (dim-0 packing is stated in compressed_tensors_wNa16.py:158-183, see dequant_ref.py I7); unpack in test code
             let zw = G.ints(c["zero_packed"]).map { UInt32(truncatingIfNeeded: $0) }
             let cols = k / g
             var z = [Float](repeating: 0, count: n * cols)

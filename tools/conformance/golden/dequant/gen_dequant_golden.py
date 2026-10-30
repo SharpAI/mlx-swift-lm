@@ -74,7 +74,7 @@ def mk(fmt, **kw):
 # ------------------------------------------------------------------ fp4 / mxfp4
 def fx_fp4_codes():
     codes = [{"code": c, "value": R.fp4_e2m1_value(c)} for c in range(16)]
-    return mk("fp4_e2m1_codes", source="Q/utils/nvfp4_emulation_utils.py:20-37", codes=codes)
+    return mk("fp4_e2m1_codes", source="Q/utils/nvfp4_emulation_utils.py:18-38", codes=codes)
 
 
 def fx_e8m0():
@@ -128,7 +128,7 @@ def fx_mxfp4():
         pk = rand_bytes((4, 64))
         sb = torch.from_numpy(G.integers(112, 143, size=(4, 4), dtype=np.int64)).to(torch.uint8)
         cases.append(mxfp4_case(f"random_{i}", pk, sb, "4 x 128, random bytes, scales 112..142"))
-    return mk("mxfp4", source="Q/utils/ocp_mx_utils.py:9; Q/utils/mxfp8_utils.py:118; Q/utils/nvfp4_emulation_utils.py:25-39 (I1,I2)", cases=cases)
+    return mk("mxfp4", source="Q/utils/ocp_mx_utils.py:9; Q/utils/mxfp8_utils.py:118; Q/utils/nvfp4_emulation_utils.py:23-40 (I1,I2)", cases=cases)
 
 
 # ------------------------------------------------------------------ nvfp4
@@ -159,14 +159,14 @@ def fx_nvfp4():
         pk = rand_bytes((4, 32))
         sb = torch.from_numpy(G.integers(0x20, 0x50, size=(4, 4), dtype=np.int64)).to(torch.uint8)
         cases.append(nvfp4_case(f"random_{i}", pk, sb, [1.0, 0.25, 2.5][i], "4 x 64"))
-    return mk("nvfp4", source="Q/utils/nvfp4_emulation_utils.py:48-71 (swizzle=False); Q/compressed_tensors/schemes/compressed_tensors_w4a16_nvfp4.py:88-90 (I5)", cases=cases)
+    return mk("nvfp4", source="Q/utils/nvfp4_emulation_utils.py:53-76 (swizzle=False); Q/compressed_tensors/schemes/compressed_tensors_w4a16_nvfp4.py:88-90 (I5)", cases=cases)
 
 
 # ------------------------------------------------------------------ fp8
 def fx_fp8_codes():
     return mk(
         "fp8_codes",
-        source="torch.float8_e4m3fn / float8_e5m2 (vLLM uses the torch dtypes: nvfp4_emulation_utils.py:58)",
+        source="torch.float8_e4m3fn / float8_e5m2 (vLLM uses the torch dtypes: nvfp4_emulation_utils.py:68)",
         e4m3fn=[num(R.e4m3fn_value(b)) for b in range(256)],
         e5m2=[num(R.e5m2_value(b)) for b in range(256)],
     )
