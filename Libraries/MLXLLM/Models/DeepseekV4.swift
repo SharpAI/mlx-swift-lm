@@ -654,7 +654,8 @@ class DeepseekV4Gate: Module {
         // Gather weights using original (non-biased) scores
         var selectedScores = takeAlong(scores, inds, axis: -1)
 
-        if topK > 1 && normTopkProb {
+        // vLLM divides by the sum for every k, k == 1 included (kernels CU:191/469, reference TK:77-78).
+        if normTopkProb {
             let denominator = selectedScores.sum(axis: -1, keepDims: true) + 1e-20
             selectedScores = selectedScores / denominator
         }

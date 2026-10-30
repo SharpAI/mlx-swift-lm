@@ -224,15 +224,7 @@ enum V4RouteGolden {
 
     // MARK: known gaps (shipping code vs oracle). Remove an entry in the commit that fixes it.
 
-    static let k1Gap =
-        "top_k == 1: vLLM still renormalises (kernels divide by the sum, CU:191/469; reference TK:77-78), DeepseekV4Gate "
-        + "skips normalisation when topK <= 1. Unreachable for shipped V4 (num_experts_per_tok = 6)."
-    static let gaps: [String: String] = {
-        var g: [String: String] = [
-            "gate_fp32_k1_renorm": k1Gap, "hash_fp32_k1_renorm": k1Gap,
-        ]
-        return g
-    }()
+    static let gaps: [String: String] = [:]
 
     // MARK: tensors
 
