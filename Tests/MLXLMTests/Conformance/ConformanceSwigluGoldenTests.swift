@@ -407,25 +407,29 @@ struct ConformanceSwigluGoldenTests {
         }
     }
 
-    @Test("V4 dense (shared) expert: silu(clamp(gate)) * clamp(up), both two-sided")
+    @Test("V4 dense (shared) expert: shipping silu(clamp(gate)) * clamp(up), both two-sided (oracle INFERRED)")
     func v4Dense() throws {
+        // Characterization: the oracle's sidedness is inferred (no V4 reference available), so this pins the shipping
+        // behaviour; it does not prove it right.
         let r = try Self.check("v4_clamped.json", label: "V4 dense") { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
         #expect(r.nonzero > 0)
     }
 
-    @Test("V4 routed experts (DeepseekV4MoE.switchMLP): up must be clamped too")
+    @Test("V4 routed experts (DeepseekV4MoE.switchMLP): up must be clamped too (oracle INFERRED)")
     func v4Routed() throws {
         let r = try Self.check("v4_clamped.json", label: "V4 routed") { c, l in try S.viaV4Routed(c, layout: l) }
         // Precondition (outside the gap): the path ran, produced output, and the failures are not all-zero garbage.
         #expect(r.compared == 90 && r.nonzero > 0)
-        ConformanceGap.knownIssue("DeepseekV4MoE routed experts (SwitchGLU activation closure, DeepseekV4.swift:~676) clamp gate but NOT up: silu(clamp(gate)) * up, so |up| > swiglu_limit is passed through") {
+        // Evidence is internal, not external: DeepseekV4Expert (same file, :566-568) clamps up two-sided and this closure does not.
+        // No DeepSeek-V4 reference is available, so treat this gap as provisional.
+        ConformanceGap.knownIssue("PROVISIONAL (inferred oracle): DeepseekV4MoE routed experts (SwitchGLU activation closure, DeepseekV4.swift:~676) clamp gate but NOT up, while DeepseekV4Expert clamps both: |up| > swiglu_limit is passed through") {
             ConformanceGap.expect(r.failures.isEmpty, "\(r.failures.prefix(3))")
         }
     }
 
-    @Test("V4 fixture discriminates: the two gate-clamp readings differ, and the dense expert matches the symmetric one")
-    func v4SidednessIsDiscriminating() throws {
+    @Test("V4 fixture separates the two gate-clamp readings (which one is right is NOT asserted: oracle INFERRED)")
+    func v4FixtureSeparatesReadings() throws {
         let f = try S.load("v4_clamped.json")
         var differing = 0
         for c in f.cases {
@@ -433,8 +437,6 @@ struct ConformanceSwigluGoldenTests {
             differing += zip(c.golden, alt).filter { $0 != $1 }.count
         }
         #expect(differing > 0, "negative-gate cases must separate clamp(gate, -L, L) from clamp(gate, max: L)")
-        let r = try Self.check("v4_clamped.json", label: "max-only", golden: \.goldenGateMaxOnly) { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
-        #expect(!r.failures.isEmpty, "the dense expert is two-sided; the max-only golden must be rejected (else the fixture cannot tell them apart)")
     }
 
     @Test("non-vacuity: a perturbed golden is rejected on every path")
