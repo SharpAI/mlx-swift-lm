@@ -55,10 +55,12 @@ enum SwigluGolden {
     }
 
     /// The tolerances the suite enforces. These are the authority; MANIFEST.json only documents them (manifestComplete
-    /// fails if they differ). |swift - golden| <= atol + rtol * |golden|.
+    /// fails if they differ). |swift - golden| <= atol + (rtol + extra) * |golden|.
+    /// atol 1e-30 (float32, bfloat16) is far below any golden value that matters: the earlier 1e-20 made the check
+    /// vacuous for the ~78 swigluoai golden values below 5e-15. float16 keeps 1e-7 (fp16 subnormal step 6e-8).
     static let tolerances: [String: (rtol: Double, atol: Double)] = [
-        "float32": (2e-6, 1e-20),
-        "bfloat16": (2e-2, 1e-20),
+        "float32": (2e-6, 1e-30),
+        "bfloat16": (2e-2, 1e-30),
         "float16": (2e-3, 1e-7),
     ]
 
@@ -105,6 +107,12 @@ enum SwigluGolden {
         let row = i / c.d, col = i % c.d, base = row * 2 * c.d
         return layout == "chunk" ? (c.x[base + col], c.x[base + c.d + col]) : (c.x[base + 2 * col], c.x[base + 2 * col + 1])
     }
+
+    /// Extra relative budget for the swigluoai sigmoid tail (INFERRED, standard conditioning argument, not measured):
+    /// sigmoid(a) ~ exp(a) for very negative a = alpha*gate, and exp has relative condition number |a|. The argument is
+    /// perturbed by Float(1.702) != 1.702 (<= 2^-24 relative) and by the rounding of the float32 product (<= 2^-24
+    /// relative), so the result moves by about |a| * 2 * 2^-24 relative. Zero for |gate| small, so the base rtol rules there.
+    static func oaiTailRtol(gate: Double) -> Double { abs(1.702 * gate) * Double(2) / Double(1 << 24) }
 
     struct Bad { let c: Case; let index: Int; let out: Float; let golden: Double; let gate: Double; let up: Double }
 
@@ -280,6 +288,9 @@ struct ConformanceSwigluGoldenTests {
         return (fails, compared, nonzero, allBad)
     }
 
+    /// Extra budget used by every GPT-OSS comparison.
+    static let oaiExtra: @Sendable (S.Case, String, Int) -> Double = { c, l, i in S.oaiTailRtol(gate: S.gateUp(c, layout: l, i).gate) }
+
     @Test("manifest: every fixture is listed, hashed, has a consumer; tolerances and generator scripts match")
     func manifestComplete() throws {
         let m = try S.manifest()
@@ -318,10 +329,6 @@ struct ConformanceSwigluGoldenTests {
     /// Cases a path is held to without a gap wrapper. fp16 silu(gate)*up is a pinned gap (see `siluFloat16Gap`).
     static let notFloat16: @Sendable (S.Case) -> Bool = { $0.dtype != "float16" }
 
-    /// The one fp32 GPT-OSS case that misses the a-priori rtol by a hair (see `gptossFloat32Outlier`).
-    static let oaiOutlier = "swigluoai_and_mul-L7.0-float32-5x129"
-    static let notOaiOutlier: @Sendable (S.Case) -> Bool = { $0.name != ConformanceSwigluGoldenTests.oaiOutlier }
-
     @Test("silu(gate)*up through compiledSiluProduct (float32, bfloat16)")
     func siluCompiledProduct() throws {
         let r = try Self.check("silu_and_mul.json", label: "compiledSiluProduct", only: Self.notFloat16) { c, l in S.viaCompiledSiluProduct(c, layout: l) }
@@ -359,22 +366,13 @@ struct ConformanceSwigluGoldenTests {
         }
     }
 
-    @Test("swigluoai (alpha 1.702, limit 7) through GPT-OSS SwiGLUSwitchGLU")
+    @Test("swigluoai (alpha 1.702, limit 7) through GPT-OSS SwiGLUSwitchGLU, float32 tolerance in every dtype")
     func gptossSwigluOAI() throws {
-        let r = try Self.check("swigluoai_and_mul.json", label: "GPTOSS", only: Self.notOaiOutlier) { c, l in S.viaGPTOSS(c, layout: l) }
+        // GPT-OSS computes in float32 whatever the input dtype (gptossDTypePromotion), so all three dtypes are held to the
+        // float32 row; the exp tail gets the conditioning term S.oaiTailRtol (INFERRED, see there).
+        let r = try Self.check("swigluoai_and_mul.json", label: "GPTOSS", tolDType: "float32", extraRtol: Self.oaiExtra) { c, l in S.viaGPTOSS(c, layout: l) }
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
         #expect(r.nonzero > 0)
-    }
-
-    @Test("gap: GPT-OSS float32 5x129 has one value 2.3e-6 (rtol 2e-6) off, at golden 1.6e-13")
-    func gptossFloat32Outlier() throws {
-        // gate ~ -17 -> sigmoid(1.702*gate) ~ e^-29: exp's relative error grows with its argument (about |arg| * 2^-24 from
-        // rounding the exp2 argument), so a 2e-6 budget that ignores the conditioning of exp is tight in this tail.
-        let r = try Self.check("swigluoai_and_mul.json", label: "GPTOSS outlier", only: { $0.name == Self.oaiOutlier }) { c, l in S.viaGPTOSS(c, layout: l) }
-        #expect(r.compared == 1)
-        ConformanceGap.knownIssue("GPT-OSS swiglu float32 5x129: one tail value is 2.3e-6 relative off (budget 2e-6)") {
-            ConformanceGap.expect(r.failures.isEmpty, "\(r.failures)")
-        }
     }
 
     @Test("GPT-OSS swiglu keeps the activation dtype (float32 holds; bfloat16/float16 are promoted to float32: gap)")
@@ -425,14 +423,16 @@ struct ConformanceSwigluGoldenTests {
 
     @Test("non-vacuity: a perturbed golden is rejected on every path")
     func perturbedGoldenFails() throws {
-        let runs: [(String, (S.Case) -> Bool, (S.Case, String) throws -> [Float])] = [
-            ("silu_and_mul.json", Self.notFloat16, { c, l in S.viaCompiledSiluProduct(c, layout: l) }),
-            ("swigluoai_and_mul.json", Self.notOaiOutlier, { c, l in S.viaGPTOSS(c, layout: l) }),
-            ("v4_clamped.json", { _ in true }, { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }),
+        let runs: [(String, (S.Case) -> Bool, String?, (S.Case, String) throws -> [Float])] = [
+            ("silu_and_mul.json", Self.notFloat16, nil, { c, l in S.viaCompiledSiluProduct(c, layout: l) }),
+            ("swigluoai_and_mul.json", { _ in true }, "float32", { c, l in S.viaGPTOSS(c, layout: l) }),
+            ("v4_clamped.json", { _ in true }, nil, { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }),
         ]
-        for (file, only, run) in runs {
-            let ok = try Self.check(file, label: "nonvacuity", only: only, run: run)
-            let mutated = try Self.check(file, mutate: true, only: only, run: run)
+        for (file, only, tolD, run) in runs {
+            var extra: (S.Case, String, Int) -> Double = { _, _, _ in 0 }
+            if file.hasPrefix("swigluoai") { extra = Self.oaiExtra }
+            let ok = try Self.check(file, label: "nonvacuity", only: only, tolDType: tolD, extraRtol: extra, run: run)
+            let mutated = try Self.check(file, mutate: true, only: only, tolDType: tolD, extraRtol: extra, run: run)
             #expect(ok.failures.isEmpty, "\(file) baseline must pass: \(ok.failures.prefix(3))")
             #expect(mutated.failures.count == mutated.compared, "\(file): perturbed golden accepted in \(mutated.compared - mutated.failures.count)/\(mutated.compared) cases")
         }

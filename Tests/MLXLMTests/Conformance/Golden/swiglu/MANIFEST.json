@@ -20,7 +20,7 @@
  "generator": {
   "command": "VLLM_ROOT=<vLLM checkout at 739e5945d> venv/bin/python -I tools/conformance/golden/swiglu/generate.py",
   "scripts": {
-   "generate.py": "99e87d895604c15a100746ae900f4a49d703caff3639acefc54194d5959b4927",
+   "generate.py": "e6dde83e947d97cd46c75cebf4be5d7533c4bf1eee752228fd1f898b636840b6",
    "swiglu_ref.py": "c1da43eeb88ac03eb51bb924111e2ac89f9f1c908c39d789c1773b6ad2f9def0"
   }
  },
@@ -39,19 +39,20 @@
  },
  "tolerances": {
   "bfloat16": {
-   "atol": 1e-20,
+   "atol": 1e-30,
    "rtol": 0.02,
    "why": "u=2^-9=2e-3; up to ~5 successive roundings if MLX keeps bf16 intermediates -> 1e-2; same rtol vLLM's own test_activation.py:90 uses for bf16."
   },
+  "enforced_in": "ConformanceSwigluGoldenTests.swift SwigluGolden.tolerances (this block only documents them; manifestComplete fails if they differ)",
   "float16": {
    "atol": 1e-07,
    "rtol": 0.002,
    "why": "u=2^-11=4.9e-4; ~5 roundings -> 2.5e-3 worst case, vLLM test uses 2e-3 (test_activation.py:90); atol = 1.7 subnormal steps (6e-8 each) for results below fp16 min normal 6.1e-5."
   },
   "float32": {
-   "atol": 1e-20,
+   "atol": 1e-30,
    "rtol": 2e-06,
-   "why": "u=6e-8; 5 roundings + Metal fast exp (<=3 ulp) is ~4e-7; 2e-6 leaves 5x margin. atol only guards denormal flush of values < 1e-20."
+   "why": "u=6e-8; 5 roundings + Metal fast exp (<=3 ulp) is ~4e-7; 2e-6 leaves 5x margin. atol 1e-30 only guards denormal flush; the earlier 1e-20 made ~78 swigluoai goldens below 5e-15 effectively unchecked. swigluoai adds an exp-tail term |1.702*gate|*2*2^-24 (INFERRED conditioning argument)."
   },
   "rule": "|swift - golden| <= atol + rtol*|golden|; golden is exact float64 math on dtype-rounded inputs, so the budget is dtype rounding only. Set a priori from the dtype's unit roundoff u and the number of rounded operations (sigmoid, gate*sigmoid, *up, optional clamps which are exact): about 3-5 roundings plus a few ulp of fast-math exp."
  },
