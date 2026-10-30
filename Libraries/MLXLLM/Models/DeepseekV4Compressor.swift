@@ -17,9 +17,8 @@
 //   3. Compressed entries are appended after the local keys of the same layer and serve as both key and
 //      value (k = v, as for the local keys).
 //   4. The input of the compressor is the attention-normed hidden state (the same x as wq_a / wkv).
-//   5. Only used when there is no KV cache (full-sequence forward). Cached decode needs a compressor state
-//      cache (pending block + previous block + compressed history) that does not exist yet; with a cache
-//      the layer keeps its old local-only behaviour.
+//   5. With a KV cache the compressor state lives in `V4CompressorStateCache` (DeepseekV4CompressorState.swift)
+//      and the layer attends over the same entries as the full-sequence forward (batch size 1 only).
 // Not implemented: the sliding-window restriction of the local keys (separate gap), fp8 quantisation.
 // upstream-watch: DeepseekV4.swift in mlx-swift-lm.
 
@@ -96,40 +95,43 @@ extension SharpAIOverlay {
     /// Rotate the RoPE part (last `ropeDim` channels) of compressed entries c: [B, nb, headDim]; entry b
     /// gets position b * ratio (inferred, see the file header). Works for any `rope` by rotating a
     /// zero-padded sequence in which entry b sits at slot b * ratio.
-    static func v4RopeCompressed(_ c: MLXArray, rope: RoPELayer, ropeDim: Int, ratio: Int) -> MLXArray {
+    static func v4RopeCompressed(
+        _ c: MLXArray, rope: RoPELayer, ropeDim: Int, ratio: Int, firstBlock: Int = 0
+    ) -> MLXArray {
         let b = c.dim(0), nb = c.dim(1), nope = c.dim(2) - ropeDim
         let r = c[.ellipsis, nope...].reshaped(b, nb, 1, ropeDim)
         let padded = concatenated([r, zeros([b, nb, ratio - 1, ropeDim], dtype: c.dtype)], axis: 2)
             .reshaped(b, 1, nb * ratio, ropeDim)
-        let rotated = rope(padded, offset: 0).reshaped(b, nb, ratio, ropeDim)[0..., 0..., 0, 0...]
+        let rotated = rope(padded, offset: firstBlock * ratio).reshaped(b, nb, ratio, ropeDim)[0..., 0..., 0, 0...]
         return concatenated([c[.ellipsis, ..<nope], rotated], axis: -1)
     }
 
-    /// [L, nb] bool: compressed entry b is complete at query position t.
-    static func v4Visibility(length: Int, blocks: Int, ratio: Int) -> MLXArray {
-        let t = MLXArray(Int32(0) ..< Int32(length)).reshaped(length, 1)
+    /// [L, nb] bool: compressed entry b is complete at query position t (queries start at `start`).
+    static func v4Visibility(length: Int, blocks: Int, ratio: Int, start: Int = 0) -> MLXArray {
+        let t = MLXArray(Int32(start) ..< Int32(start + length)).reshaped(length, 1)
         let end = (MLXArray(Int32(0) ..< Int32(blocks)).reshaped(1, blocks) + 1) * Int32(ratio) - 1
         return end .<= t
     }
 
-    /// Full-sequence (no cache) attention over local keys plus compressed entries.
-    /// queries: [B, H, L, D]; localKeys: [B, 1, L, D]; compressed: [B, nb, D] (normed, RoPE applied);
+    /// Attention over local keys plus compressed entries. Without a cache localKeys has S == L; with a cache
+    /// it holds all S cached positions and the L queries are the last L of them.
+    /// queries: [B, H, L, D]; localKeys: [B, 1, S, D]; compressed: [B, nb, D] (normed, RoPE applied);
     /// compressedMask: [B or 1, L, nb] bool (which entries each query may read). k = v.
     /// Returns nil when the incoming local mask is neither causal nor boolean (caller keeps the old path).
     static func v4CompressedAttention(
         queries: MLXArray, localKeys: MLXArray, compressed: MLXArray, compressedMask: MLXArray,
         localMask: MLXFast.ScaledDotProductAttentionMaskMode, scale: Float, sinks: MLXArray?
     ) -> MLXArray? {
-        let l = queries.dim(2)
+        let l = queries.dim(2), s = localKeys.dim(2)
         let local: MLXArray
         switch localMask {
-        case .causal: local = createCausalMask(n: l, offset: 0)
-        case .none: local = MLXArray.ones([l, l], dtype: .bool)
+        case .causal: local = createCausalMask(n: l, offset: s - l)
+        case .none: local = MLXArray.ones([l, s], dtype: .bool)
         case .array(let m) where m.dtype == .bool: local = m
         default: return nil
         }
         let cm = compressedMask.expandedDimensions(axis: 1)  // [Bm, 1, L, nb]
-        let lm = broadcast(local.reshaped([-1, 1, l, l]), to: [cm.dim(0), 1, l, l])
+        let lm = broadcast(local.reshaped([-1, 1, l, s]), to: [cm.dim(0), 1, l, s])
         let mask = concatenated([lm, cm], axis: -1)
         let keys = concatenated([localKeys, compressed.expandedDimensions(axis: 1)], axis: 2)
         return MLXFast.scaledDotProductAttention(

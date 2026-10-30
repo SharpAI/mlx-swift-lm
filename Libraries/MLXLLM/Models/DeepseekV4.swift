@@ -441,9 +441,11 @@ class DeepseekV4Attention: Module {
     func callAsFunction(
         _ x: MLXArray,
         mask: MLXFast.ScaledDotProductAttentionMaskMode,
-        cache: KVCache?
+        cache layerCache: KVCache?
     ) -> MLXArray {
         let (B, L, _) = (x.dim(0), x.dim(1), x.dim(2))
+        // A layer with a compressor owns CacheList(local KV, compressor state); any other cache is used as is.
+        let (cache, v4State) = SharpAIOverlay.v4Split(layerCache)
 
         // --- Query ---
         // Low-rank Q: wq_a → q_norm → wq_b
@@ -482,7 +484,7 @@ class DeepseekV4Attention: Module {
         let sinksToUse: MLXArray? = attn_sink.sum().item(Float.self) != 0
             ? attn_sink.asType(queries.dtype)
             : nil
-        // SharpAI overlay hook (SL-35): compressed entries join the local keys. Full-sequence forward only.
+        // SharpAI overlay hook (SL-35): compressed entries join the local keys.
         var attended: MLXArray? = nil
         if let compressor, cache == nil, L >= compressor.ratio {
             let compressed = SharpAIOverlay.v4RopeCompressed(
@@ -494,6 +496,34 @@ class DeepseekV4Attention: Module {
             attended = SharpAIOverlay.v4CompressedAttention(
                 queries: queries, localKeys: kFull, compressed: compressed, compressedMask: readable,
                 localMask: mask, scale: scale, sinks: sinksToUse)
+        } else if let compressor, let cache, let v4State, !(cache is QuantizedKVCacheProtocol) {
+            // Cached forward (batch 1): append x to the compressor / indexer state, then attend over the
+            // cached local keys plus every finished entry, as the full-sequence forward does.
+            let start = v4State.comp.count
+            let (localK, _) = cache.update(keys: kFull, values: kFull)
+            let compressed = compressor.append(
+                x, state: &v4State.comp, rope: rope, ropeDim: ropeHeadDim)
+            var indexKeys: MLXArray? = nil
+            if let indexer, v4State.index != nil {
+                indexKeys = indexer.compressor.append(
+                    x, state: &v4State.index!, rope: rope, ropeDim: indexer.ropeDim)
+            }
+            v4State.syncOffset()
+            (layerCache as? CacheList)?.offset = cache.offset
+            if let compressed {
+                var readable = SharpAIOverlay.v4Visibility(
+                    length: L, blocks: compressed.dim(1), ratio: compressor.ratio, start: start
+                ).expandedDimensions(axis: 0)
+                if let indexer, let indexKeys {
+                    readable = readable & indexer.select(x, qr: qr, rope: rope, keys: indexKeys, start: start)
+                }
+                attended = SharpAIOverlay.v4CompressedAttention(
+                    queries: queries, localKeys: localK, compressed: compressed, compressedMask: readable,
+                    localMask: mask, scale: scale, sinks: sinksToUse)
+            }
+            // No finished block yet (or an unsupported mask): local-only attention over the updated cache.
+            attended = attended ?? MLXFast.scaledDotProductAttention(
+                queries: queries, keys: localK, values: localK, scale: scale, mask: mask, sinks: sinksToUse)
         }
         let output = (attended ?? deepseekAttentionWithSinks(
             queries: queries,
@@ -817,7 +847,8 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
 
         // Create causal attention mask; reshape to 3D so dim(1)==S
         let hForMask = h.reshaped([B, S, hc * config.hiddenSize])  // [B, S, hc*D]
-        let attentionMask = createAttentionMask(h: hForMask, cache: cache?.first)
+        let attentionMask = createAttentionMask(
+            h: hForMask, cache: SharpAIOverlay.v4Split(cache?.first).local)
 
         for (i, layer) in layers.prefix(totalLayerCount).enumerated() {
             h = partitionedLayerCall(
@@ -856,6 +887,20 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]? = nil) -> MLXArray {
         let out = model(inputs, cache: cache)
         return lmHead(out)
+    }
+
+    /// One cache per layer. A layer with compress_ratio > 1 gets `CacheList(local KV, compressor state)`
+    /// (SL-35); every other layer keeps the plain attention cache exactly as the protocol default built it.
+    public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try (0 ..< kvHeads.count).map { i in
+            let local = try makeAttentionKVCache(parameters: parameters)
+            let ratio = i < args.compressRatios.count ? args.compressRatios[i] : 0
+            guard ratio > 1 else { return local }
+            return SharpAIOverlay.v4MakeLayerCache(
+                local: local, ratio: ratio, headDim: args.headDim,
+                indexHeadDim: ratio == 4 && args.indexNHeads != nil && args.indexTopk != nil
+                    ? args.indexHeadDim : nil)
+        }
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {

@@ -18,7 +18,8 @@
 //      of k (position b * ratio), with the layer's rope.
 //   3. only complete blocks (b + 1) * 4 - 1 <= t are candidates; k = min(index_topk, #candidates); a query
 //      with no complete block reads no compressed entry.
-//   4. no indexer sharing between layers (V4.1), no indexer cache: full-sequence forward only.
+//   4. no indexer sharing between layers (V4.1). With a KV cache the indexer keys come from the indexer
+//      half of `V4CompressorStateCache` (batch size 1 only).
 // upstream-watch: DeepseekV4.swift in mlx-swift-lm.
 
 import Foundation
@@ -53,22 +54,36 @@ extension SharpAIOverlay {
 
         /// Scores [B, L, nb]: -inf for blocks that are not complete at the query position.
         func scores(_ x: MLXArray, qr: MLXArray, rope: RoPELayer) -> MLXArray {
-            let b = x.dim(0), l = x.dim(1), nope = headDim - ropeDim
-            let blocks = l / Self.ratio
             let k = SharpAIOverlay.v4RopeCompressed(
                 compressor(x), rope: rope, ropeDim: ropeDim, ratio: Self.ratio)  // [B, nb, headDim]
+            return scores(x, qr: qr, rope: rope, keys: k, start: 0)
+        }
+
+        /// Same, with the indexer keys k [B, nb, headDim] (RoPE applied) given and the queries starting at
+        /// absolute position `start` (cached decode).
+        func scores(_ x: MLXArray, qr: MLXArray, rope: RoPELayer, keys k: MLXArray, start: Int) -> MLXArray {
+            let b = x.dim(0), l = x.dim(1), nope = headDim - ropeDim
+            let blocks = k.dim(1)
             var q = wqB(qr).reshaped(b, l, nHeads, headDim).transposed(0, 2, 1, 3)  // [B, H, L, D]
-            q = concatenated([q[.ellipsis, ..<nope], rope(q[.ellipsis, nope...], offset: 0)], axis: -1)
+            q = concatenated([q[.ellipsis, ..<nope], rope(q[.ellipsis, nope...], offset: start)], axis: -1)
             var s = maximum(matmul(q, k.expandedDimensions(axis: 1).transposed(0, 1, 3, 2)), 0)  // [B, H, L, nb]
             let w = weightsProj(x) * (1 / Float(nHeads * headDim).squareRoot())
             s = (s * w.transposed(0, 2, 1).expandedDimensions(axis: -1)).sum(axis: 1)  // [B, L, nb]
-            let visible = SharpAIOverlay.v4Visibility(length: l, blocks: blocks, ratio: Self.ratio)
+            let visible = SharpAIOverlay.v4Visibility(length: l, blocks: blocks, ratio: Self.ratio, start: start)
             return which(visible.expandedDimensions(axis: 0), s, MLXArray(-Float.infinity))
         }
 
         /// Bool mask [B, L, nb]: the top-k complete blocks of every query.
         func select(_ x: MLXArray, qr: MLXArray, rope: RoPELayer) -> MLXArray {
-            let s = scores(x, qr: qr, rope: rope)
+            select(scores(x, qr: qr, rope: rope))
+        }
+
+        /// Cached form: keys from the state cache, queries starting at absolute position `start`.
+        func select(_ x: MLXArray, qr: MLXArray, rope: RoPELayer, keys: MLXArray, start: Int) -> MLXArray {
+            select(scores(x, qr: qr, rope: rope, keys: keys, start: start))
+        }
+
+        private func select(_ s: MLXArray) -> MLXArray {
             let nb = s.dim(-1)
             let k = min(topk, nb)
             let top = argPartition(-s, kth: k - 1, axis: -1)[.ellipsis, ..<k]  // [B, L, k]
