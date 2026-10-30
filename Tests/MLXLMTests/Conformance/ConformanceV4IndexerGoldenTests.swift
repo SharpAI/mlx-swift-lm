@@ -254,11 +254,17 @@ enum V4IdxGolden {
 
     /// Loaded once. `V4IDX_GOLDEN_DIR` points the loader at another directory (used to show the suite red against a
     /// perturbed copy; unset in normal runs).
-    static let shared: Result<Loaded, any Error> = Result {
-        if let override = ProcessInfo.processInfo.environment["V4IDX_GOLDEN_DIR"], !override.isEmpty {
-            return try load(from: URL(fileURLWithPath: override))
+    static let shared: Result<Loaded, any Error> = loadShared()
+
+    private static func loadShared() -> Result<Loaded, any Error> {
+        do {
+            if let override = ProcessInfo.processInfo.environment["V4IDX_GOLDEN_DIR"], !override.isEmpty {
+                return .success(try load(from: URL(fileURLWithPath: override)))
+            }
+            return .success(try load(from: defaultDirectory))
+        } catch {
+            return .failure(error)
         }
-        return try load(from: defaultDirectory)
     }
 
     // MARK: test arguments
@@ -699,13 +705,19 @@ struct ConformanceV4IndexerGoldenTests {
         #expect(G.checkScores(run.scores, want, tol: stol.y).ok, "unperturbed baseline must pass")
         let i0 = try #require(want.firstIndex { $0 != nil })
         var moved = want
-        moved[i0] = want[i0]! + 3 * (stol.y.atol + stol.y.rtol * (want.compactMap { $0.map { abs($0) } }.max() ?? 1))
+        let absWant: [Double] = want.compactMap { $0 }.map { abs($0) }
+        let maxWant: Double = absWant.max() ?? Double(1)
+        let allowed: Double = stol.y.atol + stol.y.rtol * maxWant
+        let base: Double = want[i0] ?? Double(0)
+        moved[i0] = base + Double(3) * allowed
         #expect(!G.checkScores(run.scores, moved, tol: stol.y).ok, "a score moved by 3x the allowed error must fail")
         var unmasked = want
         let m0 = try #require(want.firstIndex { $0 == nil })
         unmasked[m0] = 0
         #expect(!G.checkScores(run.scores, unmasked, tol: stol.y).ok, "an unmasked entry must fail")
-        let lastRow = (try G.req(sf.L, "L") - 1) * (try G.req(sf.hidden, "hidden"))  // row 0 sees no block: perturb the last row
+        let rows: Int = try G.req(sf.L, "L")
+        let hidden: Int = try G.req(sf.hidden, "hidden")
+        let lastRow: Int = (rows - 1) * hidden  // row 0 sees no block: perturb the last row
         let inputPerturbed = try G.runScore(sf) { $0[lastRow] += Float(0.05) }
         #expect(!G.checkScores(inputPerturbed.scores, want, tol: stol.y).ok, "a perturbed x must change the scores")
         #expect(!G.checkScores([], [], tol: stol.y).ok, "an empty comparison must not pass")
@@ -734,7 +746,9 @@ struct ConformanceV4IndexerGoldenTests {
         #expect(G.check(mout, mwant, tol: mtol.y).ok)
         #expect(!G.check(try G.runMerge(mf) { $0[0] += Float(0.05) }, mwant, tol: mtol.y).ok, "a perturbed q must fail")
         var mmoved = mwant
-        mmoved[0] += 4 * (mtol.y.atol + mtol.y.rtol * (mwant.map(abs).max() ?? 1))
+        let mMax: Double = mwant.map { abs($0) }.max() ?? Double(1)
+        let mAllowed: Double = mtol.y.atol + mtol.y.rtol * mMax
+        mmoved[0] += Double(4) * mAllowed
         #expect(!G.check(mout, mmoved, tol: mtol.y).ok)
         // visibility
         let (vf, _) = try G.fixture(G.CaseID(name: "vis_r4_prefill", group: "ratio4"))
