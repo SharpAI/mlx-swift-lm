@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-blocked.sh [--self-test-only | --validate-scratch]
+# run-blocked.sh [--self-test-only | --validate-scratch | --check-resolve-log <file>]
 #
 # SL-28 A4: prove that a CLEAN build plus the offline conformance tests work with outbound network BLOCKED.
 # macOS only: uses sandbox-exec with a profile that denies network*. Prints a final  EXIT=<n>  line taken from the
@@ -65,6 +65,20 @@ validate_scratch() {
     case "$real" in "$tmp_real"/swiftlm-blocked*|/private/tmp/swiftlm-blocked*) return 0 ;; esac   # mktemp-style dir
     return 1
 }
+
+# Stage-1 detector. LIMITS: the sandbox already denies network*, so a real fetch cannot succeed and `resolve` exiting
+# non-zero is the authoritative proof that a dependency is missing from the cache. This check is a second, advisory
+# signal on a SUCCESSFUL resolve, and it is deliberately lenient about SwiftPM's wording: a Fetching/Updating/Cloning
+# https line counts as a network fetch only if it does not mention the cache at all (any case), so "Fetched ... from
+# cache (0.4s)", "(cached)" etc. pass. If SwiftPM stops printing such lines the check goes silent (it never
+# false-fails); it then proves nothing beyond the sandbox + exit status.
+fetched_from_network() {   # <resolve.log>; prints the offending lines, returns 0 when there are any
+    grep -E "(Fetching|Updating|Cloning) https?://" "$1" | grep -viE "cache" | grep .
+}
+
+if [ "${1:-}" = "--check-resolve-log" ]; then     # test hook
+    fetched_from_network "${2:?log file}" && finish 71 || finish 0
+fi
 
 if [ "${1:-}" = "--validate-scratch" ]; then      # test hook: only the rm -rf safety check, no sandbox, no build
     validate_scratch "$SCRATCH" && finish 0 || finish 64
@@ -152,7 +166,7 @@ echo "[run-blocked] stage 1: resolve (network blocked)"
 sb swift package "${SW[@]}" resolve > "$SCRATCH/resolve.log" 2>&1; st=$?
 cat "$SCRATCH/resolve.log"
 [ $st -eq 0 ] || { echo "[run-blocked] resolve failed: dependency not in the SwiftPM cache (see log above)"; finish $st; }
-if grep -E "^(Fetching|Updating) https" "$SCRATCH/resolve.log" | grep -v "from cache" ; then
+if fetched_from_network "$SCRATCH/resolve.log"; then
     echo "[run-blocked] a dependency was fetched from the network, not the cache"; finish 71; fi
 
 echo "[run-blocked] stage 2: clean build (network blocked)"

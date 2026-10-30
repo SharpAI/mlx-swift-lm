@@ -143,4 +143,18 @@ vs RUNNER_TEMP="$rt" SCRATCH="$here/../../swiftlm-blocked-x"; [ $? -ne 0 ]; chec
 vs RUNNER_TEMP="$rt" SCRATCH="$rt/anything" SCRATCH_ROOT="$rt"; check "run-blocked: an explicit SCRATCH_ROOT still allows a dir strictly inside it" $?
 env RUNNER_TEMP="$rt" SCRATCH="$rt/anything" SCRATCH_ROOT="" bash "$rb" --validate-scratch >/dev/null 2>&1; [ $? -ne 0 ]; check "run-blocked: an empty SCRATCH_ROOT is not treated as the cwd" $?
 
+# 9. run-blocked.sh stage-1 "fetched from the network" detector (--check-resolve-log <file>: exit 71 = network fetch).
+#    Cache hits must pass under any SwiftPM wording that mentions the cache; a bare Fetching/Updating/Cloning https
+#    line without it is flagged; unrelated output is ignored.
+rb="$here/offline-build/run-blocked.sh"
+cl() { printf '%s\n' "$1" >"$tmp/resolve.log"; bash "$rb" --check-resolve-log "$tmp/resolve.log" >/dev/null 2>&1; }
+cl 'Fetching https://github.com/apple/swift-numerics from cache'; check "resolve-log: 'Fetching ... from cache' passes" $?
+cl 'Fetched https://github.com/apple/swift-numerics from cache (0.41s)'; check "resolve-log: 'Fetched ... from cache (0.41s)' passes" $?
+cl 'Fetching https://github.com/apple/swift-numerics (cached)'; check "resolve-log: a differently worded cache hit passes" $?
+cl 'Computing version for https://github.com/apple/swift-numerics'; check "resolve-log: 'Computing version' is not a fetch" $?
+cl 'Fetching https://github.com/apple/swift-numerics'; [ $? -eq 71 ]; check "resolve-log: a bare 'Fetching https' is flagged (71)" $?
+cl 'Updating https://github.com/swiftlang/swift-syntax.git'; [ $? -eq 71 ]; check "resolve-log: a bare 'Updating https' is flagged (71)" $?
+cl 'Cloning https://github.com/swiftlang/swift-syntax.git'; [ $? -eq 71 ]; check "resolve-log: a bare 'Cloning https' is flagged (71)" $?
+cl '[1/1] Fetching https://github.com/apple/swift-numerics'; [ $? -eq 71 ]; check "resolve-log: a progress-prefixed fetch is flagged (71)" $?
+
 exit "$fail"

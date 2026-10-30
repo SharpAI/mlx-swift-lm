@@ -30,7 +30,7 @@ cache, or a SwiftPM mirror (`swift package config set-mirror`) pointing at an in
    '(version 1)(allow default)(deny network*)'` and unreachable inside; `curl https://1.1.1.1` and `git ls-remote`
    of the SwiftPM remote fail inside. Each inside-sandbox probe has an outside control and must fail with the sandbox's own error (EPERM / curl exit 7), not just any failure; with no uplink the external probes are reported INCONCLUSIVE and the loopback probes carry the proof. Any miss gives `EXIT=70` and nothing else runs.
 1. `swift package resolve` into a fresh scratch dir, inside the sandbox; fails (naming the URL) if a dependency
-   is not in the cache; also fails (71) if a line says Fetching without `from cache`.
+   is not in the cache; also fails (71) if a Fetching/Updating/Cloning https line does not mention the cache (any wording, any case). Limit: the sandbox denies the network, so a real fetch cannot succeed anyway and the `resolve` exit status is the authoritative proof; the 71 check is an advisory second signal and stays silent if SwiftPM changes its wording (it never false-fails on a cache hit).
 2. `swift build --build-tests` into the fresh scratch dir (default `${RUNNER_TEMP:-$TMPDIR}/swiftlm-blocked-build`), inside the
    sandbox. `--disable-sandbox` is required because SwiftPM's own sandbox cannot nest.
 3. `swift test --skip-build --filter <f>` per filter (default `ConformanceOfflineGuard`,
