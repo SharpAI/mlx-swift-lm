@@ -48,6 +48,10 @@ enum KdaGolden {
         let schema: Int
         let vllmCommit: String
         let torch: String
+        let generator: String
+        let generatorSha256: String
+        let oracle: String
+        let oracleSha256: String
         let count: Int
         let files: [String: FileEntry]
         let tolerances: [String: ToleranceClass]
@@ -116,13 +120,20 @@ enum KdaGolden {
         return url.appendingPathComponent("Golden/kda")
     }()
 
+    /// <repo>/tools/conformance/golden (generator and oracle), derived from this file's path.
+    static let defaultToolsDirectory: URL = {
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0 ..< 4 { url.deleteLastPathComponent() }
+        return url.appendingPathComponent("tools/conformance/golden")
+    }()
+
     static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Loads and VERIFIES a fixture directory. Throws (never skips) when anything is off: a missing or extra
     /// file, a sha256 that differs from the manifest, a count that does not add up, an unknown tolerance class.
-    static func load(from dir: URL) throws -> Loaded {
+    static func load(from dir: URL, toolsDir: URL = defaultToolsDirectory) throws -> Loaded {
         let manifestURL = dir.appendingPathComponent("MANIFEST.json")
         let manifest: Manifest
         do {
@@ -140,6 +151,23 @@ enum KdaGolden {
             let extra = Set(onDisk).subtracting(manifest.files.keys).sorted()
             let missing = Set(manifest.files.keys).subtracting(onDisk).sorted()
             throw LoadError(description: "fixture set differs from manifest; extra=\(extra) missing=\(missing)")
+        }
+        // The manifest pins the generator and the oracle it was produced with: editing either without regenerating
+        // the fixtures is drift, and fails here. (Regenerating fixtures AND manifest together is self-consistent by
+        // design; review the diff of kda_ref.py for that.)
+        for (path, pinned) in [(manifest.generator, manifest.generatorSha256), (manifest.oracle, manifest.oracleSha256)] {
+            let file = toolsDir.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent)
+            let actual: String
+            do {
+                actual = sha256(try Data(contentsOf: file))
+            } catch {
+                throw LoadError(description: "cannot read \(file.path) pinned by the manifest: \(error)")
+            }
+            guard actual == pinned else {
+                throw LoadError(
+                    description: "ORACLE/GENERATOR CHANGED: \(file.lastPathComponent) sha256 \(actual) != manifest \(pinned). "
+                        + "Rerun tools/conformance/golden/gen_kda_golden.py and commit the regenerated fixtures.")
+            }
         }
         var fixtures = [Fixture]()
         for name in manifest.files.keys.sorted() {
@@ -417,6 +445,28 @@ struct ConformanceKdaGoldenTests {
         try fm.copyItem(at: G.defaultDirectory.appendingPathComponent("t1_state_dk32.json"), to: victim)
         try Data("{}".utf8).write(to: tmp.appendingPathComponent("stray.json"))
         #expect(throws: G.LoadError.self) { try G.load(from: tmp) }
+    }
+
+    @Test("the manifest pins the generator and the oracle: a changed byte in either fails the loader")
+    func loaderRejectsADriftedOracle() throws {
+        let loaded = try G.shared.get()
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent("kda-tools-\(UUID().uuidString)")
+        try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tmp) }
+        let names = [loaded.manifest.generator, loaded.manifest.oracle].map { URL(fileURLWithPath: $0).lastPathComponent }
+        for n in names { try fm.copyItem(at: G.defaultToolsDirectory.appendingPathComponent(n), to: tmp.appendingPathComponent(n)) }
+        // untouched copies load
+        #expect(try G.load(from: G.defaultDirectory, toolsDir: tmp).fixtures.count == loaded.manifest.count)
+        for n in names {
+            let url = tmp.appendingPathComponent(n)
+            let original = try Data(contentsOf: url)
+            try (original + Data("\n# drift\n".utf8)).write(to: url)
+            #expect(throws: G.LoadError.self, "a changed \(n) must fail the loader") {
+                try G.load(from: G.defaultDirectory, toolsDir: tmp)
+            }
+            try original.write(to: url)
+        }
     }
 
     @Test("mutation self-test: perturbing any one golden input slightly makes the comparison FAIL (kernel and fallback)")
