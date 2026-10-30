@@ -286,7 +286,7 @@ def main():
     }
     files = {}
     for name, obj in fixtures.items():
-        data = (json.dumps(obj, indent=1, sort_keys=True) + "\n").encode()
+        data = (json.dumps(obj, sort_keys=True, separators=(",", ":")) + "\n").encode()  # compact: indent=1 put one number per line (~2.5x the size)
         with open(os.path.join(a.out, name), "wb") as f:
             f.write(data)
         files[name] = {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
