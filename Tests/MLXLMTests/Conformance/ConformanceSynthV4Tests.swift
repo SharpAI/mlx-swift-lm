@@ -173,7 +173,7 @@ struct ConformanceSynthV4Tests {
         #expect(!c.raw.isEmpty && !sanitized.isEmpty, "nothing to sanitize: the wrapped claim below would be vacuous")
         // sanitize has no rename layer: loading a raw checkpoint needs an external converter (mlx convert).
         ConformanceGap.knownIssue("DeepseekV4.sanitize has no HF->module rename layer; raw checkpoints need a converter") {
-            #expect(unexpected.isEmpty, "\(unexpected.count) unexpected, e.g. \(unexpected.prefix(4))")
+            ConformanceGap.expect(unexpected.isEmpty, "\(unexpected.count) unexpected, e.g. \(unexpected.prefix(4))")
         }
     }
 
@@ -193,7 +193,7 @@ struct ConformanceSynthV4Tests {
         }
         if Self.missingFromOurs.contains(g) {
             ConformanceGap.knownIssue("DeepseekV4 lacks a parameter for real `\(g.rawValue)` tensors") {
-                #expect(keys.isEmpty, "\(msg)")
+                ConformanceGap.expect(keys.isEmpty, "\(msg)")
             }
         } else {
             #expect(keys.isEmpty, "unexplained real-only tensors: \(msg)")
@@ -214,7 +214,7 @@ struct ConformanceSynthV4Tests {
             // vLLM creates e_score_correction_bias only for non-hash layers (nvidia/model.py:306-310); ours
             // creates it on every layer and tolerates its absence via updateMissing.
             ConformanceGap.knownIssue("DeepseekV4Gate has e_score_correction_bias on hash layers; the real checkpoint has none") {
-                #expect(keys.isEmpty, "\(msg)")
+                ConformanceGap.expect(keys.isEmpty, "\(msg)")
             }
         } else {
             #expect(keys.isEmpty, "unexplained module-only parameters: \(msg)")
@@ -240,7 +240,7 @@ struct ConformanceSynthV4Tests {
         #expect(!inGroup.isEmpty, "\(g.rawValue): no real tensors in the built layers; nothing could be dropped")
         #expect(!kept.isEmpty && kept.contains { ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == .other })
         ConformanceGap.knownIssue("DeepseekV4.sanitize silently drops real `\(g.rawValue)` tensors") {
-            #expect(dropped.isEmpty, "\(dropped.count) dropped, e.g. \(dropped.prefix(3))")
+            ConformanceGap.expect(dropped.isEmpty, "\(dropped.count) dropped, e.g. \(dropped.prefix(3))")
         }
     }
 }

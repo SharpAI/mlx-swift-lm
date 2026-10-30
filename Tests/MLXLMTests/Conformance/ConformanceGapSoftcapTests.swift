@@ -54,7 +54,7 @@ struct ConformanceGapSoftcapTests {
 
         let maxDiff = abs(actual - expected).max().item(Float.self)
         ConformanceGap.knownIssue("Gemma3TextConfiguration ignores final_logit_softcapping") {
-            #expect(maxDiff <= 1e-3, "max |model - cap*tanh(unbounded/cap)| = \(maxDiff)")
+            ConformanceGap.expect(maxDiff <= 1e-3, "max |model - cap*tanh(unbounded/cap)| = \(maxDiff)")
         }
     }
 }

@@ -39,7 +39,7 @@ struct ConformanceGapGdnTests {
         ConformanceGap.knownIssue(
             "gatedDeltaKernel indexes g as [B,T,Hv] (g_[hv_idx]); a rank-4 per-key gate is silently read as scalars"
         ) {
-            #expect(dy < 1e-3 && ds < 1e-3, "kernel vs per-key reference: |dy|=\(dy) |dstate|=\(ds)")
+            ConformanceGap.expect(dy < 1e-3 && ds < 1e-3, "kernel vs per-key reference: |dy|=\(dy) |dstate|=\(ds)")
         }
     }
 
@@ -52,7 +52,7 @@ struct ConformanceGapGdnTests {
         // Precondition: the round trip is a valid probe -- a key the struct does carry survives it.
         #expect(enc["model_type"] as? String == "qwen3_5_text")
         ConformanceGap.knownIssue("Qwen35TextConfiguration ignores output_gate_type; Qwen3NextRMSNormGated always uses silu") {
-            #expect(enc["output_gate_type"] as? String == "sigmoid", "output_gate_type survives decode")
+            ConformanceGap.expect(enc["output_gate_type"] as? String == "sigmoid", "output_gate_type survives decode")
         }
     }
 }
