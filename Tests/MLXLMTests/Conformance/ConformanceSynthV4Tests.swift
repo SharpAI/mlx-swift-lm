@@ -177,7 +177,9 @@ struct ConformanceSynthV4Tests {
         }
     }
 
-    static let missingFromOurs: [ConformanceSynthV4Layout.Group] = [.compressor, .indexer, .tid2eid]
+    /// Groups still without a home in our module. `.compressor` landed in SL-35 step 4.1 and is asserted plainly.
+    static let missingFromOurs: [ConformanceSynthV4Layout.Group] = [.indexer, .tid2eid]
+    static let landedGroups: [ConformanceSynthV4Layout.Group] = [.compressor]
 
     @Test("real tensors our module has no parameter for", arguments: ConformanceSynthV4Layout.Group.allCases)
     func realTensorsWithoutHome(_ g: ConformanceSynthV4Layout.Group) async throws {
@@ -191,7 +193,11 @@ struct ConformanceSynthV4Tests {
             let present = c.convertedKeys.filter { ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == g }
             #expect(!present.isEmpty, "\(g.rawValue): the real layout has no such tensor; the gap pin is vacuous")
         }
-        if Self.missingFromOurs.contains(g) {
+        if Self.landedGroups.contains(g) {
+            let present = c.convertedKeys.filter { ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == g }
+            #expect(!present.isEmpty, "\(g.rawValue): the real layout has no such tensor; the assert is vacuous")
+            #expect(keys.isEmpty, "\(msg)")
+        } else if Self.missingFromOurs.contains(g) {
             ConformanceGap.knownIssue("DeepseekV4 lacks a parameter for real `\(g.rawValue)` tensors") {
                 ConformanceGap.expect(keys.isEmpty, "\(msg)")
             }
@@ -239,8 +245,12 @@ struct ConformanceSynthV4Tests {
         }
         #expect(!inGroup.isEmpty, "\(g.rawValue): no real tensors in the built layers; nothing could be dropped")
         #expect(!kept.isEmpty && kept.contains { ConformanceSynthV4Layout.group($0, mainLayers: c.mainLayers) == .other })
-        ConformanceGap.knownIssue("DeepseekV4.sanitize silently drops real `\(g.rawValue)` tensors") {
-            ConformanceGap.expect(dropped.isEmpty, "\(dropped.count) dropped, e.g. \(dropped.prefix(3))")
+        if Self.landedGroups.contains(g) {
+            #expect(dropped.isEmpty, "\(dropped.count) dropped, e.g. \(dropped.prefix(3))")
+        } else {
+            ConformanceGap.knownIssue("DeepseekV4.sanitize silently drops real `\(g.rawValue)` tensors") {
+                ConformanceGap.expect(dropped.isEmpty, "\(dropped.count) dropped, e.g. \(dropped.prefix(3))")
+            }
         }
     }
 }

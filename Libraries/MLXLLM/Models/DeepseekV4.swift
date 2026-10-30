@@ -313,11 +313,14 @@ class DeepseekV4Attention: Module {
     @ModuleInfo(key: "wo_a") var woA: Linear
     @ModuleInfo(key: "wo_b") var woB: Linear
 
+    // KV compressor (SharpAI overlay, layers with compress_ratio > 1)
+    @ModuleInfo(key: "compressor") var compressor: SharpAIOverlay.V4Compressor?
+
     // Attention sink bias (per head, no .weight suffix)
     // Stored via update(parameters:) using the key "attn_sink"
     var attn_sink: MLXArray
 
-    init(config: DeepseekV4Configuration) {
+    init(config: DeepseekV4Configuration, layerIndex: Int = 0) {
         self.config = config
         self.numHeads = config.numAttentionHeads
         self.headDim = config.headDim
@@ -346,6 +349,13 @@ class DeepseekV4Attention: Module {
         // Attention sink: per-head bias [numAttentionHeads], applied to attention logits before softmax.
         // Shape matches numAttentionHeads (== qkRopeHeadDim in this architecture).
         self.attn_sink = zeros([config.numAttentionHeads])
+        let ratio = layerIndex < config.compressRatios.count ? config.compressRatios[layerIndex] : 0
+        self._compressor.wrappedValue =
+            ratio > 1
+            ? SharpAIOverlay.V4Compressor(
+                hiddenSize: config.hiddenSize, headDim: config.headDim, ratio: ratio,
+                eps: config.rmsNormEps)
+            : nil
 
         // RoPE using compress_rope_theta (used for most layers with compress_ratio != 0)
         // We use a single rope config as a simplification
@@ -461,7 +471,19 @@ class DeepseekV4Attention: Module {
         let sinksToUse: MLXArray? = attn_sink.sum().item(Float.self) != 0
             ? attn_sink.asType(queries.dtype)
             : nil
-        let output = deepseekAttentionWithSinks(
+        // SharpAI overlay hook (SL-35): compressed entries join the local keys. Full-sequence forward only.
+        var attended: MLXArray? = nil
+        if let compressor, cache == nil, L >= compressor.ratio {
+            let compressed = SharpAIOverlay.v4RopeCompressed(
+                compressor(x), rope: rope, ropeDim: ropeHeadDim, ratio: compressor.ratio)
+            let visible = SharpAIOverlay.v4Visibility(
+                length: L, blocks: compressed.dim(1), ratio: compressor.ratio
+            ).expandedDimensions(axis: 0)
+            attended = SharpAIOverlay.v4CompressedAttention(
+                queries: queries, localKeys: kFull, compressed: compressed, compressedMask: visible,
+                localMask: mask, scale: scale, sinks: sinksToUse)
+        }
+        let output = (attended ?? deepseekAttentionWithSinks(
             queries: queries,
             keys: kFull,
             values: kFull,
@@ -469,7 +491,7 @@ class DeepseekV4Attention: Module {
             scale: scale,
             mask: mask,
             sinks: sinksToUse
-        )
+        ))
         .transposed(0, 2, 1, 3)
         .reshaped(B, L, numHeads, headDim)               // [B, L, n_heads, head_dim]
 
@@ -640,10 +662,10 @@ public class DeepseekV4Block: Module {
     var hc_attn: HCParams
     var hc_ffn: HCParams
 
-    init(config: DeepseekV4Configuration) {
+    init(config: DeepseekV4Configuration, layerIndex: Int = 0) {
         self.config = config
 
-        self._selfAttn.wrappedValue = DeepseekV4Attention(config: config)
+        self._selfAttn.wrappedValue = DeepseekV4Attention(config: config, layerIndex: layerIndex)
         self.ffn = DeepseekV4MoE(config: config)
 
         self._attnNorm.wrappedValue = RMSNorm(
@@ -734,7 +756,7 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
         // MTP blocks live at index num_hidden_layers.. (outside the main count)
         let totalCount = config.numHiddenLayers + (retainMTP ? config.numNextnPredictLayers : 0)
         self.layers = (0 ..< totalCount).map {
-            _ in DeepseekV4Block(config: config)
+            DeepseekV4Block(config: config, layerIndex: $0)
         }
         self._norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
 
@@ -858,9 +880,9 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         for (key, value) in newWeights {
             // Drop rotary embedding precomputed frequencies
             if key.contains("rotary_emb.inv_freq") { continue }
-            // Drop compressor/indexer sub-module weights
-            // TODO: implement DeepseekV4Compressor and DeepseekV4Indexer modules.
-            if key.contains(".attn.compressor.") || key.contains(".attn.indexer.") { continue }
+            // Drop indexer sub-module weights (compressor: SharpAIOverlay.V4Compressor, SL-35 step 4.1)
+            // TODO: implement the sparse indexer.
+            if key.contains(".attn.indexer.") { continue }
             // Drop gate.tid2eid
             if key.contains(".ffn.gate.tid2eid") { continue }
 

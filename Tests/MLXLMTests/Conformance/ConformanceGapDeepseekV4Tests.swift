@@ -137,9 +137,13 @@ struct ConformanceGapDeepseekV4Tests {
         // layer 1 has ratio 4 (compressor + indexer), layer 2 has ratio 128 (compressor only).
         // Layers 1 and 2 are only built once the layer-count gap above is fixed, so key off layer 1 only
         // (it exists today) for the indexer and either layer for the compressor.
-        ConformanceGap.knownIssue("DeepseekV4 has no compressor module (sanitize drops .attn.compressor.*)") {
-            ConformanceGap.expect(keys.contains { $0.hasPrefix("model.layers.1.attn.compressor.") })
+        // Compressor landed (SL-35 step 4.1): plain asserts. Ratio 4 and ratio 128 layers own one, ratio 0 none.
+        for l in [1, 2] {
+            for k in ["ape", "wkv.weight", "wgate.weight", "norm.weight"] {
+                #expect(keys.contains("model.layers.\(l).attn.compressor.\(k)"), "layer \(l) lacks compressor.\(k)")
+            }
         }
+        #expect(!keys.contains { $0.hasPrefix("model.layers.0.attn.compressor.") })
         ConformanceGap.knownIssue("DeepseekV4 has no indexer module (sanitize drops .attn.indexer.*)") {
             ConformanceGap.expect(keys.contains { $0.hasPrefix("model.layers.1.attn.indexer.") })
         }
@@ -159,9 +163,11 @@ struct ConformanceGapDeepseekV4Tests {
     @Test("V4 sanitize keeps the compressor / indexer / tid2eid tensors of a main layer")
     func sanitizeKeepsTensors() async throws {
         let m = try await ConformanceDeepseekV4.tinyModel()
-        let probe = ["model.layers.0.attn.compressor.wkv.weight", "model.layers.0.attn.indexer.wq_b.weight",
-                     "model.layers.0.ffn.gate.tid2eid"]
-        let out = m.sanitize(weights: Dictionary(uniqueKeysWithValues: probe.map { ($0, MLXArray.zeros([2, 2])) }))
+        let landed = "model.layers.0.attn.compressor.wkv.weight"  // compressor: SL-35 step 4.1
+        let probe = ["model.layers.0.attn.indexer.wq_b.weight", "model.layers.0.ffn.gate.tid2eid"]
+        let out = m.sanitize(
+            weights: Dictionary(uniqueKeysWithValues: (probe + [landed]).map { ($0, MLXArray.zeros([2, 2])) }))
+        #expect(out[landed] != nil, "sanitize dropped \(landed)")
         for k in probe {
             ConformanceGap.knownIssue("DeepseekV4.sanitize drops \(k)") {
                 ConformanceGap.expect(out[k] != nil)

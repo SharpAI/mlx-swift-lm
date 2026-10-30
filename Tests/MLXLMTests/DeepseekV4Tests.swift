@@ -211,7 +211,7 @@ public class DeepseekV4Tests: XCTestCase {
     }
 
     func testSanitizeDropsCompressorIndexerKeys() {
-        // Compressor/indexer sub-modules are not yet implemented; ensure sanitize drops them.
+        // Indexer sub-modules are not yet implemented; ensure sanitize drops them (the compressor is kept, SL-35 4.1).
         let config = makeSmallConfig()
         let model = DeepseekV4Model(config)
 
@@ -228,10 +228,11 @@ public class DeepseekV4Tests: XCTestCase {
 
         XCTAssertNotNil(sanitized["model.layers.0.attn.wkv.weight"],
                         "Standard wkv should be kept")
-        XCTAssertNil(sanitized["model.layers.0.attn.compressor.wkv.weight"],
-                     "Compressor keys should be dropped")
-        XCTAssertNil(sanitized["model.layers.0.attn.compressor.wgate.weight"],
-                     "Compressor keys should be dropped")
+        // SL-35 step 4.1: the compressor is implemented, its keys are kept.
+        XCTAssertNotNil(sanitized["model.layers.0.attn.compressor.wkv.weight"],
+                        "Compressor keys should be kept")
+        XCTAssertNotNil(sanitized["model.layers.0.attn.compressor.wgate.weight"],
+                        "Compressor keys should be kept")
         XCTAssertNil(sanitized["model.layers.0.attn.indexer.wq_b.weight"],
                      "Indexer keys should be dropped")
         XCTAssertNil(sanitized["model.layers.0.attn.indexer.compressor.wkv.weight"],
