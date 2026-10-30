@@ -90,15 +90,34 @@ struct OfflineBlockingDownloader: Downloader {
 struct HubOfflineDownloader: Downloader {
     let base: any Downloader
 
-    private final class MissFlag: @unchecked Sendable {
+    /// First-outcome-wins hand-off between the base download, the miss signal and the caller. A result recorded
+    /// before the caller starts waiting is kept and delivered when it does.
+    private final class Outcome: @unchecked Sendable {
         private let lock = NSLock()
-        private var hit = false
-        private var cancel: (@Sendable () -> Void)?
-        var missed: Bool { lock.lock(); defer { lock.unlock() }; return hit }
-        func arm(_ cancel: @escaping @Sendable () -> Void) { lock.lock(); self.cancel = cancel; lock.unlock() }
-        func mark() {
-            lock.lock(); hit = true; let c = cancel; lock.unlock()
-            c?()
+        private var result: Result<URL, Error>?
+        private var waiter: CheckedContinuation<Result<URL, Error>, Never>?
+
+        func finish(_ value: Result<URL, Error>) {
+            lock.lock()
+            guard result == nil else { lock.unlock(); return }
+            result = value
+            let w = waiter
+            waiter = nil
+            lock.unlock()
+            w?.resume(returning: value)
+        }
+
+        func wait() async -> Result<URL, Error> {
+            await withCheckedContinuation { (c: CheckedContinuation<Result<URL, Error>, Never>) in
+                lock.lock()
+                if let r = result {
+                    lock.unlock()
+                    c.resume(returning: r)
+                } else {
+                    waiter = c
+                    lock.unlock()
+                }
+            }
         }
     }
 
@@ -108,28 +127,36 @@ struct HubOfflineDownloader: Downloader {
     ) async throws -> URL {
         let blocked = SharpAIOverlay.OfflineError.networkBlocked(
             URL(string: "https://huggingface.co/\(id)") ?? URL(fileURLWithPath: id))
-        let flag = MissFlag()
+        let outcome = Outcome()
         let base = self.base
-        let task = Task<URL, Error> {
-            try await base.download(
-                id: id, revision: revision, matching: patterns, useLatest: false,
-                progressHandler: { progress in
-                    if progress.totalUnitCount > 0, progress.completedUnitCount > 0,
-                        progress.completedUnitCount < progress.totalUnitCount
-                    {
-                        flag.mark()
-                        return
-                    }
-                    progressHandler(progress)
-                })
+        let task = Task<Void, Never> {
+            do {
+                let url = try await base.download(
+                    id: id, revision: revision, matching: patterns, useLatest: false,
+                    progressHandler: { progress in
+                        if progress.totalUnitCount > 0, progress.completedUnitCount > 0,
+                            progress.completedUnitCount < progress.totalUnitCount
+                        {
+                            outcome.finish(.failure(blocked))
+                            return
+                        }
+                        progressHandler(progress)
+                    })
+                outcome.finish(.success(url))
+            } catch {
+                outcome.finish(.failure(error))
+            }
         }
-        flag.arm { task.cancel() }
+        // The caller gets the first outcome. A provider that ignores cancellation keeps running in the
+        // background, but it no longer holds the caller.
         let result: Result<URL, Error> = await withTaskCancellationHandler {
-            await task.result
+            let r = await outcome.wait()
+            if case .failure = r { task.cancel() }
+            return r
         } onCancel: {
             task.cancel()
+            outcome.finish(.failure(CancellationError()))
         }
-        if flag.missed { throw blocked }
         return try result.get()
     }
 }
