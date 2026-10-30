@@ -21,6 +21,9 @@
 #   LOCK_BUILD    optional command prefix for the build stages, e.g. "python3 with-lock.py build 3 --"
 #   LOCK_GPU      optional command prefix for the test stage
 #   KEEP=1        do not remove SCRATCH first (incremental)
+#   POST_BUILD    optional shell snippet run INSIDE the sandbox after the build and before the tests, with SCRATCH
+#                 exported (CI uses it to copy mlx.metallib next to the test binaries)
+#   TEST_ARGS     extra arguments for `swift test` (CI: --no-parallel, GPU tests are not safe to overlap)
 #
 # upstream-watch: if Package.swift gains a dependency that is not in the SwiftPM cache, stage 1 fails and names
 # the URL it tried to fetch.
@@ -31,13 +34,15 @@ SCRATCH=${SCRATCH:-${TMPDIR:-/tmp}/swiftlm-blocked-build}
 FILTERS=${FILTERS:-"ConformanceOfflineGuard ConformanceOfflineBundleTests"}
 LOCK_BUILD=${LOCK_BUILD:-}
 LOCK_GPU=${LOCK_GPU:-}
+POST_BUILD=${POST_BUILD:-}
+TEST_ARGS=${TEST_ARGS:-}
 PROFILE='(version 1)(allow default)(deny network*)'
 
 finish() { echo "EXIT=$1"; exit "$1"; }
 
 # SCRATCH is rm -rf'd below, so it must be a path we can prove is disposable: strictly inside the session
 # scratchpad, or a mktemp-style dir under the system temp dir. Never /, $HOME, the repo or any parent of them.
-SCRATCH_ROOT=/private/tmp/claude-501/-Users-simba-SwiftLM/85247f50-f34b-4898-b8ab-d9cdf7d9c026/scratchpad
+SCRATCH_ROOT=${SCRATCH_ROOT:-/private/tmp/claude-501/-Users-simba-SwiftLM/85247f50-f34b-4898-b8ab-d9cdf7d9c026/scratchpad}
 rp() { python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
 validate_scratch() {
     local p=$1 real root_real repo_real home_real tmp_real
@@ -146,12 +151,17 @@ $LOCK_BUILD sandbox-exec -p "$PROFILE" swift build --build-tests "${SW[@]}" > "$
 tail -5 "$SCRATCH/build.log" | cut -c1-300
 [ $st -eq 0 ] || { echo "[run-blocked] build failed, log: $SCRATCH/build.log"; finish $st; }
 
+if [ -n "$POST_BUILD" ]; then
+    echo "[run-blocked] post-build hook (network blocked)"
+    SCRATCH="$SCRATCH" sandbox-exec -p "$PROFILE" bash -c "$POST_BUILD" || { echo "[run-blocked] post-build hook failed"; finish 73; }
+fi
+
 rc=0
 for f in $FILTERS; do
     echo "[run-blocked] stage 3: test --filter $f (network blocked, SWIFTLM_OFFLINE=1)"
     # shellcheck disable=SC2086
     SWIFTLM_OFFLINE=1 HF_HUB_OFFLINE=1 $LOCK_GPU sandbox-exec -p "$PROFILE" \
-        swift test --skip-build "${SW[@]}" --filter "$f" > "$SCRATCH/test-$f.log" 2>&1; st=$?
+        swift test --skip-build "${SW[@]}" $TEST_ARGS --filter "$f" > "$SCRATCH/test-$f.log" 2>&1; st=$?
     grep -E "Test run with|Executed [0-9]+ tests" "$SCRATCH/test-$f.log" | tail -2
     echo "[run-blocked] $f exit=$st"
     [ $st -eq 0 ] || rc=$st

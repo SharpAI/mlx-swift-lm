@@ -206,12 +206,14 @@ jobs:
           bash tests/test-speculative-eval.sh
 
   sealed-offline:
-    # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights and no
-    # pip. NOT a required check (branch protection is untouched). The dependency fetch happens before the seal;
+    # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights. The
+    # Metal toolchain and the MLX metallib are fetched BEFORE the seal (same as the main job). NOT a required check (branch protection is untouched). The dependency fetch happens before the seal;
     # scripts/conformance/offline-build/run-blocked.sh then self-tests the seal, resolves from the SwiftPM cache,
     # builds clean and runs the filters, failing on a vacuous (zero-test) filter.
     name: Sealed offline conformance (macOS 15)
     runs-on: macos-15
+    # Observation phase: report the result without turning the workflow red (owner gate 2: observe once before merge).
+    continue-on-error: true
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -231,10 +233,23 @@ jobs:
         run: |
           sed -i '' -E 's|\.package\(path: "\.\./mlx-swift"\),|\.package(path: "./mlx-swift"),|' Package.swift
 
-      - name: Prefetch dependencies (network allowed, before the seal)
-        run: swift package resolve
+      - name: Install Metal Toolchain (network allowed, before the seal)
+        run: xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Prefetch dependencies and the MLX Metal library (network allowed, before the seal)
+        run: |
+          swift package resolve
+          python3 -m venv /tmp/mlx_venv
+          /tmp/mlx_venv/bin/pip install --quiet mlx
+          find /tmp/mlx_venv -name "mlx.metallib" | head -n 1 > /tmp/mlx_metallib_path
+          test -s /tmp/mlx_metallib_path
 
       - name: Build and test with network blocked
         env:
           FILTERS: "Conformance SharpAIOverlay"
+          TEST_ARGS: "--no-parallel"
+          POST_BUILD: |
+            MLX_LIB=$(cat /tmp/mlx_metallib_path)
+            find "$SCRATCH" -type d \( -name MacOS -o -name Resources \) -exec cp "$MLX_LIB" {}/ \; 2>/dev/null || true
+            find "$SCRATCH" -type d -path '*/debug' -maxdepth 3 -exec cp "$MLX_LIB" {}/ \; 2>/dev/null || true
         run: bash scripts/conformance/offline-build/run-blocked.sh
