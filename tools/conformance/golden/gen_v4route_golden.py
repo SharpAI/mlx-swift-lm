@@ -437,6 +437,7 @@ def main():
     manifest = {
         "schema": 1,
         "count": len(files),
+        "files": files,
         "vllmCommit": VLLM_COMMIT,
         "torch": torch.__version__,
         "generator": "tools/conformance/golden/gen_v4route_golden.py",
