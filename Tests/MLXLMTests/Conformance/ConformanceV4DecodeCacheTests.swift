@@ -17,9 +17,10 @@ import Testing
 @testable import MLXLLM
 
 enum ConformanceV4DecodeCache {
-    static func model(ratios: [Int]) async throws -> DeepseekV4Model {
+    static func model(ratios: [Int], headDim: Int? = nil) async throws -> DeepseekV4Model {
         var o = try JSONSerialization.jsonObject(with: ConformanceDeepseekV4.tinyJSON()) as! [String: Any]
         o["compress_ratios"] = ratios
+        if let headDim { o["head_dim"] = headDim }
         let data = try JSONSerialization.data(withJSONObject: o)
         let m = try await LLMTypeRegistry.shared.createModel(configuration: data, modelType: "deepseek_v4")
         let model = try #require(m as? DeepseekV4Model)
@@ -146,5 +147,57 @@ struct ConformanceV4DecodeCacheTests {
         let b = ConformanceV4DecodeCache.run(
             m, t, cache: (0 ..< 3).map { _ in KVCacheSimple() }, chunks: [7, 1])
         #expect(ConformanceV4DecodeCache.maxDiff(a, b) == 0)
+    }
+}
+
+/// SL-37 lane LIB: a compressed layer that is not given CacheList(local, V4CompressorStateCache) falls back to
+/// local-only attention; that must be loud (one warning naming the cause), never silent.
+@Suite(.serialized)
+struct ConformanceV4CacheFallbackTests {
+    @Test("the supported CacheList cache path logs no fallback warning")
+    func supportedPathIsQuiet() async throws {
+        SharpAIOverlay.v4ResetFallbackWarnings()
+        let m = try await ConformanceV4DecodeCache.model(ratios: [0, 4, 8, 0])
+        _ = ConformanceV4DecodeCache.run(
+            m, ConformanceV4DecodeCache.tokens(20), cache: try m.newCache(parameters: nil), chunks: [9, 1])
+        #expect(SharpAIOverlay.v4FallbackWarnings.isEmpty)
+    }
+
+    @Test("a plain KVCacheSimple on a compressed layer warns once, naming the cache type, and still decodes")
+    func plainCacheWarnsOnce() async throws {
+        SharpAIOverlay.v4ResetFallbackWarnings()
+        let m = try await ConformanceV4DecodeCache.model(ratios: [0, 4, 8, 0])
+        let t = ConformanceV4DecodeCache.tokens(20)
+        let out = ConformanceV4DecodeCache.run(
+            m, t, cache: (0 ..< 3).map { _ in KVCacheSimple() }, chunks: [9, 1])
+        eval(out)
+        #expect(out.shape == [1, 20, 64])
+        let w = SharpAIOverlay.v4FallbackWarnings
+        #expect(w.count == 1, "two compressed layers and many forwards must give one warning, got \(w.count)")
+        #expect(w.first?.contains("KVCacheSimple") == true)
+        #expect(w.first?.contains("V4CompressorStateCache") == true)
+    }
+
+    @Test("dynamic KV quantization of a compressed layer's local cache warns once, naming the quantized cache")
+    func quantizedLocalWarns() async throws {
+        SharpAIOverlay.v4ResetFallbackWarnings()
+        // head_dim 64 so the affine group size 32 is valid for the quantized local cache
+        let m = try await ConformanceV4DecodeCache.model(ratios: [0, 4, 8, 0], headDim: 64)
+        let t = ConformanceV4DecodeCache.tokens(20)
+        // what dynamic quantization produces: the local child quantized, the auxiliary state child kept
+        let cache: [KVCache] = [
+            KVCacheSimple(),
+            CacheList(
+                QuantizedKVCache(groupSize: 32, bits: 4),
+                SharpAIOverlay.V4CompressorStateCache(ratio: 4, headDim: 64, indexHeadDim: 8)),
+            CacheList(
+                QuantizedKVCache(groupSize: 32, bits: 4),
+                SharpAIOverlay.V4CompressorStateCache(ratio: 8, headDim: 64, indexHeadDim: nil)),
+        ]
+        #expect(SharpAIOverlay.v4FallbackWarnings.isEmpty, "no warning before the quantized forward")
+        _ = ConformanceV4DecodeCache.run(m, t, cache: cache, chunks: [8, 1])
+        let w = SharpAIOverlay.v4FallbackWarnings
+        #expect(w.count == 1, "got \(w.count)")
+        #expect(w.first?.contains("QuantizedKVCache") == true)
     }
 }

@@ -541,6 +541,11 @@ class DeepseekV4Attention: Module {
             // No finished block yet (or an unsupported mask): local-only attention over the updated cache.
             attended = attended ?? MLXFast.scaledDotProductAttention(
                 queries: queries, keys: localK, values: localK, scale: scale, mask: mask, sinks: sinksToUse)
+        } else if compressor != nil, let cache {
+            // Not CacheList(local KV, V4CompressorStateCache), or the local KV is quantized: this layer attends
+            // over its local keys only (no compressed entries). Say so once instead of degrading silently.
+            SharpAIOverlay.v4NoteCacheFallback(
+                layerCache: layerCache, local: cache, hasState: v4State != nil)
         }
         let output = (attended ?? deepseekAttentionWithSinks(
             queries: queries,

@@ -195,6 +195,55 @@ extension SharpAIOverlay {
 
     // MARK: layer cache plumbing
 
+    private final class FallbackState: @unchecked Sendable {
+        var warned = Set<String>()
+        var log: [String] = []
+    }
+    private static let fallbackLock = NSLock()
+    private static let fallbackState = FallbackState()
+    private static let fallbackLogger = MLXLogger(label: "DeepseekV4")
+
+    /// A compressed layer was handed a cache it cannot keep compressor state in, so it runs local-attention
+    /// only. Logs one warning per cause (the cache type) per process and returns the message when it logged,
+    /// nil when that cause was already reported.
+    ///
+    /// Causes: a plain cache (`KVCacheSimple`, `BatchKVCache`, an MTP cache, a prompt-cache file written
+    /// before the compressor state existed) has no `V4CompressorStateCache` next to it; or dynamic cache
+    /// quantization (`kvBits` / `kvScheme`) turned the local child of the layer's `CacheList` into a
+    /// `QuantizedKVCache` (the state child is an `AuxiliaryKVCache` and is skipped by the rewrite). Quantizing
+    /// a V4 compressed layer's local keys is not supported: run with unquantized KV, or accept that the
+    /// compressed layers lose their compressed entries.
+    @discardableResult
+    static func v4NoteCacheFallback(layerCache: KVCache?, local: KVCache, hasState: Bool) -> String? {
+        let cause: String
+        if hasState {
+            cause = "quantized local KV cache \(type(of: local))"
+        } else {
+            cause = "cache \(type(of: layerCache ?? local)) without a V4CompressorStateCache"
+        }
+        let message =
+            "DeepSeek-V4: a layer with compress_ratio > 1 received a \(cause); its compressed attention is skipped "
+            + "and it attends over local keys only, so output differs from the uncached forward. "
+            + (hasState
+                ? "Dynamic KV quantization (kvBits / kvScheme) is not supported for V4 compressed layers; disable it. "
+                : "Build caches with DeepseekV4Model.newCache(parameters:) and do not reuse prompt-cache files saved without compressor state. ")
+        let first = fallbackLock.withLock { fallbackState.warned.insert(cause).inserted }
+        guard first else { return nil }
+        fallbackLock.withLock { fallbackState.log.append(message) }
+        fallbackLogger.warning(message)
+        return message
+    }
+
+    /// Messages logged by `v4NoteCacheFallback` since the last reset (tests).
+    static var v4FallbackWarnings: [String] { fallbackLock.withLock { fallbackState.log } }
+
+    static func v4ResetFallbackWarnings() {
+        fallbackLock.withLock {
+            fallbackState.warned = []
+            fallbackState.log = []
+        }
+    }
+
     /// Splits a layer cache into the ordinary KV cache and the compressor state (nil for a plain cache).
     static func v4Split(_ cache: KVCache?) -> (local: KVCache?, state: V4CompressorStateCache?) {
         guard let list = cache as? CacheList else { return (cache, nil) }
