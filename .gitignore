@@ -102,3 +102,7 @@ pyproject.toml
 uv.lock
 main.py
 
+
+# Python bytecode (generators under tools/)
+__pycache__/
+*.pyc

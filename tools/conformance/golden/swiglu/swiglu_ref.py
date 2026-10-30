@@ -1,5 +1,5 @@
 """float64 torch-CPU oracle for the SwiGLU family. Every line cites the vLLM source it is transcribed from
-(vLLM commit 739e5945d, /Users/simba/SwiftLM/3rd_party/vllm). Lines marked INFERRED have no vLLM source.
+(vLLM commit 739e5945d; crosscheck() reads the checkout named by the VLLM_ROOT environment variable). Lines marked INFERRED have no vLLM source.
 
 All functions take x of shape (..., 2*d) in float64 and return (..., d) in float64. Inputs are pre-rounded
 to the test dtype by generate.py, so the oracle is the EXACT real-number result for those inputs; the Swift
@@ -57,11 +57,14 @@ def v4_clamped(x, limit):
     return sym, maxonly
 
 
-def crosscheck(n_cases=400, seed=1234):
+def crosscheck(n_cases=400, seed=1234, vllm_root=None):
     """Compare the oracle above with vLLM's own forward_native bodies, extracted from the vLLM source with ast
     (importing vllm needs CUDA-era deps). Returns max relative disagreement per op."""
-    import ast, types
-    src_path = "/Users/simba/SwiftLM/3rd_party/vllm/vllm/model_executor/layers/activation.py"
+    import ast, os, types
+    vllm_root = vllm_root or os.environ.get("VLLM_ROOT")
+    if not vllm_root:
+        raise SystemExit("set VLLM_ROOT to a vLLM checkout at commit 739e5945d (the directory that contains vllm/)")
+    src_path = os.path.join(vllm_root, "vllm/model_executor/layers/activation.py")
     tree = ast.parse(open(src_path).read())
     fns = {}
     for node in tree.body:

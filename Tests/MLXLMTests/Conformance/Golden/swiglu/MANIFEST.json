@@ -18,10 +18,10 @@
   }
  },
  "generator": {
-  "command": "venv/bin/python -I tools/conformance/golden/swiglu/generate.py",
+  "command": "VLLM_ROOT=<vLLM checkout at 739e5945d> venv/bin/python -I tools/conformance/golden/swiglu/generate.py",
   "scripts": {
-   "generate.py": "d0167243bde00a682d40c0f5ac7ec3237694c12854d2bbafa5046be216077f20",
-   "swiglu_ref.py": "281ec12aa2cb29eb93fea0c3ebe164f3fa2c247a11194fb31c2f5aeb92b5b3ef"
+   "generate.py": "99e87d895604c15a100746ae900f4a49d703caff3639acefc54194d5959b4927",
+   "swiglu_ref.py": "c1da43eeb88ac03eb51bb924111e2ac89f9f1c908c39d789c1773b6ad2f9def0"
   }
  },
  "numpy": "2.5.4",

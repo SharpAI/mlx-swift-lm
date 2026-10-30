@@ -2,7 +2,7 @@
 oracle). Run ONCE, commit the outputs; tests never run Python.
 
   uv venv venv && uv pip install --python venv/bin/python torch numpy --index-url https://download.pytorch.org/whl/cpu
-  venv/bin/python -I tools/conformance/golden/swiglu/generate.py
+  VLLM_ROOT=<vLLM checkout at 739e5945d> venv/bin/python -I tools/conformance/golden/swiglu/generate.py
 
 Aborts if the oracle disagrees with vLLM's own forward_native code by > 1e-10 relative (crosscheck()).
 """
@@ -117,7 +117,7 @@ def main():
     manifest = {
         "generator": {"scripts": {n: hashlib.sha256(open(os.path.join(HERE, n), "rb").read()).hexdigest()
                                   for n in ("generate.py", "swiglu_ref.py")},
-                      "command": "venv/bin/python -I tools/conformance/golden/swiglu/generate.py"},
+                      "command": "VLLM_ROOT=<vLLM checkout at 739e5945d> venv/bin/python -I tools/conformance/golden/swiglu/generate.py"},
         "vllm": {"commit": VLLM_COMMIT, "path": "vllm/model_executor/layers/activation.py"},
         "torch": torch.__version__, "numpy": np.__version__,
         "oracle_crosscheck_max_relative_disagreement": worst,
