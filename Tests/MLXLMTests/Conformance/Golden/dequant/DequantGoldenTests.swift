@@ -444,8 +444,44 @@ struct DequantGoldenTests {
 
     // MARK: ConformanceGap (no Swift path)
 
-    /// `source` without comments, string literals kept. STUB (red): returns the text unchanged.
-    static func codeOnly(_ source: String) -> String { source }
+    /// `source` without `//` and `/* */` comments (block comments nest, as in Swift); string literals, including
+    /// `"""` multi-line ones, are kept verbatim, so a `//` inside a literal is not taken for a comment.
+    static func codeOnly(_ source: String) -> String {
+        let c = Array(source.unicodeScalars)
+        var out = String.UnicodeScalarView()
+        var i = 0
+        func at(_ j: Int) -> Unicode.Scalar? { j < c.count ? c[j] : nil }
+        while i < c.count {
+            if c[i] == "/", at(i + 1) == "/" {
+                while i < c.count, c[i] != "\n" { i += 1 }
+            } else if c[i] == "/", at(i + 1) == "*" {
+                var depth = 1
+                i += 2
+                while i < c.count, depth > 0 {
+                    if c[i] == "/", at(i + 1) == "*" { depth += 1; i += 2 }
+                    else if c[i] == "*", at(i + 1) == "/" { depth -= 1; i += 2 }
+                    else { i += 1 }
+                }
+                out.append(" ")
+            } else if c[i] == "\"" {
+                let multiline = at(i + 1) == "\"" && at(i + 2) == "\""
+                let quote = multiline ? 3 : 1
+                for _ in 0 ..< quote { out.append(c[i]); i += 1 }
+                while i < c.count {
+                    if c[i] == "\\", i + 1 < c.count { out.append(c[i]); out.append(c[i + 1]); i += 2; continue }
+                    if c[i] == "\"" && (!multiline || (at(i + 1) == "\"" && at(i + 2) == "\"")) {
+                        for _ in 0 ..< quote { out.append(c[i]); i += 1 }
+                        break
+                    }
+                    if c[i] == "\n", !multiline { break }  // unterminated: resync at the line end
+                    out.append(c[i]); i += 1
+                }
+            } else {
+                out.append(c[i]); i += 1
+            }
+        }
+        return String(out)
+    }
 
     /// All Swift sources under Libraries/ (text, comments removed), for the "is there a loader for X" probes.
     static let librarySources: String = {
