@@ -51,7 +51,7 @@ private func makeSmallConfig() -> SharpAIDeepseekV4Configuration {
     return try! JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: data)
 }
 
-public class DeepseekV4Tests: XCTestCase {
+public class SharpAIDeepseekV4Tests: XCTestCase {
 
     // MARK: - Configuration
 
