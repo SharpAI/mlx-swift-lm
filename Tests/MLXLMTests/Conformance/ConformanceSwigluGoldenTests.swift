@@ -376,6 +376,21 @@ struct ConformanceSwigluGoldenTests {
         return out
     }
 
+    /// The per-path wiring of `siluFloat16Gap`: the shape pins apply to each path whose `bad` list is non-empty (a fixed path
+    /// has nothing to pin, whatever the other paths do); the equal-count check applies only when all three paths still fail.
+    static func float16GapPathViolations(compiled: [S.Bad], switchGLU: [S.Bad], v4Expert: [S.Bad]) -> [String] {
+        var out: [String] = []
+        let paths: [(String, [S.Bad])] = [("compiledSiluProduct", compiled), ("SwitchGLU", switchGLU), ("V4Expert", v4Expert)]
+        for (name, bad) in paths {
+            for v in float16GapShapeViolations(bad) { out.append("\(name): \(v)") }
+        }
+        let allFail: Bool = !compiled.isEmpty && !switchGLU.isEmpty && !v4Expert.isEmpty
+        if allFail && (compiled.count != switchGLU.count || compiled.count != v4Expert.count) {
+            out.append("the three silu paths fail on different elements")
+        }
+        return out
+    }
+
     @Test("gap: float16 silu(gate)*up is off for strongly negative gates (all three silu paths)")
     func siluFloat16Gap() throws {
         // Measured (run log, 32 bad elements of the float16 cases, identical in all three paths): every bad element has
@@ -400,13 +415,7 @@ struct ConformanceSwigluGoldenTests {
         // still fails. Nothing here asserts that the gap still exists: once the float16 path is fixed `bad` is empty, this
         // test stays green and the gap wrapper reports [gap][FIXED] (a failure under CONFORMANCE_STRICT=1). A partly fixed
         // set keeps the pins of the paths that still fail.
-        let paths: [(String, [S.Bad])] = [("compiledSiluProduct", a.bad), ("SwitchGLU", b.bad), ("V4Expert", d.bad)]
-        for (name, bad) in paths {
-            for v in Self.float16GapShapeViolations(bad) { Issue.record("\(name): \(v)") }
-        }
-        if !a.bad.isEmpty && !b.bad.isEmpty && !d.bad.isEmpty {
-            #expect(a.bad.count == b.bad.count && a.bad.count == d.bad.count, "the three silu paths fail on different elements")
-        }
+        for v in Self.float16GapPathViolations(compiled: a.bad, switchGLU: b.bad, v4Expert: d.bad) { Issue.record("\(v)") }
         ConformanceGap.knownIssue("float16 silu(gate)*up misses rtol 2e-3 / atol 1e-7 for strongly negative gates (compiledSiluProduct, SwitchGLU, DeepseekV4Expert limit 0)") {
             ConformanceGap.expect(a.failures.isEmpty, "compiledSiluProduct: \(a.failures.prefix(2))")
             ConformanceGap.expect(b.failures.isEmpty, "SwitchGLU: \(b.failures.prefix(2))")
@@ -469,6 +478,28 @@ struct ConformanceSwigluGoldenTests {
         #expect(Self.float16GapShapeViolations([inGap]).isEmpty)
         #expect(!Self.float16GapShapeViolations([normalRange]).isEmpty, "gate above the subnormal threshold must be reported")
         #expect(!Self.float16GapShapeViolations([zeroInRange]).isEmpty, "zero output above the zero threshold must be reported")
+    }
+
+    @Test("float16 gap wiring: pins apply per failing path, equal-count only when all three fail")
+    func float16GapPathWiring() throws {
+        let c = try #require(try S.load("silu_and_mul.json").cases.first)
+        let inGap = S.Bad(c: c, index: 0, out: 1, golden: 1, gate: -12, up: 1)
+        let inGap2 = S.Bad(c: c, index: 1, out: 1, golden: 1, gate: -13, up: 1)
+        let normalRange = S.Bad(c: c, index: 2, out: 1, golden: 1, gate: -5, up: 1)
+        let none: [S.Bad] = []
+        // all fixed
+        #expect(Self.float16GapPathViolations(compiled: none, switchGLU: none, v4Expert: none).isEmpty)
+        // all failing, well shaped, same count
+        #expect(Self.float16GapPathViolations(compiled: [inGap], switchGLU: [inGap], v4Expert: [inGap]).isEmpty)
+        // all failing, one path misshapen
+        #expect(!Self.float16GapPathViolations(compiled: [inGap], switchGLU: [inGap], v4Expert: [normalRange]).isEmpty)
+        // all failing, different counts
+        #expect(!Self.float16GapPathViolations(compiled: [inGap], switchGLU: [inGap, inGap2], v4Expert: [inGap]).isEmpty)
+        // MIXED: one path fixed, the other two still fail; a misshapen failing path is still reported
+        #expect(!Self.float16GapPathViolations(compiled: none, switchGLU: [normalRange], v4Expert: [inGap]).isEmpty)
+        #expect(!Self.float16GapPathViolations(compiled: [normalRange], switchGLU: none, v4Expert: none).isEmpty)
+        // MIXED: well-shaped failing paths with different counts are fine while a path is fixed (no equal-count check)
+        #expect(Self.float16GapPathViolations(compiled: none, switchGLU: [inGap], v4Expert: [inGap, inGap2]).isEmpty)
     }
 
     @Test("gap: V4 float16 silu(gate)*up is off for strongly negative gates (same float16 sigmoid rounding as siluFloat16Gap)")
