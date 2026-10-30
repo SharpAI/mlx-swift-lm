@@ -24,11 +24,15 @@ INFERRED (decisions of this file, NOT facts of vLLM or of the manifest; the math
     D3  scale for half-precision cases is a power of two (the golden contract: q * scale must not round).
     D4  maxrel in the table is max|got - want| / max|want| (normwise), the same quantity the tolerance bounds; a
         per-element relative error is meaningless where y cancels to ~0.
+    D6  Provenance. cases.json records python/torch/numpy versions ("env") and a sha256 per fixture file; compare fails a row
+        whose fixture no longer matches. This does not make the name reproduce the same data on another torch version
+        (torch does not promise a stable CPU RNG stream): to reproduce a failure, ship the DIR, not just the seed name.
     D5  `shrink` is greedy: it only keeps a candidate when Swift says it still fails on a path the original failed on,
         and every candidate keeps the original's dispatch path (kernel / fallback shape). A candidate has its own name,
         hence its own data; "same seed family" means the base name prefix.
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -113,14 +117,19 @@ def evaluate(dirpath):
     tols = _load_json(MANIFEST)["tolerances"]
     rows = []
     for e in idx["cases"]:
-        fx = _load_json(os.path.join(dirpath, e["file"]))
+        with open(os.path.join(dirpath, e["file"]), "rb") as f:
+            raw = f.read()
+        fx = json.loads(raw)
+        changed = e.get("sha256") is not None and hashlib.sha256(raw).hexdigest() != e["sha256"]
         tol = tols[fx["tolerance"]]
         outp = os.path.join(dirpath, "out", e["name"] + ".json")
         out = _load_json(outp) if os.path.exists(outp) else None
         for path in ("kernel", "fallback"):
             label = path if (path == "fallback" or fx["expectedPath"] == "kernel") else "kernel*"
             row = dict(name=e["name"], path=path, label=label, entry=e, tolerance=fx["tolerance"], status="ok", y=None, s=None)
-            if out is None:
+            if changed:
+                row["status"] = "FIXTURE CHANGED since gen (sha256 differs from cases.json)"
+            elif out is None:
                 row["status"] = "MISSING (no out file: did the Swift suite run?)"
             elif out.get("error"):
                 row["status"] = "ERROR " + str(out["error"])[:80]
@@ -142,6 +151,10 @@ def _fmt(c):
 def compare(dirpath, out=None):
     out = out or sys.stdout
     rows = evaluate(dirpath)
+    env = _load_json(os.path.join(dirpath, "cases.json")).get("env")
+    if env:
+        print("fixtures generated with python %s, torch %s, numpy %s (the case name seeds torch; another torch version may draw other data, so reproduce from this directory, not from the name)" % (
+            env["python"], env["torch"], env["numpy"]), file=out)
     hdr = "%-14s %-9s %-4s %-5s %-16s %-9s | %-28s | %-28s | %s" % (
         "case", "path", "dt", "tol", "B,T,Hk,Hv,Dk,Dv", "flags", "y: maxabs maxrel ratio", "state: maxabs maxrel ratio", "status")
     print(hdr, file=out)
@@ -261,11 +274,16 @@ def write_cases(dirpath, specs, oracle=None):
     entries = []
     for s in specs:
         e = index_entry(s)
-        with open(os.path.join(dirpath, e["file"]), "w") as f:
-            f.write(build_fixture(s, oracle) + "\n")
+        text = build_fixture(s, oracle) + "\n"
+        raw = text.encode()
+        with open(os.path.join(dirpath, e["file"]), "wb") as f:
+            f.write(raw)
+        e["sha256"] = hashlib.sha256(raw).hexdigest()
         entries.append(e)
+    import numpy
+    env = {"python": sys.version.split()[0], "torch": load_gen(oracle).torch.__version__, "numpy": numpy.__version__}
     with open(os.path.join(dirpath, "cases.json"), "w") as f:
-        json.dump({"schema": 1, "oracle": oracle or os.path.join(GOLDEN_TOOLS, "kda_ref.py"), "cases": entries}, f, indent=1)
+        json.dump({"schema": 1, "env": env, "oracle": oracle or os.path.join(GOLDEN_TOOLS, "kda_ref.py"), "cases": entries}, f, indent=1)
     return entries
 
 

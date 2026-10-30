@@ -247,5 +247,46 @@ class HygieneTests(unittest.TestCase):
         self.assertEqual([n for n in set(seen) if n.split(".")[0] not in used], [], "unused imports")
 
 
+class ProvenanceTests(unittest.TestCase):
+    """The data of a case is torch.manual_seed(crc32(name)); torch's CPU stream is not promised stable across versions,
+    so the index records the versions and a sha256 of every fixture, and compare refuses a fixture that no longer matches."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="kda-prov-test-")
+        cls.dir = os.path.join(cls.tmp, "g")
+        D.gen(cls.dir, 3, 5)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_index_records_versions_and_fixture_hashes(self):
+        import hashlib
+        import torch
+        import numpy
+        idx = json.load(open(os.path.join(self.dir, "cases.json")))
+        self.assertEqual(idx["env"]["torch"], torch.__version__)
+        self.assertEqual(idx["env"]["numpy"], numpy.__version__)
+        self.assertEqual(idx["env"]["python"], sys.version.split()[0])
+        for e in idx["cases"]:
+            self.assertEqual(e["sha256"], hashlib.sha256(open(os.path.join(self.dir, e["file"]), "rb").read()).hexdigest())
+
+    def test_a_changed_fixture_fails_compare_and_compare_prints_the_env(self):
+        import io
+        d = os.path.join(self.tmp, "tampered")
+        shutil.copytree(self.dir, d)
+        write_truth_as_swift_output(d)
+        buf = io.StringIO()
+        self.assertEqual(D.compare(d, out=buf), 0)
+        self.assertIn("torch " + json.load(open(os.path.join(d, "cases.json")))["env"]["torch"], buf.getvalue())
+        e = json.load(open(os.path.join(d, "cases.json")))["cases"][0]
+        with open(os.path.join(d, e["file"]), "a") as f:
+            f.write(" ")
+        buf = io.StringIO()
+        self.assertNotEqual(D.compare(d, out=buf), 0)
+        self.assertIn("FIXTURE CHANGED", buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

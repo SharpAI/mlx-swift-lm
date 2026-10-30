@@ -30,7 +30,7 @@ Steps (also usable by hand):
    and the fallback and writes `DIR/out/<name>.json`. The suite does not judge.
 3. `kda_diff.py compare --dir DIR` prints one row per case and path (`kernel`, `kernel*` = a fallback-shaped case
    that asked for the kernel, `fallback`) with max abs error, max rel error (normwise, vs max|truth|) and
-   error/allowed ratio for y and state, then the failing seed names and shapes. Exit 1 if any ratio is above 1,
+   error/allowed ratio for y and state, a header line with the python/torch/numpy versions the fixtures were generated with, then the failing seed names and shapes. Exit 1 if any ratio is above 1,
    or a value is NaN, a size is wrong, an output is missing or the case raised.
 4. `kda_diff.py shrink --dir DIR --case NAME --runner "tools/conformance/differential/run_local.sh --swift-only"`
    greedily shrinks a failing case (T, B, Hk, Hv, Dk, Dv, then each feature: mask, state, l2norm, dtype, decay, beta,
@@ -40,6 +40,14 @@ Steps (also usable by hand):
 
 `test_kda_diff.py` self-tests the python side (compare logic, shrink with a fake runner) without Swift:
 `<venv>/bin/python -I tools/conformance/differential/test_kda_diff.py`.
+
+## Reproducing a failure
+
+The case name is the torch seed (`crc32(name)`), but torch does not promise the same CPU random stream across versions, and some
+shape draws in `plan()` are conditional on earlier draws. So a name alone is not a recipe. `cases.json` records
+`env` (python, torch, numpy) and a `sha256` per fixture; `compare` prints the versions and fails a row whose
+fixture file changed since `gen` (`FIXTURE CHANGED`). To reproduce, keep the whole `DIR` (or the file from `DIR/shrunk/`), or regenerate
+with the same torch version.
 
 ## What is covered
 
