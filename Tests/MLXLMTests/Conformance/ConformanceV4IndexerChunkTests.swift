@@ -55,7 +55,7 @@ struct ConformanceV4IndexerChunkTests {
         #expect(all(ix.select(s) .== whole).item(Bool.self))
     }
 
-    @Test("chunked scores equal the unchunked scores and select the same blocks through the whole indexer")
+    @Test("chunked scores match the unchunked scores to float error and select the same blocks through the whole indexer")
     func scoresChunkedEqualsUnchunked() throws {
         let (attn, x) = try ConformanceV4IndexerTests.make(topk: 3, tokens: 41)
         let ix = try #require(attn.indexer)
@@ -70,7 +70,8 @@ struct ConformanceV4IndexerChunkTests {
                 let chunked = ix.scores(x, qr: qr, rope: attn.rope, keys: k, start: start, maxElements: cap)
                 eval(whole, chunked)
                 #expect(chunked.shape == whole.shape)
-                // -inf positions are identical; the finite scores agree to float error
+                // -inf positions are identical. The finite scores are NOT bit-identical (measured max abs diff 3.6e-7 on these
+                // shapes), so they are compared with a tolerance.
                 #expect(all((chunked .== -Float.infinity) .== (whole .== -Float.infinity)).item(Bool.self))
                 let finite = whole .> -Float.infinity
                 let diff = abs(which(finite, chunked, MLXArray(Float(0))) - which(finite, whole, MLXArray(Float(0))))
