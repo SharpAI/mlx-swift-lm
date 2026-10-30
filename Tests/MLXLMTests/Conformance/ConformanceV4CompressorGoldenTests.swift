@@ -10,7 +10,14 @@
 //   cached          SharpAIOverlay.V4Compressor.append + V4CompressorState          (DeepseekV4.swift:499-525 path),
 //                   one shot, token by token, and several chunk plans that cross block boundaries
 //   visibility      SharpAIOverlay.v4Visibility
-// Weights, inputs and rope base are the fixture's; RoPE is `initializeRope(traditional: true)` like the layer's.
+// Weights, inputs and rope base are the fixture's. RoPE: plain `initializeRope(traditional: true)` for the plain fixtures; for yarn.json /
+// wide.json the rope the shipping DeepseekV4Attention builds from a real V4 config (YaRN, compress_rope_theta).
+//
+// SCOPE (MANIFEST.json "scope"): head_dim 16...512 (the real attention compressor is 512 / rope 64, the indexer 128 / 64), but `hidden` is
+// at most 16-32: the projection sums a handful of terms, NOT the 4096 / 7168 of the real models, so fp32 accumulation-order effects of a
+// thousands-term matmul are not exercised. Not covered: fp8 quantisation of the stored entry, batch > 1, layer-level behaviour.
+// Provenance: the generator inputs are pinned in tools/conformance/golden/v4comp/requirements.txt; the manifest records the vLLM commit,
+// the crosscheck, and the sha256 of the generator and oracle sources, which `manifestComplete` re-checks.
 
 import CryptoKit
 import Foundation
@@ -64,6 +71,7 @@ enum V4CompGolden {
         struct Tol: Decodable { let rtol: Double; let atol: Double; let atolPerPosition: Double }
         struct Tols: Decodable { let float32: Tol; let bfloat16: Tol }
         let files: [String: Entry]
+        let generator: [String: String]
         let tolerances: Tols
     }
 
@@ -73,22 +81,33 @@ enum V4CompGolden {
         return d
     }()
     static let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Golden/v4comp")
-    static let files = ["ratio4.json", "ratio128.json", "bf16.json", "eps.json", "yarn.json"]
+    static let files = ["ratio4.json", "ratio128.json", "bf16.json", "eps.json", "yarn.json", "wide.json"]
 
     static func manifest() throws -> Manifest {
         try decoder.decode(Manifest.self, from: Data(contentsOf: dir.appendingPathComponent("MANIFEST.json")))
     }
 
-    /// Loads a fixture after verifying its sha256 and case count against MANIFEST.json.
+    struct LoadError: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    /// Loads a fixture after verifying its sha256 and case count against MANIFEST.json. Throws (never records an issue from a
+    /// static initializer): a tampered or truncated fixture surfaces through `manifestComplete`, which rethrows `loaded`.
     static func load(_ name: String) throws -> File {
         let data = try Data(contentsOf: dir.appendingPathComponent(name))
-        let want = try #require(try manifest().files[name], "\(name) is not in MANIFEST.json")
-        let got = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        #expect(got == want.sha256, "\(name): sha256 \(got) != manifest \(want.sha256)")
+        guard let want = try manifest().files[name] else { throw LoadError(description: "\(name) is not in MANIFEST.json") }
+        let got = sha256(data)
+        guard got == want.sha256 else { throw LoadError(description: "\(name): sha256 \(got) != manifest \(want.sha256)") }
         let f = try decoder.decode(File.self, from: data)
-        #expect(f.cases.count == want.cases, "\(name): \(f.cases.count) cases != manifest \(want.cases)")
+        guard f.cases.count == want.cases else { throw LoadError(description: "\(name): \(f.cases.count) cases != manifest \(want.cases)") }
         return f
     }
+
+    static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+
+    /// tools/conformance/golden/v4comp (generator and oracle sources), five levels above the fixture directory's parent chain.
+    static let generatorDir = dir.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("tools/conformance/golden/v4comp")
 
     static func allCases() throws -> [Case] { try files.flatMap { try load($0).cases } }
 
@@ -239,7 +258,10 @@ enum V4CompGolden {
 
 struct ConformanceV4CompressorGoldenTests {
     typealias G = V4CompGolden
-    static let allCases: [G.Case] = (try? G.allCases()) ?? []
+    /// Load result kept as a Result: `manifestComplete` rethrows it, so a bad fixture fails a test instead of silently emptying every
+    /// parameterised test. (TODO consolidate GoldenKit)
+    static let loaded: Result<[G.Case], Error> = Result { try G.allCases() }
+    static let allCases: [G.Case] = (try? loaded.get()) ?? []
     static let cases: [G.Case] = allCases.filter { $0.dtype == "float32" }
     static let bf16Cases: [G.Case] = allCases.filter { $0.dtype == "bfloat16" }
     static let yarnCases: [G.Case] = allCases.filter { $0.ropeScaling != nil }
@@ -247,10 +269,17 @@ struct ConformanceV4CompressorGoldenTests {
     @Test("manifest: every fixture is listed, hashed (sha256) and consumed; vLLM commit and tolerances recorded")
     func manifestComplete() throws {
         let m = try G.manifest()
+        _ = try Self.loaded.get()   // sha256 + case count of every fixture, errors included
+        // the committed generator and oracle are the ones that produced the fixtures (detects drift between them, not wrong content:
+        // the independent guard for content is the 240-case crosscheck against vLLM's own reference code, recorded below)
+        for (file, want) in m.generator {
+            let got = G.sha256(try Data(contentsOf: G.generatorDir.appendingPathComponent(file)))
+            #expect(got == want, "\(file): sha256 \(got) != manifest \(want) (regenerate the fixtures)")
+        }
+        #expect(Set(m.generator.keys) == ["generate.py", "v4comp_ref.py"])
         #expect(Set(m.files.keys) == Set(G.files), "manifest files \(m.files.keys.sorted()) vs consumers \(G.files)")
         let onDisk = try FileManager.default.contentsOfDirectory(atPath: G.dir.path).filter { $0.hasSuffix(".json") && $0 != "MANIFEST.json" }
         #expect(Set(onDisk) == Set(m.files.keys), "fixture files on disk \(onDisk.sorted()) vs manifest")
-        for f in G.files { _ = try G.load(f) }
         let raw = try JSONSerialization.jsonObject(with: Data(contentsOf: G.dir.appendingPathComponent("MANIFEST.json"))) as! [String: Any]
         #expect(raw["vllm_commit"] as? String == "2eae56c")
         let xc = raw["crosscheck"] as? [String: Any]
@@ -271,6 +300,8 @@ struct ConformanceV4CompressorGoldenTests {
         #expect(cs.contains { $0.ratio == 128 && $0.blocks >= 2 && $0.pending > 0 })         // crosses 127 and 255
         #expect(cs.contains { $0.ratio == 128 && $0.tokens == 127 })                          // one short of the boundary
         #expect(cs.contains { $0.ratio == 128 && $0.tokens == 128 })                          // exactly on the boundary
+        #expect(cs.contains { $0.headDim == 512 && $0.ropeDim == 64 && $0.ratio == 4 })    // the real attention-compressor width
+        #expect(cs.contains { $0.headDim == 512 && $0.ropeDim == 64 && $0.ratio == 128 })
         #expect(cs.contains { $0.headDim == 128 && $0.ropeDim == 64 && $0.ratio == 4 })
         #expect(cs.contains { $0.headDim == 128 && $0.ropeDim == 64 && $0.ratio == 128 })
     }

@@ -1,8 +1,12 @@
 """Generates Tests/MLXLMTests/Conformance/Golden/v4comp/*.json + MANIFEST.json from v4comp_ref.py (float64 oracle).
 Run ONCE, commit the outputs; tests never run Python.
 
-  uv venv venv && uv pip install --python venv/bin/python torch numpy --index-url https://download.pytorch.org/whl/cpu
-  venv/bin/python -I tools/conformance/golden/v4comp/generate.py --vllm <path to vllm repo root (commit 2eae56c)>
+  uv venv --python 3.15 venv && uv pip install --python venv/bin/python -r tools/conformance/golden/v4comp/requirements.txt \\
+      --extra-index-url https://download.pytorch.org/whl/cpu
+  venv/bin/python -B -I tools/conformance/golden/v4comp/generate.py --vllm <path to vllm repo root (commit 2eae56c)>
+
+Pinned inputs: requirements.txt (torch / numpy exactly as used for the committed fixtures; MANIFEST.json records the versions, the vLLM
+commit and the sha256 of this file and of v4comp_ref.py, which the Swift suite re-checks). Network is needed once, here; never in tests/CI.
 
 crosscheck() first compares the oracle against vLLM's OWN torch reference code, extracted verbatim from the vLLM test files
 (ast) and executed, on >= 200 random cases; any disagreement > 1e-10 relative aborts the run.
@@ -268,6 +272,15 @@ CASES_YARN = [
 ]
 
 
+# Real head width: head_dim 512 / rope 64 (the shipping V4 attention compressor, `hidden` kept at 16 so the fixture stays ~1.5 MB). The hidden
+# size is NOT production (4096 / 7168): the matmul here sums 16 terms, so fp32 accumulation-order effects of a 4096-term sum are not covered
+# (recorded in the manifest "scope").
+CASES_WIDE = [
+    (("r4_hd512_rope64_T24_yarn_flash_wide", 4, 512, 64, 16, 24, 160000.0), YARN_FLASH),
+    (("r128_hd512_rope64_T260_yarn_flash_wide", 128, 512, 64, 16, 260, 160000.0), YARN_FLASH),
+]
+
+
 def build_case(idx, spec, seed=11, dtype="float32", eps=1e-6, wkv_scale=0.6, yarn=None):
     name, ratio, hd, rd, hidden, T, theta = spec
     rnd_in = b16 if dtype == "bfloat16" else f32
@@ -308,6 +321,32 @@ def build_case(idx, spec, seed=11, dtype="float32", eps=1e-6, wkv_scale=0.6, yar
     return case, disc
 
 
+INPUT_KEYS = ("x", "wkv", "wgate", "ape", "norm")
+
+
+def dump_fixture(path, cases):
+    """json.dump with the five INPUT arrays (all float32-exact: bf16 / float32 rounded) written as the shortest round-tripping float32 text
+    ('%.9g') instead of 17-digit doubles: ~2x smaller files. Swift reads Double and casts to Float, which returns exactly the float32 the
+    oracle used (asserted below for every value). Goldens (float64) are written in full."""
+    arrays, light = [], []
+    for c in cases:
+        c2 = dict(c)
+        for k in INPUT_KEYS:
+            vals = c[k]
+            txt = ["%.9g" % v for v in vals]
+            for v, t in zip(vals, txt):
+                assert float(np.float32(float(t))) == v, (k, v, t)
+            c2[k] = "@@%d:%s@@" % (len(arrays), k)
+            arrays.append(("[" + ",".join(txt) + "]", c2[k]))
+        light.append(c2)
+    body = json.dumps({"op": "v4_kv_compressor", "cases": light}, separators=(",", ":"))
+    for text, token in arrays:
+        assert body.count('"%s"' % token) == 1
+        body = body.replace('"%s"' % token, text)
+    with open(path, "w") as f:
+        f.write(body + "\n")
+
+
 def sha(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
@@ -320,7 +359,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     xc = None if a.skip_crosscheck else crosscheck(a.vllm)
     print("crosscheck:", json.dumps(xc))
-    groups = {"ratio4.json": [], "ratio128.json": [], "bf16.json": [], "eps.json": [], "yarn.json": []}
+    groups = {"ratio4.json": [], "ratio128.json": [], "bf16.json": [], "eps.json": [], "yarn.json": [], "wide.json": []}
     discs = {}
     for i, spec in enumerate(CASES):
         c, d = build_case(i, spec)
@@ -351,11 +390,14 @@ def main():
         groups["yarn.json"].append(c)
         discs[c["name"]] = d
         assert d["plain_rope"] > 1e-3, (c["name"], d)   # the YaRN fixtures must tell plain RoPE apart
+    for k, (spec, yarn) in enumerate(CASES_WIDE):
+        c, d = build_case(len(CASES) + len(CASES_BF16) + len(CASES_EPS) + len(CASES_YARN) + k, spec, yarn=yarn)
+        groups["wide.json"].append(c)
+        discs[c["name"]] = d
+        assert d["plain_rope"] > 1e-3, (c["name"], d)
     files = {}
     for fn, cases in groups.items():
-        with open(os.path.join(OUT, fn), "w") as f:
-            json.dump({"op": "v4_kv_compressor", "cases": cases}, f, separators=(",", ":"))
-            f.write("\n")
+        dump_fixture(os.path.join(OUT, fn), cases)
         files[fn] = {"sha256": sha(os.path.join(OUT, fn)), "cases": len(cases)}
     manifest = {
         "vllm_commit": VLLM_COMMIT, "vllm_branch": "main (shallow clone)",
@@ -384,6 +426,18 @@ def main():
                              "atol(entry b) = atol + atol_per_position * (b * ratio)."},
         },
         "eps_sensitivity_max_abs_diff_if_eps_x10": eps_sens,
+        "scope": {
+            "covers": "the compressor algebra (projection, softmax pooling with the ratio-4 overlap, RMSNorm incl. a large eps, RoPE incl. the YaRN of "
+                      "the compressor layers with the real V4 config values) at head_dim 16..512, rope_dim 8..64, ratios 4 and 128, float32 and bfloat16",
+            "largest_hidden_size": max(c["hidden"] for cs in groups.values() for c in cs),
+            "largest_head_dim": max(c["head_dim"] for cs in groups.values() for c in cs),
+            "does_not_cover": [
+                "production hidden size (4096 / 7168): fp32 accumulation order of a thousands-term projection is not exercised",
+                "fp8 / mxfp4 quantisation of the stored entry",
+                "batch size > 1",
+                "layer-level behaviour (sliding window, indexer top-k, attention sinks): other lanes",
+            ],
+        },
         "crosscheck": xc,
         "crosscheck_patches_to_vllm_reference_code": PATCHES,
         "discriminators_max_abs_diff_of_wrong_readings_vs_golden": discs,

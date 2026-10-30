@@ -5,29 +5,33 @@
  "python": "3.15.0",
  "numpy": "2.5.4",
  "generator": {
-  "generate.py": "bb505c4c644e398a0fb5439b8ced799eef82f02c8e4f47cc4cf939813002d953",
+  "generate.py": "990ec22a1524713f8d36fd50a1e7d20fc0f6a7fe0f8dcfbc1d9a7a4c61c6c3dd",
   "v4comp_ref.py": "d86f3c3e9d717a554ef62bc2e5ebd2b402b445ab25b53737addb2f45070fd387"
  },
  "files": {
   "ratio4.json": {
-   "sha256": "90e95bc8c971e2db0647922792c84004e8d4c765dbcea8c65516a1825c8af7f5",
+   "sha256": "435bbd13a418b2d3b6550ea22cb7989a31e0be2bd25f3e6c9fcb6aaa9ed0bbd4",
    "cases": 6
   },
   "ratio128.json": {
-   "sha256": "1af22fbc9e7340a9402e784f68fbb6bfe166364bd134d59b6ad299def1fa64c0",
+   "sha256": "81836a0540896538eff47817d23a955f3b73144a14f62966ac976e0666e8cc2a",
    "cases": 5
   },
   "bf16.json": {
-   "sha256": "002e31a4e6eb12cba183875fdba49f20db4a9fa2a823765684f89132db91fa11",
+   "sha256": "a0e6c46cf40558bb6898a599508100be298db09a40e1525bbedbb8a737c793f1",
    "cases": 2
   },
   "eps.json": {
-   "sha256": "a43c3e3c9ae2ba18d19fd94ba021a4765d73346b943cec3e9a16c0a0e91078a9",
+   "sha256": "2ca437371b520a9c358f73e0f7a356299c37cf236348f3a8e0c0141002bc6fd7",
    "cases": 2
   },
   "yarn.json": {
-   "sha256": "87a1a4c90499679c47183592ee4bd3e49834a97d77ad6ec67610681d2c2fdaeb",
+   "sha256": "462d98c8317ea25c77f5562eccf29817a07a65666aa5a7a9879ca3b6aff12bab",
    "cases": 5
+  },
+  "wide.json": {
+   "sha256": "2edb6faf56bd8c9c3d6abd7cbe8f1d8a10afb63e3b92a969d411ed1a2ce1ac98",
+   "cases": 2
   }
  },
  "tolerances": {
@@ -47,6 +51,17 @@
  "eps_sensitivity_max_abs_diff_if_eps_x10": {
   "r4_hd16_rope8_T21_eps1e-2": 0.9580677855454334,
   "r128_hd16_rope8_T260_eps1e-2": 0.9684046385406617
+ },
+ "scope": {
+  "covers": "the compressor algebra (projection, softmax pooling with the ratio-4 overlap, RMSNorm incl. a large eps, RoPE incl. the YaRN of the compressor layers with the real V4 config values) at head_dim 16..512, rope_dim 8..64, ratios 4 and 128, float32 and bfloat16",
+  "largest_hidden_size": 16,
+  "largest_head_dim": 512,
+  "does_not_cover": [
+   "production hidden size (4096 / 7168): fp32 accumulation order of a thousands-term projection is not exercised",
+   "fp8 / mxfp4 quantisation of the stored entry",
+   "batch size > 1",
+   "layer-level behaviour (sliding window, indexer top-k, attention sinks): other lanes"
+  ]
  },
  "crosscheck": {
   "cases": 240,
@@ -168,6 +183,16 @@
    "swap_halves": 5.312796745334227,
    "no_overlap_ratio4": 5.387461418615034,
    "plain_rope": 0.8033127464571355
+  },
+  "r4_hd512_rope64_T24_yarn_flash_wide": {
+   "last_token_pos": 4.677480502167665,
+   "swap_halves": 6.766970553946759,
+   "no_overlap_ratio4": 6.647732122162931,
+   "plain_rope": 0.012939110758599215
+  },
+  "r128_hd512_rope64_T260_yarn_flash_wide": {
+   "last_token_pos": 5.259927778505422,
+   "plain_rope": 0.07043268534033659
   }
  },
  "inferred_points_not_from_vllm_source": [
