@@ -45,10 +45,14 @@ enum DequantGolden {
         return try! JSONSerialization.jsonObject(with: data) as! [String: Any]
     }
 
-    static func sha256(_ url: URL) -> String {
-        let data = try! Data(contentsOf: url)
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    static func sha256(_ url: URL) -> String { sha256(try! Data(contentsOf: url)) }
+
+    static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
+
+    /// nil when `data` is what `files` (the manifest's "files") records for `name`. STUB (red): never reports a problem.
+    static func verify(_ name: String, data: Data, files: [String: [String: Any]]) -> String? { nil }
 
     /// Loads a fixture after checking its manifest sha256.
     static func load(_ name: String) -> [String: Any] {
@@ -428,6 +432,20 @@ struct DequantGoldenTests {
     }
 
     // MARK: non-vacuity and coverage
+
+    @Test("fixture integrity problems are reported as a problem string (no trap): tampered content, wrong size, unknown file")
+    func integrityIsReported() {
+        let files = G.manifest()["files"] as! [String: [String: Any]]
+        let data = try! Data(contentsOf: G.dir.appendingPathComponent("e8m0.json"))
+        #expect(G.verify("e8m0.json", data: data, files: files) == nil)
+        var tampered = data
+        tampered[tampered.startIndex + 10] ^= 1
+        #expect(G.verify("e8m0.json", data: tampered, files: files) != nil, "one flipped bit must be reported")
+        var wrongSize = files
+        wrongSize["e8m0.json"]!["bytes"] = data.count + 1
+        #expect(G.verify("e8m0.json", data: data, files: wrongSize)?.contains("bytes") == true)
+        #expect(G.verify("nope.json", data: data, files: files) != nil)
+    }
 
     @Test("tolerances are tight: a 1-ulp float32 product error, and an error just above one small-scale group's own bound, are rejected")
     func tolerancesAreTight() {
