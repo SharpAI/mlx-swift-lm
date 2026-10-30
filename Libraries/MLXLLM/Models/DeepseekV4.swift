@@ -119,7 +119,7 @@ private func headRmsNorm(_ x: MLXArray, eps: Float) -> MLXArray {
 /// Split mixes into (pre, post, comb) with Sinkhorn normalization.
 /// mixes: [B, S, mix_hc] where mix_hc = (2+hc)*hc
 /// Returns pre [B,S,hc], post [B,S,hc], comb [B,S,hc,hc]
-private func hcSplitSinkhorn(
+func hcSplitSinkhorn(
     _ mixes: MLXArray,
     hcScale: MLXArray,    // [3]
     hcBase: MLXArray,     // [mix_hc]
@@ -160,7 +160,7 @@ private func hcSplitSinkhorn(
 
 /// Hyper-Connection pre-step: reduce [B,S,hc,D] → [B,S,D] with Sinkhorn weights.
 /// Returns (reduced_x, post_weights, comb_matrix).
-private func hcPre(
+func hcPre(
     x: MLXArray,           // [B, S, hc, D]
     hcFn: MLXArray,        // [mix_hc, hc*D]
     hcScale: MLXArray,     // [3]
@@ -193,7 +193,7 @@ private func hcPre(
 
 /// Hyper-Connection post-step: expand sublayer output back to [B,S,hc,D].
 /// y[b,s,j,:] = post[b,s,j]*x[b,s,:] + sum_i(comb[b,s,i,j]*residual[b,s,i,:])
-private func hcPost(
+func hcPost(
     x: MLXArray,        // [B, S, D] - sublayer output
     residual: MLXArray, // [B, S, hc, D] - input to this block
     post: MLXArray,     // [B, S, hc]
@@ -231,7 +231,7 @@ class HCParams: Module {
 
 /// Final HC head: reduce [B,S,hc,D] → [B,S,D] for lm_head.
 /// No Sinkhorn – just sigmoid + eps weighted sum.
-private func hcHead(
+func hcHead(
     x: MLXArray,        // [B, S, hc, D]
     hcFn: MLXArray,     // [hc, hc*D]
     hcScale: MLXArray,  // [1]
