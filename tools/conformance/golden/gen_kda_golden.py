@@ -138,6 +138,9 @@ CASES = [
     case("l2norm_gqa_mask_fp32", "prep", 7, 1, 4, 32, 4, scale=32 ** -0.5, l2=True, mask="partial"),
     # --- accumulation over T = 256 (no decay: the state integrates every step)
     case("long_t256_nodecay_beta_half", "long", 256, 1, 1, 32, 4, decay="zero", beta="half", tol="fp32_long"),
+    # --- Dv > 4: several 4-row threadgroup blocks (dv_idx = thread_position_in_grid.y, state/y/v offsets over Dv)
+    case("dv8_state_dk32", "dv", 5, 1, 2, 32, 8),
+    case("dv16_state_dk64", "dv", 4, 1, 2, 64, 16),
     # --- low precision inputs
     case("fp16_t7_state", "dtype", 7, 1, 2, 32, 4, dtype="float16"),
     case("bf16_t7_state", "dtype", 7, 1, 2, 32, 4, dtype="bfloat16"),
