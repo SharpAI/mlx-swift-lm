@@ -117,9 +117,7 @@ struct ConformanceGapDeepseekV4Tests {
         let fixtureKeys = Set(try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any]).keys)
         #expect(fixtureKeys.contains(key), "fixture must carry \(key)")
         let decoded = try ConformanceDeepseekV4.decodedKeys(data)
-        ConformanceGap.knownIssue("DeepseekV4Configuration silently ignores `\(key)`") {
-            ConformanceGap.expect(decoded.contains(key))
-        }
+        #expect(decoded.contains(key), "DeepseekV4Configuration silently ignores `\(key)`")
     }
 
     // MARK: known gaps -- structure
