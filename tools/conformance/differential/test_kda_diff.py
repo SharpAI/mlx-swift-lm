@@ -167,6 +167,21 @@ class ShrinkTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             D.shrink(d, name, [sys.executable, "-I", runner], log=open(os.devnull, "w"))
 
+    def test_shrink_reports_when_the_round_cap_stops_it(self):
+        import io
+        d, runner = self.run_shrink("lambda e: e['mask'] is not None")
+        victim = next(e["name"] for e in json.load(open(os.path.join(d, "cases.json")))["cases"] if e["mask"] and e["T"] > 7)
+        log = io.StringIO()
+        res = D.shrink(d, victim, [sys.executable, "-I", runner], max_rounds=1, log=log)
+        self.assertTrue(res["capped"])
+        self.assertIn("NOT proven minimal", log.getvalue())
+        self.assertNotIn("SMALLEST FAILING CASE:", log.getvalue())
+        full = io.StringIO()
+        res = D.shrink(d, victim, [sys.executable, "-I", runner], log=full)
+        self.assertFalse(res["capped"])
+        self.assertIn("SMALLEST FAILING CASE:", full.getvalue())
+        self.assertNotIn("NOT proven minimal", full.getvalue())
+
 
 class RelativeDirTests(unittest.TestCase):
     """A relative --dir / dirpath must mean the same directory to python (caller's cwd) and to swift (run_local.sh cd's to the root)."""

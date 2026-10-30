@@ -383,7 +383,7 @@ def _failing_paths(dirpath, name):
 
 def shrink(dirpath, case, runner, oracle=None, max_rounds=12, log=None):
     """Greedy minimisation of a failing case (D5). `runner` is the argv of a command that, with KDA_DIFF_DIR set, runs the
-    Swift suite (run_local.sh --swift-only). Returns dict(spec, fixture, case_line, orig_path, rounds)."""
+    Swift suite (run_local.sh --swift-only). Returns dict(spec, fixture, case_line, orig_path, rounds, capped); capped = the round cap ended the search before a fixpoint."""
     log = log or sys.stdout
     idx = _load_json(os.path.join(dirpath, "cases.json"))
     entry = next((e for e in idx["cases"] if e["name"] == case), None)
@@ -397,9 +397,11 @@ def shrink(dirpath, case, runner, oracle=None, max_rounds=12, log=None):
     orig_path = dispatch_path(cur["Dk"], cur["Dv"])
     print("shrinking %s (fails on %s), start size %d" % (case, sorted(orig_fail), size(cur)), file=log)
     rounds = 0
+    capped = True  # cleared by every way of leaving the loop other than running out of rounds
     for rounds in range(1, max_rounds + 1):
         cands = candidates(cur, case)
         if not cands:
+            capped = False
             break
         rd = os.path.join(dirpath, "shrink", "r%d" % rounds)
         os.makedirs(rd, exist_ok=True)
@@ -410,6 +412,7 @@ def shrink(dirpath, case, runner, oracle=None, max_rounds=12, log=None):
         failing = [c for c in cands if _failing_paths(rd, c["name"]) & orig_fail]
         print("  round %d: %d candidates, %d still fail" % (rounds, len(cands), len(failing)), file=log)
         if not failing:
+            capped = False
             break
         cur = min(failing, key=lambda c: (size(c), c["T"], c["B"]))
         print("    -> %s size %d" % (cur["name"], size(cur)), file=log)
@@ -421,14 +424,16 @@ def shrink(dirpath, case, runner, oracle=None, max_rounds=12, log=None):
     line = case_line(final)
     with open(os.path.join(dirpath, "shrunk", final["name"] + ".case.txt"), "w") as f:
         f.write(line + "\n")
-    print("\nSMALLEST FAILING CASE: %s  (B=%d T=%d Hk=%d Hv=%d Dk=%d Dv=%d %s state=%s mask=%s l2=%s)" % (
-        final["name"], final["B"], final["T"], final["Hk"], final["Hv"], final["Dk"], final["Dv"], final["dtype"], final["state"], final["mask"], final["l2"]), file=log)
+    head = "SMALLEST FAILING CASE" if not capped else ("SMALLEST FAILING CASE FOUND (NOT proven minimal: the %d-round cap was reached and the candidates of this case were never run)" % max_rounds)
+    print("\n%s: %s  (B=%d T=%d Hk=%d Hv=%d Dk=%d Dv=%d %s state=%s mask=%s l2=%s)" % (
+        head, final["name"], final["B"], final["T"], final["Hk"], final["Hv"], final["Dk"], final["Dv"], final["dtype"], final["state"], final["mask"], final["l2"]), file=log)
     print("golden fixture (step A format): %s" % fixture, file=log)
     print("to promote it, paste into CASES in tools/conformance/golden/gen_kda_golden.py (the data is seeded by crc32(name), so the\n"
           "line reproduces the fixture exactly) and rerun the generator, which rewrites the fixtures and MANIFEST.json:\n    %s" % line, file=log)
     if oracle:
         print("NOTE: produced with the alternative oracle %s, not the pinned kda_ref.py" % oracle, file=log)
-    return dict(spec=final, fixture=fixture, case_line=line, orig_path=orig_path, rounds=rounds)
+    print("NOTE (D5): every candidate has its own name, hence its own data, so a data-dependent failure (one borderline rounding) may not carry over to a smaller case.", file=log)
+    return dict(spec=final, fixture=fixture, case_line=line, orig_path=orig_path, rounds=rounds, capped=capped)
 
 
 def main(argv=None):
