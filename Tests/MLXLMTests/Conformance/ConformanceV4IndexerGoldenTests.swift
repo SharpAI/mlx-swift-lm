@@ -196,16 +196,31 @@ enum V4IdxGolden {
         return url.appendingPathComponent("tools/conformance/golden/v4idx")
     }()
 
+    /// sha256 of MANIFEST.json. Regenerating the fixtures (or changing the oracle and rerunning the generator) changes the
+    /// manifest and so fails the default load until this line is edited: the change shows up in a second file.
+    static let pinnedManifestSha256 = "0735c2a2479c243675e44422298808c2eddadb051ea4ff29ce2dc295a7300228"
+
     static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Loads and VERIFIES a fixture directory. Throws (never skips) when anything is off.
-    static func load(from dir: URL, toolsDir: URL = defaultToolsDirectory) throws -> Loaded {
+    static func load(from dir: URL, toolsDir: URL = defaultToolsDirectory, pinnedManifestSha256: String? = nil) throws -> Loaded {
         let manifestURL = dir.appendingPathComponent("MANIFEST.json")
         let manifest: Manifest
         do {
-            manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
+            let manifestData = try Data(contentsOf: manifestURL)
+            if let pinnedManifestSha256 {
+                let actualManifest = sha256(manifestData)
+                guard actualManifest == pinnedManifestSha256 else {
+                    throw LoadError(
+                        description: "MANIFEST CHANGED: MANIFEST.json sha256 \(actualManifest) != the pin in this test file. "
+                            + "Regenerated fixtures need a reviewed update of `pinnedManifestSha256`.")
+                }
+            }
+            manifest = try JSONDecoder().decode(Manifest.self, from: manifestData)
+        } catch let error as LoadError {
+            throw error
         } catch {
             throw LoadError(description: "cannot read \(manifestURL.path): \(error)")
         }
@@ -272,7 +287,7 @@ enum V4IdxGolden {
             if let override = ProcessInfo.processInfo.environment["V4IDX_GOLDEN_DIR"], !override.isEmpty {
                 return .success(try load(from: URL(fileURLWithPath: override)))
             }
-            return .success(try load(from: defaultDirectory))
+            return .success(try load(from: defaultDirectory, pinnedManifestSha256: pinnedManifestSha256))
         } catch {
             return .failure(error)
         }
@@ -682,6 +697,21 @@ struct ConformanceV4IndexerGoldenTests {
         try fm.copyItem(at: G.defaultDirectory.appendingPathComponent("score_basic.json"), to: victim)
         try Data("{}".utf8).write(to: tmp.appendingPathComponent("stray.json"))
         #expect(throws: G.LoadError.self) { try G.load(from: tmp) }
+    }
+
+    @Test("the manifest itself is pinned in this file: a regenerated (self-consistent) manifest fails the default load")
+    func loaderRejectsARegeneratedManifest() throws {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent("v4idx-manifest-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: tmp) }
+        try fm.copyItem(at: G.defaultDirectory, to: tmp)
+        #expect(try G.load(from: tmp, pinnedManifestSha256: G.pinnedManifestSha256).fixtures.count > 0, "the pin matches the committed manifest")
+        let url = tmp.appendingPathComponent("MANIFEST.json")
+        let original = try Data(contentsOf: url)
+        try (original + Data("\n".utf8)).write(to: url)
+        #expect(throws: G.LoadError.self, "a changed manifest must fail against the pin") {
+            try G.load(from: tmp, pinnedManifestSha256: G.pinnedManifestSha256)
+        }
     }
 
     @Test("the manifest pins the generator and the oracle: a changed byte in either fails the loader")

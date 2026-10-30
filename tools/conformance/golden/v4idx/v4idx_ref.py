@@ -19,6 +19,22 @@ eager references in tests/kernels/test_deepseek_v4_cpu_kernels.py. This file tra
                  k = v (one shared kv row per slot), value of the sink is 0         test :697-736 (_flash_mla_eager)
   compressed-key RoPE position of entry b is (position // ratio) * ratio = b*ratio  compressor.py:453 ; test :310 and :560 (compressed_pos)
 
+PROVENANCE CAVEATS (read before trusting a file:line)
+  * The commit named 2eae56c could not be fetched again by a reviewer (a fresh depth-1 clone had HEAD 335dd77 and
+    `git fetch origin 2eae56c` found no such ref), so the citations below cannot be checked against that exact tree. A reviewer
+    re-derived the score formula, RoPE, visibility, SWA window, short-context top-k and merge against 335dd77 and
+    v4idx_crosscheck.py printed OK there (5e-16 relative in f64); line numbers drift (e.g. cpu_sparse.py:246-261 is now
+    _fill_short_context_topk). That re-derivation is the reviewer's report, not something this repository records. The
+    YaRN helpers cite vLLM 739e594 (3rd_party/vllm), which has no deepseek_v4 directory at all.
+  * v4idx_crosscheck.py compares this oracle with vLLM's TEST-FILE eager references (_reference_paged_mqa_logits,
+    _flash_mla_eager, _apply_gptj_rope), not with the CUDA/Triton/C++ kernels. The Triton visibility formula and the cpu_sparse
+    window code are retyped, not extracted; the RoPE cos/sin cache in its R2 is built from this file's own inv_freq (circular);
+    fp8 quantisation is unmodelled (4.5e-2 dequantised-q error in R4, informational).
+  * Float32 inputs are written as the shortest float32 decimal, but the float64 oracle consumed the exact float32 value. Parsed
+    as a double the JSON differs by up to ~6e-8 relative, so the oracle is reproducible from the committed inputs only to
+    ~1e-7 (measured normwise 5e-8..1.1e-7 on score_basic / score_decode_start37 / score_wide_theta160k), 25x below the
+    tightest float32 tolerance (3e-6). Do not tighten a float32 tolerance below ~1e-6 without changing this.
+
 INFERRED / NOT MODELLED (kept short, each is also listed in MANIFEST.json "note"):
   I1  fp8 quantisation. vLLM quantises q (per-head power-of-two scale folded into w) and k (per-token scale) to fp8; the
       Swift path has no quantisation. The oracle takes the dequantised value as exact (k_scale = 1, q_scale folded back).

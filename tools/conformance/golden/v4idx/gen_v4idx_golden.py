@@ -5,6 +5,7 @@ PROVENANCE
     file:line citations; v4idx_crosscheck.py checks the oracle against vLLM's own torch reference code (extracted from the
     vLLM tree with `ast`, run raw in float32 and mechanically converted to float64) on >= 200 random cases each.
     Items that are inferred rather than in vLLM: I1..I6 in v4idx_ref.py's header.
+  Provenance caveats (the cited commit is not re-fetchable, what the cross-check does and does not compare): v4idx_ref.py header.
   Python: float64 torch CPU. The torch version is recorded in MANIFEST.json ("torch").
 
 HOW TO RUN (once, then commit the outputs; tests never run python, CI is air-gapped)
@@ -472,8 +473,10 @@ def main():
         "oracleDtype": "float64",
         "note": "Generated once and committed; tests never run python. Edit nothing by hand: rerun the generator. "
                 "Not in vLLM / not modelled: see v4idx_ref.py header I1..I6 (fp8 quantisation of q/k is not modelled; "
-                "tie-breaking is unspecified by vLLM so the golden is a strict/tie/need contract; fixtures use plain RoPE; "
-                "compressed keys are inputs; sink = extra unscaled logit with zero value, -inf = none).",
+                "tie-breaking is unspecified by vLLM so the golden is a strict/tie/need contract; score/rope fixtures use plain "
+                "RoPE, the yarn fixtures use vLLM's generic YaRN code (739e594); compressed keys are inputs; sink = extra unscaled "
+                "logit with zero value, -inf = none). Float32 inputs are shortest-float32 decimals while the oracle used the exact "
+                "float32 value: reproducible to ~1e-7 only. Provenance caveats: v4idx_ref.py header.",
         "criterion": "per tolerance class `mode`: normwise = max|got-want| <= atol + rtol*max|want| over a tensor; exact = equality",
         "tolerances": TOLERANCES,
         "count": len(files),
