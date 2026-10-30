@@ -418,7 +418,7 @@ struct ConformanceKdaGoldenTests {
         for f in loaded.fixtures { #expect(f.kind == "recurrent" || f.kind == "gate", "\(f.name): unknown kind \(f.kind)") }
         // The suite must cover the shapes the task is about, not just any N.
         let names = Set(loaded.fixtures.map(\.name))
-        for required in ["mask_all_false_state", "full_forget_neg1000", "long_t256_nodecay_beta_half", "gqa_hk1_hv4", "t3_state_dk128", "fb_dk16", "dv8_state_dk32", "dv16_state_dk64"] {
+        for required in ["mask_all_false_state", "full_forget_neg1000", "long_t256_nodecay_beta_half", "gqa_hk1_hv4", "t3_state_dk128", "fb_dk16", "dv8_state_dk32", "dv16_state_dk64", "b3_hk2_hv4_mask_dv8", "b2_hk4_hv8_nomask"] {
             #expect(names.contains(required), "required case \(required) missing")
         }
     }

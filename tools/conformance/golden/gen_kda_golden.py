@@ -141,6 +141,9 @@ CASES = [
     # --- Dv > 4: several 4-row threadgroup blocks (dv_idx = thread_position_in_grid.y, state/y/v offsets over Dv)
     case("dv8_state_dk32", "dv", 5, 1, 2, 32, 8),
     case("dv16_state_dk64", "dv", 4, 1, 2, 64, 16),
+    # --- batch offsets: B > 1 together with Hk > 1, GQA and a mask (per-batch mask rows differ)
+    case("b3_hk2_hv4_mask_dv8", "batch", 6, 2, 4, 32, 8, B=3, mask="partial"),
+    case("b2_hk4_hv8_nomask", "batch", 3, 4, 8, 32, 4, B=2),
     # --- low precision inputs
     case("fp16_t7_state", "dtype", 7, 1, 2, 32, 4, dtype="float16"),
     case("bf16_t7_state", "dtype", 7, 1, 2, 32, 4, dtype="bfloat16"),
