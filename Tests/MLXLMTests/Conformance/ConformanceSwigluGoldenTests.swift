@@ -4,10 +4,10 @@
 // tools/conformance/golden/swiglu/generate.py from a float64 torch oracle transcribed from vLLM
 // 739e5945d activation.py. Tests never run Python. Each case is run through the REAL shipping Swift
 // module that the model uses (no reimplementation of the activation here):
-//   silu(gate)*up          -> compiledSiluProduct, SwitchGLU default init, DeepseekV4Expert (limit 0)
+//   silu(gate)*up          -> compiledSiluProduct, SwitchGLU default init, SharpAIDeepseekV4Expert (limit 0)
 //   swigluoai (GPT-OSS)    -> GPTOSS.swift SwiGLUSwitchGLU (compiledSwiglu inside)
-//   V4 dense expert        -> DeepseekV4Expert(swiguLimit:)
-//   V4 routed experts      -> DeepseekV4MoE.switchMLP (SwitchGLU with the activationProduct closure)
+//   V4 dense expert        -> SharpAIDeepseekV4Expert(swiguLimit:)
+//   V4 routed experts      -> SharpAIDeepseekV4MoE.switchMLP (SwitchGLU with the activationProduct closure)
 //   Step silu-then-clamp   -> no Swift path exists (pinned as a gap)
 // The projections are 0/1 selection matrices, so the only arithmetic in the output is the activation
 // (a single non-zero product per dot product is exact in every dtype).
@@ -155,7 +155,7 @@ enum SwigluGolden {
     }
 
     /// V4 config whose hidden size is 2d and expert width d, so a MoE block's SwitchGLU maps [.., 2d] -> [.., d] -> [.., 2d].
-    static func v4Config(d: Int, limit: Double) throws -> DeepseekV4Configuration {
+    static func v4Config(d: Int, limit: Double) throws -> SharpAIDeepseekV4Configuration {
         let json = """
             {"vocab_size": 256, "hidden_size": \(2 * d), "moe_intermediate_size": \(d), "num_hidden_layers": 4,
              "num_attention_heads": 4, "head_dim": 16, "q_lora_rank": 32, "qk_rope_head_dim": 4,
@@ -167,7 +167,7 @@ enum SwigluGolden {
              "hc_sinkhorn_iters": 3, "hc_eps": 1e-6, "rope_theta": 10000.0, "max_position_embeddings": 4096,
              "index_head_dim": 16, "index_n_heads": 4, "index_topk": 4}
             """
-        return try JSONDecoder().decode(DeepseekV4Configuration.self, from: Data(json.utf8))
+        return try JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: Data(json.utf8))
     }
 
     // MARK: shipping paths (each returns the activation output [rows * d] as Float)
@@ -215,7 +215,7 @@ enum SwigluGolden {
 
     static func viaV4Dense(_ c: Case, layout: String, limit: Float) -> [Float] {
         let dt = dtype(c.dtype), s = selections(layout: layout, d: c.d, dt: dt)
-        let m = DeepseekV4Expert(hiddenSize: 2 * c.d, intermediateSize: c.d, swiguLimit: limit)
+        let m = SharpAIDeepseekV4Expert(hiddenSize: 2 * c.d, intermediateSize: c.d, swiguLimit: limit)
         m.update(parameters: ModuleParameters.unflattened([
             "gate_proj.weight": s.gate, "up_proj.weight": s.up, "down_proj.weight": s.down,
         ]))
@@ -224,7 +224,7 @@ enum SwigluGolden {
 
     static func viaV4Routed(_ c: Case, layout: String) throws -> [Float] {
         let dt = dtype(c.dtype), s = selections(layout: layout, d: c.d, dt: dt)
-        let moe = DeepseekV4MoE(config: try v4Config(d: c.d, limit: c.limit), layerIndex: 1)
+        let moe = SharpAIDeepseekV4MoE(config: try v4Config(d: c.d, limit: c.limit), layerIndex: 1)
         let m = moe.switchMLP
         m.update(parameters: ModuleParameters.unflattened([
             "gate_proj.weight": s.gate.expandedDimensions(axis: 0),
@@ -240,9 +240,9 @@ struct ConformanceSwigluGoldenTests {
 
     /// Fixture file -> the shipping paths that must consume every one of its cases.
     static let consumers: [String: [String]] = [
-        "silu_and_mul.json": ["compiledSiluProduct", "SwitchGLU(default)", "DeepseekV4Expert(limit 0)"],
+        "silu_and_mul.json": ["compiledSiluProduct", "SwitchGLU(default)", "SharpAIDeepseekV4Expert(limit 0)"],
         "swigluoai_and_mul.json": ["GPTOSS SwiGLUSwitchGLU"],
-        "v4_clamped.json": ["DeepseekV4Expert(limit)", "DeepseekV4MoE.switchMLP"],
+        "v4_clamped.json": ["SharpAIDeepseekV4Expert(limit)", "SharpAIDeepseekV4MoE.switchMLP"],
         "swiglustep_and_mul.json": ["gap: no Swift Step path"],
     ]
 
@@ -354,7 +354,7 @@ struct ConformanceSwigluGoldenTests {
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
     }
 
-    @Test("silu(gate)*up through DeepseekV4Expert with limit 0 (float32, bfloat16)")
+    @Test("silu(gate)*up through SharpAIDeepseekV4Expert with limit 0 (float32, bfloat16)")
     func siluV4DenseUnclamped() throws {
         let r = try Self.check("silu_and_mul.json", label: "V4Expert", only: Self.notFloat16) { c, l in S.viaV4Dense(c, layout: l, limit: 0) }
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
@@ -416,10 +416,10 @@ struct ConformanceSwigluGoldenTests {
         // test stays green and the gap wrapper reports [gap][FIXED] (a failure under CONFORMANCE_STRICT=1). A partly fixed
         // set keeps the pins of the paths that still fail.
         for v in Self.float16GapPathViolations(compiled: a.bad, switchGLU: b.bad, v4Expert: d.bad) { Issue.record("\(v)") }
-        ConformanceGap.knownIssue("float16 silu(gate)*up misses rtol 2e-3 / atol 1e-7 for strongly negative gates (compiledSiluProduct, SwitchGLU, DeepseekV4Expert limit 0)") {
+        ConformanceGap.knownIssue("float16 silu(gate)*up misses rtol 2e-3 / atol 1e-7 for strongly negative gates (compiledSiluProduct, SwitchGLU, SharpAIDeepseekV4Expert limit 0)") {
             ConformanceGap.expect(a.failures.isEmpty, "compiledSiluProduct: \(a.failures.prefix(2))")
             ConformanceGap.expect(b.failures.isEmpty, "SwitchGLU: \(b.failures.prefix(2))")
-            ConformanceGap.expect(d.failures.isEmpty, "DeepseekV4Expert: \(d.failures.prefix(2))")
+            ConformanceGap.expect(d.failures.isEmpty, "SharpAIDeepseekV4Expert: \(d.failures.prefix(2))")
         }
     }
 
@@ -461,7 +461,7 @@ struct ConformanceSwigluGoldenTests {
         #expect(r.nonzero > 0)
     }
 
-    @Test("V4 routed experts (DeepseekV4MoE.switchMLP): silu(min(gate, limit)) * clamp(up, -limit, limit) (vLLM activation.py:239-243)")
+    @Test("V4 routed experts (SharpAIDeepseekV4MoE.switchMLP): silu(min(gate, limit)) * clamp(up, -limit, limit) (vLLM activation.py:239-243)")
     func v4Routed() throws {
         let r = try Self.check("v4_clamped.json", label: "V4 routed", include: Self.notFloat16SigmoidTail) { c, l in try S.viaV4Routed(c, layout: l) }
         #expect(r.compared == (try S.manifest().files["v4_clamped.json"]?.cases ?? -1) && r.nonzero > 0)
@@ -515,9 +515,9 @@ struct ConformanceSwigluGoldenTests {
                 #expect(r.bad.allSatisfy { $0.gate < Self.fp16SigmoidSubnormalGate }, "\(name): bad element with sigmoid in float16's normal range: \(r.bad.filter { $0.gate >= Self.fp16SigmoidSubnormalGate }.prefix(3))")
             }
         }
-        ConformanceGap.knownIssue("V4 float16 silu(min(gate, limit))*clamp(up) misses rtol 2e-3 / atol 1e-7 for gates below -9.7 (DeepseekV4Expert, DeepseekV4MoE.switchMLP); the max-only gate clamp no longer hides the float16 sigmoid rounding") {
-            ConformanceGap.expect(dense.failures.isEmpty, "DeepseekV4Expert: \(dense.failures.prefix(2))")
-            ConformanceGap.expect(routed.failures.isEmpty, "DeepseekV4MoE: \(routed.failures.prefix(2))")
+        ConformanceGap.knownIssue("V4 float16 silu(min(gate, limit))*clamp(up) misses rtol 2e-3 / atol 1e-7 for gates below -9.7 (SharpAIDeepseekV4Expert, SharpAIDeepseekV4MoE.switchMLP); the max-only gate clamp no longer hides the float16 sigmoid rounding") {
+            ConformanceGap.expect(dense.failures.isEmpty, "SharpAIDeepseekV4Expert: \(dense.failures.prefix(2))")
+            ConformanceGap.expect(routed.failures.isEmpty, "SharpAIDeepseekV4MoE: \(routed.failures.prefix(2))")
         }
     }
 

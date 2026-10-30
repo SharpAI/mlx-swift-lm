@@ -37,12 +37,12 @@ struct SharpAIOverlayMXFP4LoadTests {
 
     /// The tiny V4 config with moe_intermediate_size 32 so every expert matrix is [32, 32] (mxfp4 group size 32 divides
     /// both the input dim of gate/up (hidden 32) and of down (intermediate 32)).
-    static func tinyModel() async throws -> DeepseekV4Model {
+    static func tinyModel() async throws -> SharpAIDeepseekV4Model {
         var o = try #require(try JSONSerialization.jsonObject(with: ConformanceDeepseekV4.tinyJSON()) as? [String: Any])
         o["moe_intermediate_size"] = 32
         let data = try JSONSerialization.data(withJSONObject: o)
         let m = try await LLMTypeRegistry.shared.createModel(configuration: data, modelType: "deepseek_v4")
-        return try #require(m as? DeepseekV4Model)
+        return try #require(m as? SharpAIDeepseekV4Model)
     }
 
     static func write(_ arrays: [String: MLXArray]) throws -> URL {
@@ -53,7 +53,7 @@ struct SharpAIOverlayMXFP4LoadTests {
     }
 
     /// (fp4 checkpoint, dense checkpoint) sharing every non-expert tensor of `template`.
-    static func checkpoints(template: DeepseekV4Model) -> (fp4: [String: MLXArray], dense: [String: MLXArray]) {
+    static func checkpoints(template: SharpAIDeepseekV4Model) -> (fp4: [String: MLXArray], dense: [String: MLXArray]) {
         var shared = [String: MLXArray]()
         for (k, v) in template.parameters().flattened() where !k.contains(".ffn.switch_mlp.") { shared[k] = v }
         var fp4 = shared
@@ -76,7 +76,7 @@ struct SharpAIOverlayMXFP4LoadTests {
         return (fp4, dense)
     }
 
-    static func logits(_ m: DeepseekV4Model) -> MLXArray {
+    static func logits(_ m: SharpAIDeepseekV4Model) -> MLXArray {
         let out = m(MLXArray([1, 2, 3]).reshaped(1, 3), cache: nil).asType(.float32)
         eval(out)
         return out

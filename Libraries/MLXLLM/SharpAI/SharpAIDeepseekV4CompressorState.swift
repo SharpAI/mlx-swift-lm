@@ -2,7 +2,7 @@
 // SharpAI fork overlay: new file, not part of upstream.
 //
 // A layer with a compressor keeps, next to its ordinary KV cache, one `V4CompressorStateCache` (an
-// `AuxiliaryKVCache`), and `DeepseekV4Model.newCache` returns the pair as `CacheList(local KV, state)`.
+// `AuxiliaryKVCache`), and `SharpAIDeepseekV4Model.newCache` returns the pair as `CacheList(local KV, state)`.
 // Layers without a compress ratio keep the plain cache (bit-identical to before).
 //
 // What is cached, per compressor (the attention compressor, and for ratio-4 layers the indexer's own):
@@ -85,7 +85,7 @@ extension SharpAIOverlay {
         /// Number of `register()` calls so far (tests: proves the model registers eagerly).
         static var registerCalls: Int { registerCallLock.withLock { registerCallCounter.n } }
 
-        /// Register the type for prompt cache restore. `DeepseekV4Model.init` calls this, so a saved V4 prompt
+        /// Register the type for prompt cache restore. `SharpAIDeepseekV4Model.init` calls this, so a saved V4 prompt
         /// cache restores in a process that has built the model but not yet any cache instance; creating an
         /// instance also registers it (backstop for caches built without a model).
         public static func register() {
@@ -238,7 +238,7 @@ extension SharpAIOverlay {
             + "and it attends over local keys only, so output differs from the uncached forward. "
             + (hasState
                 ? "Dynamic KV quantization (kvBits / kvScheme) is not supported for V4 compressed layers; disable it. "
-                : "Build caches with DeepseekV4Model.newCache(parameters:) and do not reuse prompt-cache files saved without compressor state. ")
+                : "Build caches with SharpAIDeepseekV4Model.newCache(parameters:) and do not reuse prompt-cache files saved without compressor state. ")
         let first = fallbackLock.withLock { fallbackState.warned.insert(cause).inserted }
         guard first else { return nil }
         fallbackLock.withLock { fallbackState.log.append(message) }

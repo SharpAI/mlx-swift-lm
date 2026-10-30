@@ -3,7 +3,7 @@
 //
 // What is verified against the oracle: the pooling (softmax over the window of score + ape, weighted sum
 // of kv, overlap of the previous block through the second channel half for ratio 4) and the RMSNorm.
-// What is NOT covered by the oracle and is inferred (see DeepseekV4Compressor.swift): the RoPE position
+// What is NOT covered by the oracle and is inferred (see SharpAIDeepseekV4Compressor.swift): the RoPE position
 // given to a compressed entry, the visibility rule and the way compressed entries join the local keys.
 // The attention-level test below pins that inferred behaviour against an independent dense computation.
 // upstream-watch: DeepseekV4.swift in mlx-swift-lm.
@@ -88,11 +88,11 @@ struct ConformanceV4CompressorTests {
 
     // MARK: attention integration (inferred behaviour, pinned against an independent dense computation)
 
-    static func attentionConfig(ratios: [Int], indexTopk: Int = 4) throws -> DeepseekV4Configuration {
+    static func attentionConfig(ratios: [Int], indexTopk: Int = 4) throws -> SharpAIDeepseekV4Configuration {
         var o = try #require(try JSONSerialization.jsonObject(with: ConformanceDeepseekV4.tinyJSON()) as? [String: Any])
         o["compress_ratios"] = ratios
         o["index_topk"] = indexTopk
-        return try JSONDecoder().decode(DeepseekV4Configuration.self, from: JSONSerialization.data(withJSONObject: o))
+        return try JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: JSONSerialization.data(withJSONObject: o))
     }
 
     /// Randomise every parameter of `m` (seeded), keeping dtype float32.
@@ -110,7 +110,7 @@ struct ConformanceV4CompressorTests {
     /// Dense reference of one attention layer for batch 1, no cache, no sinks. `compressed[b]` (already
     /// normed and roped) is visible to query t iff (b + 1) * ratio - 1 <= t and `select(t, b)`.
     static func denseAttention(
-        attn: DeepseekV4Attention, x: MLXArray, compressed: MLXArray, ratio: Int,
+        attn: SharpAIDeepseekV4Attention, x: MLXArray, compressed: MLXArray, ratio: Int,
         select: (Int, Int) -> Bool
     ) -> MLXArray {
         let L = x.dim(1), nh = attn.numHeads, hd = attn.headDim, nope = attn.nopeHeadDim
@@ -142,7 +142,7 @@ struct ConformanceV4CompressorTests {
     @Test("ratio-8 attention attends to the local keys plus the visible compressed entries")
     func attentionUsesCompressedEntries() throws {
         let cfg = try Self.attentionConfig(ratios: [0, 8, 128, 0])
-        let attn = DeepseekV4Attention(config: cfg, layerIndex: 1)
+        let attn = SharpAIDeepseekV4Attention(config: cfg, layerIndex: 1)
         Self.randomize(attn, seed: 5, skip: ["attn_sink"])  // zero sink -> no sinks passed to SDPA
         let L = 20
         let x = MLXRandom.normal([1, L, cfg.hiddenSize], key: MLXRandom.key(21))

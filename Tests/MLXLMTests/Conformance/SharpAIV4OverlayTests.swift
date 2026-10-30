@@ -95,7 +95,7 @@ struct SharpAIV4OverlayTests {
         let src = try Self.source("Libraries/MLXLLM/LLMModelFactory.swift")
         let lines = src.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
         #expect(!lines.contains { $0.contains("\"deepseek_v4\"") }, "deepseek_v4 entry still in the upstream literal")
-        #expect(!lines.contains { $0.contains("DeepseekV4") }, "unprefixed DeepseekV4 name in the factory")
+        #expect(!lines.contains { $0.replacingOccurrences(of: "SharpAIDeepseekV4", with: "").contains("DeepseekV4") }, "unprefixed DeepseekV4 name in the factory")
     }
 
     @Test("no unprefixed DeepseekV4 file or type name is left under Libraries/MLXLLM")

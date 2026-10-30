@@ -50,10 +50,10 @@ enum ConformanceDeepseekV4 {
         return try JSONSerialization.data(withJSONObject: o)
     }
 
-    static func tinyModel() async throws -> DeepseekV4Model {
+    static func tinyModel() async throws -> SharpAIDeepseekV4Model {
         let data = try tinyJSON()
         let m = try await LLMTypeRegistry.shared.createModel(configuration: data, modelType: "deepseek_v4")
-        return try #require(m as? DeepseekV4Model)
+        return try #require(m as? SharpAIDeepseekV4Model)
     }
 
     static func paramKeys(_ m: Module) -> [String] { m.parameters().flattened().map { $0.0 } }
@@ -61,7 +61,7 @@ enum ConformanceDeepseekV4 {
     /// Keys present in the fixture that the Configuration struct does NOT round-trip, i.e. keys it
     /// silently ignores. Uses the Codable round trip of the real struct (CodingKeys are private).
     static func decodedKeys(_ data: Data) throws -> Set<String> {
-        let cfg = try JSONDecoder().decode(DeepseekV4Configuration.self, from: data)
+        let cfg = try JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: data)
         let enc = try JSONSerialization.jsonObject(with: JSONEncoder().encode(cfg)) as? [String: Any]
         return Set(try #require(enc).keys)
     }
@@ -89,7 +89,7 @@ struct ConformanceGapDeepseekV4Tests {
     @Test("V4-Flash fixture decodes with the registry's configuration type")
     func flashDecodes() async throws {
         #expect(await LLMTypeRegistry.shared.contains("deepseek_v4"))
-        let cfg = try JSONDecoder().decode(DeepseekV4Configuration.self, from: ConformanceDeepseekV4.fixture("DeepSeek-V4-Flash"))
+        let cfg = try JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: ConformanceDeepseekV4.fixture("DeepSeek-V4-Flash"))
         #expect(cfg.numHiddenLayers == 43 && cfg.numNextnPredictLayers == 1 && cfg.nRoutedExperts == 256)
         #expect(cfg.compressRatios.count == 44 && cfg.numHashLayers == 3 && cfg.scoringFunc == "sqrtsoftplus")
     }
@@ -118,7 +118,7 @@ struct ConformanceGapDeepseekV4Tests {
         let fixtureKeys = Set(try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any]).keys)
         #expect(fixtureKeys.contains(key), "fixture must carry \(key)")
         let decoded = try ConformanceDeepseekV4.decodedKeys(data)
-        #expect(decoded.contains(key), "DeepseekV4Configuration silently ignores `\(key)`")
+        #expect(decoded.contains(key), "SharpAIDeepseekV4Configuration silently ignores `\(key)`")
     }
 
     // MARK: known gaps -- structure

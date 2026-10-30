@@ -6,12 +6,12 @@
 // reference code on 240 random cases (MANIFEST.json "crosscheck"). Tests never run Python.
 //
 // Each case is run through the REAL shipping Swift code (nothing reimplemented here):
-//   full sequence   SharpAIOverlay.V4Compressor.callAsFunction + v4RopeCompressed   (DeepseekV4.swift:489-492 path)
-//   cached          SharpAIOverlay.V4Compressor.append + V4CompressorState          (DeepseekV4.swift:499-525 path),
+//   full sequence   SharpAIOverlay.V4Compressor.callAsFunction + v4RopeCompressed   (SharpAIDeepseekV4.swift:489-492 path)
+//   cached          SharpAIOverlay.V4Compressor.append + V4CompressorState          (SharpAIDeepseekV4.swift:499-525 path),
 //                   one shot, token by token, and several chunk plans that cross block boundaries
 //   visibility      SharpAIOverlay.v4Visibility
 // Weights, inputs and rope base are the fixture's. RoPE: plain `initializeRope(traditional: true)` for the plain fixtures; for yarn.json /
-// wide.json the rope the shipping DeepseekV4Attention builds from a real V4 config (YaRN, compress_rope_theta).
+// wide.json the rope the shipping SharpAIDeepseekV4Attention builds from a real V4 config (YaRN, compress_rope_theta).
 //
 // SCOPE (MANIFEST.json "scope"): head_dim 16...512 (the real attention compressor is 512 / rope 64, the indexer 128 / 64), but `hidden` is
 // at most 16-32: the projection sums a handful of terms, NOT the 4096 / 7168 of the real models, so fp32 accumulation-order effects of a
@@ -147,7 +147,7 @@ enum V4CompGolden {
     }
 
     /// The RoPE the layer would use. Plain cases: `initializeRope` without scaling. YaRN cases: the rope that the SHIPPING
-    /// `DeepseekV4Attention` builds (DeepseekV4.swift: `initializeRope(config.ropeScaling, compress_rope_theta)`) from a real
+    /// `SharpAIDeepseekV4Attention` builds (SharpAIDeepseekV4.swift: `initializeRope(config.ropeScaling, compress_rope_theta)`) from a real
     /// V4 config whose rope_scaling is the case's. `vllmMscale`: add `mscale: 0, mscale_all_dim: 0` to rope_scaling, which is
     /// what vLLM effectively runs (rope.py:51-52 forces both to 0, i.e. unscaled cos/sin); false = the real config as shipped.
     static func rope(_ c: Case, vllmMscale: Bool = true) -> RoPELayer {
@@ -172,8 +172,8 @@ enum V4CompGolden {
         o["compress_rope_theta"] = c.ropeTheta
         o["compress_ratios"] = [0, 4, 128, 0]
         let data = (try? ConformanceSynthV4Layout.data(o)) ?? Data()
-        let cfg = try! JSONDecoder().decode(DeepseekV4Configuration.self, from: data)
-        return DeepseekV4Attention(config: cfg, layerIndex: 2).rope
+        let cfg = try! JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: data)
+        return SharpAIDeepseekV4Attention(config: cfg, layerIndex: 2).rope
     }
 
     static func input(_ c: Case, as dt: DType? = nil) -> MLXArray {
@@ -430,7 +430,7 @@ struct ConformanceV4CompressorGoldenTests {
     )
     func yarnMscaleIsDisabled() throws {
         // Was a knownIssue (the layer passed config.ropeScaling as is, so YarnRoPE defaulted mscale = 1 and scaled the rope channels by
-        // 0.1 ln(16) + 1 = 1.277). The indexer lane's fix in DeepseekV4Attention (compressed layers force mscale = mscale_all_dim = 0)
+        // 0.1 ln(16) + 1 = 1.277). The indexer lane's fix in SharpAIDeepseekV4Attention (compressed layers force mscale = mscale_all_dim = 0)
         // landed in the same merge, so this is a plain assertion now: the layer built from the REAL config (`vllmMscale: false`, no
         // mscale keys) must match the golden.
         let m = try G.manifest()

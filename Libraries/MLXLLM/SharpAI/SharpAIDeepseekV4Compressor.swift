@@ -17,7 +17,7 @@
 //   3. Compressed entries are appended after the local keys of the same layer and serve as both key and
 //      value (k = v, as for the local keys).
 //   4. The input of the compressor is the attention-normed hidden state (the same x as wq_a / wkv).
-//   5. With a KV cache the compressor state lives in `V4CompressorStateCache` (DeepseekV4CompressorState.swift)
+//   5. With a KV cache the compressor state lives in `V4CompressorStateCache` (SharpAIDeepseekV4CompressorState.swift)
 //      and the layer attends over the same entries as the full-sequence forward (batch size 1 only).
 // Not implemented: the sliding-window restriction of the local keys (separate gap), fp8 quantisation.
 // upstream-watch: DeepseekV4.swift in mlx-swift-lm.

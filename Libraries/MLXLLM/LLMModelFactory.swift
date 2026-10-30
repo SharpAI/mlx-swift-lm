@@ -94,7 +94,6 @@ public enum LLMTypeRegistry {
         // the same Swift model rather than getting a parallel implementation.
         "deepseek_v3_2": create(DeepseekV32Configuration.self, DeepseekV32Model.init),
         "glm_moe_dsa": create(DeepseekV32Configuration.self, DeepseekV32Model.init),
-        "deepseek_v4": create(DeepseekV4Configuration.self, DeepseekV4Model.init),
         "granite": create(GraniteConfiguration.self, GraniteModel.init),
         "helium": create(HeliumConfiguration.self, HeliumModel.init),
         "granitemoehybrid": create(
@@ -153,7 +152,7 @@ public enum LLMTypeRegistry {
         "hunyuan_v1_dense": create(HunyuanConfiguration.self, HunyuanModel.init),
         "nemotron_labs_diffusion": create(
             NemotronLabsDiffusionConfiguration.self, NemotronLabsDiffusionModel.init),
-    ])
+    ].merging(SharpAIDeepseekV4Overlay.creators) { _, ours in ours })  // SharpAI: ours wins (SL-41)
 }
 
 /// Registry of models and any overrides that go with them, e.g. prompt augmentation.

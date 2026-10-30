@@ -10,7 +10,7 @@ import MLXNN
 
 // MARK: - Configuration
 
-public struct DeepseekV4Configuration: Codable, Sendable {
+public struct SharpAIDeepseekV4Configuration: Codable, Sendable {
     // Core architecture
     var vocabSize: Int
     var hiddenSize: Int
@@ -126,7 +126,7 @@ private func headRmsNorm(_ x: MLXArray, eps: Float) -> MLXArray {
 ///   post = sigmoid(mix * scale[1] + base) * 2.0                 (hc_post_alpha, models/deepseek_v4/cpu/model.py:263)
 ///   comb = softmax(mix * scale[2] + base, last axis) + eps; comb /= colsum(comb) + eps;
 ///          then (iters - 1) times: comb /= rowsum(comb) + eps; comb /= colsum(comb) + eps
-func hcSplitSinkhorn(
+func sharpAIHCSplitSinkhorn(
     _ mixes: MLXArray,
     hcScale: MLXArray,    // [3]
     hcBase: MLXArray,     // [mix_hc]
@@ -165,7 +165,7 @@ func hcSplitSinkhorn(
 
 /// Hyper-Connection pre-step: reduce [B,S,hc,D] → [B,S,D] with Sinkhorn weights.
 /// Returns (reduced_x, post_weights, comb_matrix).
-func hcPre(
+func sharpAIHCPre(
     x: MLXArray,           // [B, S, hc, D]
     hcFn: MLXArray,        // [mix_hc, hc*D]
     hcScale: MLXArray,     // [3]
@@ -187,7 +187,7 @@ func hcPre(
     // Linear projection: [B, S, mix_hc]
     let mixes = matmul(xFlat, hcFn.T) * normScale
 
-    let (pre, post, comb) = hcSplitSinkhorn(
+    let (pre, post, comb) = sharpAIHCSplitSinkhorn(
         mixes, hcScale: hcScale, hcBase: hcBase,
         hcMult: hcMult, sinkhornIters: sinkhornIters, eps: eps)
 
@@ -199,7 +199,7 @@ func hcPre(
 
 /// Hyper-Connection post-step: expand sublayer output back to [B,S,hc,D].
 /// y[b,s,j,:] = post[b,s,j]*x[b,s,:] + sum_i(comb[b,s,i,j]*residual[b,s,i,:])
-func hcPost(
+func sharpAIHCPost(
     x: MLXArray,        // [B, S, D] - sublayer output
     residual: MLXArray, // [B, S, hc, D] - input to this block
     post: MLXArray,     // [B, S, hc]
@@ -219,11 +219,11 @@ func hcPost(
     return (term1 + term2).asType(x.dtype)
 }
 
-// MARK: - HCParams Module
+// MARK: - SharpAIHCParams Module
 
 /// Lightweight Module to hold the three Hyper-Connection tensors loaded from checkpoint.
 /// Key names (fn, base, scale) match the `hc_attn.*` / `hc_ffn.*` / `hc_head.*` paths.
-class HCParams: Module {
+class SharpAIHCParams: Module {
     var fn: MLXArray
     var base: MLXArray
     var scale: MLXArray
@@ -237,7 +237,7 @@ class HCParams: Module {
 
 /// Final HC head: reduce [B,S,hc,D] → [B,S,D] for lm_head.
 /// No Sinkhorn – just sigmoid + eps weighted sum.
-func hcHead(
+func sharpAIHCHead(
     x: MLXArray,        // [B, S, hc, D]
     hcFn: MLXArray,     // [hc, hc*D]
     hcScale: MLXArray,  // [1]
@@ -293,8 +293,8 @@ private func deepseekAttentionWithSinks(
         scale: scale, mask: mask, sinks: sinks)
 }
 
-class DeepseekV4Attention: Module {
-    let config: DeepseekV4Configuration
+class SharpAIDeepseekV4Attention: Module {
+    let config: SharpAIDeepseekV4Configuration
     let numHeads: Int
     let headDim: Int
     let nopeHeadDim: Int
@@ -330,7 +330,7 @@ class DeepseekV4Attention: Module {
     // Stored via update(parameters:) using the key "attn_sink"
     var attn_sink: MLXArray
 
-    init(config: DeepseekV4Configuration, layerIndex: Int = 0) {
+    init(config: SharpAIDeepseekV4Configuration, layerIndex: Int = 0) {
         self.config = config
         self.numHeads = config.numAttentionHeads
         self.headDim = config.headDim
@@ -568,7 +568,7 @@ class DeepseekV4Attention: Module {
 // MARK: - MoE Components
 
 /// Single FFN expert: SwiGLU with optional activation clamping.
-class DeepseekV4Expert: Module, UnaryLayer {
+class SharpAIDeepseekV4Expert: Module, UnaryLayer {
     let swiguLimit: Float
 
     @ModuleInfo(key: "gate_proj") var gateProj: Linear
@@ -597,7 +597,7 @@ class DeepseekV4Expert: Module, UnaryLayer {
 /// MoE routing gate with sqrtsoftplus. Layers below `num_hash_layers` are hash layers (SL-35 4.3): the experts
 /// come from the `tid2eid[token_id]` lookup table (no score top-k, no e_score_correction_bias); the routing
 /// weights are still the learned scores gathered at those experts.
-class DeepseekV4Gate: Module {
+class SharpAIDeepseekV4Gate: Module {
     let topK: Int
     let nRoutedExperts: Int
     let routedScalingFactor: Float
@@ -609,7 +609,7 @@ class DeepseekV4Gate: Module {
     var e_score_correction_bias: MLXArray?  // [n_routed_experts]; nil on hash layers
     var tid2eid: MLXArray?            // [vocab_size, top_k] int32; hash layers only
 
-    init(config: DeepseekV4Configuration, layerIndex: Int = 0) {
+    init(config: SharpAIDeepseekV4Configuration, layerIndex: Int = 0) {
         self.topK = config.numExpertsPerTok
         self.nRoutedExperts = config.nRoutedExperts
         self.routedScalingFactor = config.routedScalingFactor
@@ -658,7 +658,7 @@ class DeepseekV4Gate: Module {
 
         let inds: MLXArray
         if let tid2eid {
-            precondition(tokenIds != nil, "DeepseekV4Gate: hash-routing layers need the input token ids")
+            precondition(tokenIds != nil, "SharpAIDeepseekV4Gate: hash-routing layers need the input token ids")
             inds = take(tid2eid, tokenIds!, axis: 0)  // [B, S, top_k]
         } else {
             // Bias-shifted scores for top-k selection (bias not applied to routing weights)
@@ -683,14 +683,14 @@ class DeepseekV4Gate: Module {
 }
 
 /// Mixture-of-Experts layer with shared expert.
-class DeepseekV4MoE: Module, UnaryLayer {
+class SharpAIDeepseekV4MoE: Module, UnaryLayer {
     let numExpertsPerTok: Int
 
     @ModuleInfo(key: "switch_mlp") var switchMLP: SwitchGLU
-    var gate: DeepseekV4Gate
-    @ModuleInfo(key: "shared_experts") var sharedExperts: DeepseekV4Expert
+    var gate: SharpAIDeepseekV4Gate
+    @ModuleInfo(key: "shared_experts") var sharedExperts: SharpAIDeepseekV4Expert
 
-    init(config: DeepseekV4Configuration, layerIndex: Int = 0) {
+    init(config: SharpAIDeepseekV4Configuration, layerIndex: Int = 0) {
         self.numExpertsPerTok = config.numExpertsPerTok
 
         // Routed experts (stacked via SwitchGLU, same as V3)
@@ -715,10 +715,10 @@ class DeepseekV4MoE: Module, UnaryLayer {
             // The up half is clamped two-sided as well, so the product is supplied whole.
             activationProduct: routedProduct
         )
-        self.gate = DeepseekV4Gate(config: config, layerIndex: layerIndex)
+        self.gate = SharpAIDeepseekV4Gate(config: config, layerIndex: layerIndex)
 
         // Shared expert (1 expert, same intermediate size)
-        self._sharedExperts.wrappedValue = DeepseekV4Expert(
+        self._sharedExperts.wrappedValue = SharpAIDeepseekV4Expert(
             hiddenSize: config.hiddenSize,
             intermediateSize: config.moeIntermediateSize,
             swiguLimit: config.swiguLimit
@@ -743,27 +743,27 @@ class DeepseekV4MoE: Module, UnaryLayer {
 
 // MARK: - Decoder Block (with mHC Hyper-Connections)
 
-public class DeepseekV4Block: Module {
-    let config: DeepseekV4Configuration
+public class SharpAIDeepseekV4Block: Module {
+    let config: SharpAIDeepseekV4Configuration
 
     // Key "attn" matches checkpoint path `layers.{l}.attn.*`
-    @ModuleInfo(key: "attn") var selfAttn: DeepseekV4Attention
+    @ModuleInfo(key: "attn") var selfAttn: SharpAIDeepseekV4Attention
     // Plain var: property name "ffn" matches checkpoint path `layers.{l}.ffn.*`
-    var ffn: DeepseekV4MoE
+    var ffn: SharpAIDeepseekV4MoE
     // Key names match checkpoint: `attn_norm`, `ffn_norm`
     @ModuleInfo(key: "attn_norm") var attnNorm: RMSNorm
     @ModuleInfo(key: "ffn_norm") var ffnNorm: RMSNorm
 
     // Hyper-Connection parameter bundles.
     // Underscore names match checkpoint paths: `hc_attn.fn/base/scale`, `hc_ffn.fn/base/scale`
-    var hc_attn: HCParams
-    var hc_ffn: HCParams
+    var hc_attn: SharpAIHCParams
+    var hc_ffn: SharpAIHCParams
 
-    init(config: DeepseekV4Configuration, layerIndex: Int = 0) {
+    init(config: SharpAIDeepseekV4Configuration, layerIndex: Int = 0) {
         self.config = config
 
-        self._selfAttn.wrappedValue = DeepseekV4Attention(config: config, layerIndex: layerIndex)
-        self.ffn = DeepseekV4MoE(config: config, layerIndex: layerIndex)
+        self._selfAttn.wrappedValue = SharpAIDeepseekV4Attention(config: config, layerIndex: layerIndex)
+        self.ffn = SharpAIDeepseekV4MoE(config: config, layerIndex: layerIndex)
 
         self._attnNorm.wrappedValue = RMSNorm(
             dimensions: config.hiddenSize, eps: config.rmsNormEps)
@@ -774,11 +774,11 @@ public class DeepseekV4Block: Module {
         let hc = config.hcMult
         let mixHc = (2 + hc) * hc
         let hcDim = hc * config.hiddenSize
-        self.hc_attn = HCParams(
+        self.hc_attn = SharpAIHCParams(
             fn: zeros([mixHc, hcDim]),
             base: zeros([mixHc]),
             scale: ones([3]))
-        self.hc_ffn = HCParams(
+        self.hc_ffn = SharpAIHCParams(
             fn: zeros([mixHc, hcDim]),
             base: zeros([mixHc]),
             scale: ones([3]))
@@ -794,7 +794,7 @@ public class DeepseekV4Block: Module {
         let residualAttn = x
 
         // HC pre for attention: [B,S,hc,D] → [B,S,D]
-        let (xAttn, postAttn, combAttn) = hcPre(
+        let (xAttn, postAttn, combAttn) = sharpAIHCPre(
             x: residualAttn,
             hcFn: hc_attn.fn,
             hcScale: hc_attn.scale,
@@ -809,10 +809,10 @@ public class DeepseekV4Block: Module {
         let attnOut = selfAttn(attnNorm(xAttn), mask: mask, cache: cache)
 
         // HC post for attention: [B,S,D] → [B,S,hc,D]
-        let residualFfn = hcPost(x: attnOut, residual: residualAttn, post: postAttn, comb: combAttn)
+        let residualFfn = sharpAIHCPost(x: attnOut, residual: residualAttn, post: postAttn, comb: combAttn)
 
         // HC pre for FFN: [B,S,hc,D] → [B,S,D]
-        let (xFfn, postFfn, combFfn) = hcPre(
+        let (xFfn, postFfn, combFfn) = sharpAIHCPre(
             x: residualFfn,
             hcFn: hc_ffn.fn,
             hcScale: hc_ffn.scale,
@@ -827,28 +827,28 @@ public class DeepseekV4Block: Module {
         let ffnOut = ffn(ffnNorm(xFfn), tokenIds: tokenIds)
 
         // HC post for FFN: [B,S,D] → [B,S,hc,D]
-        return hcPost(x: ffnOut, residual: residualFfn, post: postFfn, comb: combFfn)
+        return sharpAIHCPost(x: ffnOut, residual: residualFfn, post: postFfn, comb: combFfn)
     }
 }
 
 // MARK: - Inner Model
 
-public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
-    var config: DeepseekV4Configuration
+public class SharpAIDeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
+    var config: SharpAIDeepseekV4Configuration
 
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
-    var layers: [DeepseekV4Block]
+    var layers: [SharpAIDeepseekV4Block]
     @ModuleInfo(key: "norm") var norm: RMSNorm
 
     // HC head parameter bundle for final reduction [B,S,hc,D] → [B,S,D]
     // Underscore name matches checkpoint path `model.hc_head.fn/base/scale`
-    var hc_head: HCParams
+    var hc_head: SharpAIHCParams
 
     public var gpuLayerCount: Int? = nil
     public var streamExperts: Bool = false
     public var totalLayerCount: Int { layers.count - (MTPConfig.retainMTPWeights ? config.numNextnPredictLayers : 0) }
 
-    init(config: DeepseekV4Configuration) {
+    init(config: SharpAIDeepseekV4Configuration) {
         self.config = config
         self._embedTokens.wrappedValue = Embedding(
             embeddingCount: config.vocabSize, dimensions: config.hiddenSize)
@@ -856,13 +856,13 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
         // MTP blocks live at index num_hidden_layers.. (outside the main count)
         let totalCount = config.numHiddenLayers + (retainMTP ? config.numNextnPredictLayers : 0)
         self.layers = (0 ..< totalCount).map {
-            DeepseekV4Block(config: config, layerIndex: $0)
+            SharpAIDeepseekV4Block(config: config, layerIndex: $0)
         }
         self._norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
 
         // HC head parameters (will be overwritten by weight loading)
         let hc = config.hcMult
-        self.hc_head = HCParams(
+        self.hc_head = SharpAIHCParams(
             fn: zeros([hc, hc * config.hiddenSize]),
             base: zeros([hc]),
             scale: ones([1]))
@@ -895,7 +895,7 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
         }
 
         // HC head: [B, S, hc, D] → [B, S, D]
-        h = hcHead(
+        h = sharpAIHCHead(
             x: h, hcFn: hc_head.fn, hcScale: hc_head.scale,
             hcBase: hc_head.base, rmsEps: config.rmsNormEps, eps: config.hcEps)
 
@@ -905,19 +905,19 @@ public class DeepseekV4ModelInner: Module, LayerPartitionable, StreamableMoE {
 
 // MARK: - Top-level Model
 
-public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAModel {
+public class SharpAIDeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAModel {
     /// One KV head per layer (unified KV, single head)
     public var kvHeads: [Int]
 
-    var args: DeepseekV4Configuration
-    public var model: DeepseekV4ModelInner
+    var args: SharpAIDeepseekV4Configuration
+    public var model: SharpAIDeepseekV4ModelInner
     @ModuleInfo(key: "lm_head") var lmHead: Linear
 
-    public init(_ args: DeepseekV4Configuration) {
+    public init(_ args: SharpAIDeepseekV4Configuration) {
         SharpAIOverlay.V4CompressorStateCache.register()  // SharpAI overlay (SL-37): restore saved prompt caches
         self.args = args
         self.kvHeads = Array(repeating: 1, count: args.numHiddenLayers)
-        self.model = DeepseekV4ModelInner(config: args)
+        self.model = SharpAIDeepseekV4ModelInner(config: args)
         self._lmHead.wrappedValue = Linear(args.hiddenSize, args.vocabSize, bias: false)
     }
 
@@ -1024,20 +1024,20 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
     }
 }
 
-// MARK: - MTPLanguageModel Conformance for DeepseekV4Model
+// MARK: - MTPLanguageModel Conformance for SharpAIDeepseekV4Model
 
 /// DeepSeek V4 uses a different MTP scheme: the MTP layers are the last
 /// `numNextnPredictLayers` standard transformer blocks (`model.layers[numMainLayers...]`).
 /// They share the same architecture as the main blocks but operate on the final hidden state.
 /// The main `lm_head` is reused for all MTP depth projections.
-extension DeepseekV4Model: MTPLanguageModel {
+extension SharpAIDeepseekV4Model: MTPLanguageModel {
     public func callMTP(_ inputs: MLXArray, cache: [KVCache]?, mtpCaches: [[KVCache]]?) -> [MLXArray] {
         let mtpLayers = model.layers.suffix(args.numNextnPredictLayers)
         guard MTPConfig.retainMTPWeights, !mtpLayers.isEmpty else {
             return [callAsFunction(inputs, cache: cache)]
         }
 
-        // Run the main model body (excludes MTP layers \u2014 DeepseekV4ModelInner only
+        // Run the main model body (excludes MTP layers \u2014 SharpAIDeepseekV4ModelInner only
         // instantiates `numMain` blocks, so this is the standard forward pass)
         let mainHidden = model(inputs, cache: cache)
         let mainLogits = lmHead(mainHidden)
@@ -1059,7 +1059,7 @@ extension DeepseekV4Model: MTPLanguageModel {
             h = mtpLayer(h, mask: attentionMask, cache: mtpCache?.first)
             
             // Reduce back to [B, S, D]
-            prevHidden = hcHead(
+            prevHidden = sharpAIHCHead(
                 x: h, hcFn: model.hc_head.fn, hcScale: model.hc_head.scale,
                 hcBase: model.hc_head.base, rmsEps: args.rmsNormEps, eps: args.hcEps)
                 

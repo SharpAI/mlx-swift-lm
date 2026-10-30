@@ -76,10 +76,10 @@ enum ConformanceSynthV4Layout {
 
     static func data(_ o: [String: Any]) throws -> Data { try JSONSerialization.data(withJSONObject: o) }
 
-    static func model(_ o: [String: Any]) async throws -> DeepseekV4Model {
+    static func model(_ o: [String: Any]) async throws -> SharpAIDeepseekV4Model {
         let m = try await LLMTypeRegistry.shared.createModel(
             configuration: data(o), modelType: "deepseek_v4")
-        return try #require(m as? DeepseekV4Model)
+        return try #require(m as? SharpAIDeepseekV4Model)
     }
 
     private static func int(_ o: [String: Any], _ k: String) -> Int { (o[k] as? Int) ?? 0 }

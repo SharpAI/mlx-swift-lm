@@ -1,5 +1,5 @@
 // V4 sparse-indexer / sparse-attention golden fixtures: the SHIPPING Swift code (SharpAIOverlay.V4Indexer,
-// v4RopeCompressed, v4Visibility, v4CompressedAttention, DeepseekV4Attention, DeepseekV4Model) against a float64 oracle
+// v4RopeCompressed, v4Visibility, v4CompressedAttention, SharpAIDeepseekV4Attention, SharpAIDeepseekV4Model) against a float64 oracle
 // transcribed from vLLM (commit 2eae56c) and committed as JSON. The tests never run python and never touch the network;
 // fixtures are located through `#filePath` (no Package.swift resource change) and verified against MANIFEST.json (sha256
 // per file, plus the generator and the oracle), so a changed fixture fails loudly instead of silently moving the target.
@@ -23,7 +23,7 @@
 //              deepseek_scaling_rope.py:73-101, vLLM 739e594). NOT covered: the rope_type selection of the current V4 tree
 //              (deepseek_llama_scaling when attention_factor == 1.0, nested per-layer-type rope dicts), see v4idx_ref.py I4.
 //   WRONG      the sliding window is never applied (sliding_window parsed, unused)                      (cpu_sparse.py:587-590)
-//   WRONG      sinks are dropped when attn_sink.sum() == 0                                              (DeepseekV4.swift:484)
+//   WRONG      sinks are dropped when attn_sink.sum() == 0                                              (SharpAIDeepseekV4.swift:484)
 // COVERAGE, honestly: the sliding-window fixtures (swa_w1/w3/w4/w8, window < length) are NOT compared to Swift output;
 // they are knownIssue gaps, and the passing swa tests are weak controls (no future leaks; in-window dependence is not
 // silent). Only the window >= length case (swa_w8_l6) is compared to the oracle. With the 4 SWA gaps and the sink gap the
@@ -31,7 +31,7 @@
 // The manifest sha256 checks detect an accidental or tampering edit of a fixture, the generator or the oracle. They are
 // not an independent anchor: MANIFEST.json itself is not pinned, and the generator
 // and oracle are hashed but never re-run in CI.
-// upstream-watch: Libraries/MLXLLM/Models/DeepseekV4Indexer.swift, DeepseekV4.swift.
+// upstream-watch: Libraries/MLXLLM/SharpAI/SharpAIDeepseekV4Indexer.swift, SharpAIDeepseekV4.swift.
 
 import Foundation
 import MLX
@@ -473,12 +473,12 @@ enum V4IdxGolden {
         return try JSONSerialization.data(withJSONObject: o)
     }
 
-    static func tinyConfig(_ edit: (inout [String: Any]) -> Void) throws -> DeepseekV4Configuration {
-        try JSONDecoder().decode(DeepseekV4Configuration.self, from: tinyConfigJSON(edit))
+    static func tinyConfig(_ edit: (inout [String: Any]) -> Void) throws -> SharpAIDeepseekV4Configuration {
+        try JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: tinyConfigJSON(edit))
     }
 
     /// A one-layer tiny model whose only layer has the given compress ratio and sliding window.
-    static func oneLayerModel(window: Int, ratio: Int = 0) async throws -> DeepseekV4Model {
+    static func oneLayerModel(window: Int, ratio: Int = 0) async throws -> SharpAIDeepseekV4Model {
         let data = try tinyConfigJSON { o in
             o["num_hidden_layers"] = 1
             o["num_nextn_predict_layers"] = 1
@@ -487,13 +487,13 @@ enum V4IdxGolden {
             o["compress_ratios"] = [ratio, 0]
         }
         let m = try await LLMTypeRegistry.shared.createModel(configuration: data, modelType: "deepseek_v4")
-        let model = try #require(m as? DeepseekV4Model)
+        let model = try #require(m as? SharpAIDeepseekV4Model)
         eval(model)
         return model
     }
 
     /// dep[t][j]: does changing token j change the logits at position t (|d| > 1e-6)? One forward per token.
-    static func dependence(_ m: DeepseekV4Model, length T: Int) -> [[Bool]] {
+    static func dependence(_ m: SharpAIDeepseekV4Model, length T: Int) -> [[Bool]] {
         let tokens = (0 ..< T).map { Int32(($0 * 7 + 3) % 64) }
         func logits(_ tk: [Int32]) -> [Float] {
             let out = m(MLXArray(tk).reshaped(1, T), cache: nil)
@@ -607,7 +607,7 @@ struct ConformanceV4IndexerGoldenTests {
         let ratios = try G.req(f.ratios, "ratios")
         let cfg = try G.tinyConfig { $0["compress_ratios"] = ratios }
         for want in try G.req(f.outputs.layers, "layers") {
-            let attn = DeepseekV4Attention(config: cfg, layerIndex: want.layer)
+            let attn = SharpAIDeepseekV4Attention(config: cfg, layerIndex: want.layer)
             #expect((attn.compressor != nil) == want.compressor, "\(f.name) layer \(want.layer) ratio \(want.ratio): compressor")
             #expect((attn.indexer != nil) == want.indexer, "\(f.name) layer \(want.layer) ratio \(want.ratio): indexer")
         }
@@ -620,11 +620,11 @@ struct ConformanceV4IndexerGoldenTests {
         let (f, tol) = try G.fixture(id)
         let theta = try G.req(f.theta, "theta")
         let cfg = try G.tinyConfig { o in o["compress_rope_theta"] = theta; o["rope_theta"] = 12345.0 }
-        let attn = DeepseekV4Attention(config: cfg, layerIndex: 1)  // ratio 4
+        let attn = SharpAIDeepseekV4Attention(config: cfg, layerIndex: 1)  // ratio 4
         try ropeCheck(f, tol, attn)
     }
 
-    func ropeCheck(_ f: G.Fixture, _ tol: G.ToleranceClass, _ attn: DeepseekV4Attention) throws {
+    func ropeCheck(_ f: G.Fixture, _ tol: G.ToleranceClass, _ attn: SharpAIDeepseekV4Attention) throws {
         let rd = try G.req(f.ropeDim, "ropeDim"), L = try G.req(f.L, "L"), off = try G.req(f.offset, "offset")
         let x = MLXArray(try G.floats(f.inputs?.x, "x"), [1, 1, L, rd])
         let y = attn.rope(x, offset: off)
@@ -837,7 +837,7 @@ struct ConformanceV4IndexerGoldenTests {
         let theta = try G.req(f.theta, "theta")
         // rope_theta = the fixture's theta, compress_rope_theta = something else: only a layer that picks rope_theta matches.
         let cfg = try G.tinyConfig { o in o["rope_theta"] = theta; o["compress_rope_theta"] = 777777.0 }
-        let attn = DeepseekV4Attention(config: cfg, layerIndex: 0)  // ratio 0
+        let attn = SharpAIDeepseekV4Attention(config: cfg, layerIndex: 0)  // ratio 0
         let rd = try G.req(f.ropeDim, "ropeDim"), L = try G.req(f.L, "L"), off = try G.req(f.offset, "offset")
         let x = MLXArray(try G.floats(f.inputs?.x, "x"), [1, 1, L, rd])
         let want = try G.req(f.outputs.out, "out")
@@ -864,7 +864,7 @@ struct ConformanceV4IndexerGoldenTests {
                 "beta_fast": y.betaFast, "beta_slow": y.betaSlow,
             ] as [String: Any]
         }
-        let attn = DeepseekV4Attention(config: cfg, layerIndex: 1)  // ratio 4: a compressed layer
+        let attn = SharpAIDeepseekV4Attention(config: cfg, layerIndex: 1)  // ratio 4: a compressed layer
         let x = MLXArray(try G.floats(f.inputs?.x, "x"), [1, 1, L, rd])
         let want = try G.req(f.outputs.out, "out")
         let out = attn.rope(x, offset: off)
@@ -883,7 +883,7 @@ struct ConformanceV4IndexerGoldenTests {
             o["compress_rope_theta"] = flash["compress_rope_theta"]
         }
         #expect(cfg.ropeScaling != nil, "the probe needs a rope_scaling config")
-        let attn = DeepseekV4Attention(config: cfg, layerIndex: 1)  // ratio 4: the layer type that uses YaRN in vLLM
+        let attn = SharpAIDeepseekV4Attention(config: cfg, layerIndex: 1)  // ratio 4: the layer type that uses YaRN in vLLM
         let x = MLXArray.ones([1, 1, 3, cfg.qkRopeHeadDim])
         let y = attn.rope(x, offset: 0)
         eval(y)
@@ -898,7 +898,7 @@ struct ConformanceV4IndexerGoldenTests {
     @Test("gap: a sink is applied even when attn_sink sums to exactly zero")
     func sinkWithZeroSum() throws {
         let cfg = try G.tinyConfig { $0["compress_ratios"] = [0, 0, 0, 0] }
-        let attn = DeepseekV4Attention(config: cfg, layerIndex: 0)
+        let attn = SharpAIDeepseekV4Attention(config: cfg, layerIndex: 0)
         ConformanceV4CompressorTests.randomize(attn, seed: 5, scale: 0.4, skip: ["attn_sink"])
         let x = MLXRandom.normal([1, 6, cfg.hiddenSize], key: MLXRandom.key(9))
         func run(_ sink: [Float]) -> MLXArray {
@@ -915,7 +915,7 @@ struct ConformanceV4IndexerGoldenTests {
         // Precondition: the probe can see a sink at all.
         let alsoSink = run([40, 40])
         #expect(abs(alsoSink - noSink).max().item(Float.self) > Float(1e-3), "probe cannot see a sink")
-        ConformanceGap.knownIssue("DeepseekV4Attention drops attn_sink when attn_sink.sum() == 0 (DeepseekV4.swift:484); vLLM adds the sink logit unconditionally (-inf == none)") {
+        ConformanceGap.knownIssue("SharpAIDeepseekV4Attention drops attn_sink when attn_sink.sum() == 0 (SharpAIDeepseekV4.swift:484); vLLM adds the sink logit unconditionally (-inf == none)") {
             ConformanceGap.expect(diff > Float(1e-3), "sink [40, -40] changes nothing: it was dropped (max|d| = \(diff))")
         }
     }

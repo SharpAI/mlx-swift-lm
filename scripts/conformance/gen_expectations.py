@@ -25,6 +25,21 @@ REGISTRY_FILES = {
 TYPE_REGISTRY = {"llm": "LLMTypeRegistry", "vlm": "VLMTypeRegistry", "embedder": "EmbedderTypeRegistry"}
 
 
+# Fork overlays that add model_types outside the upstream-owned literal (SL-41); keep in step with
+# missing-ops/gen_report.py OVERLAYS.
+OVERLAY_FILES = {"llm": ["Libraries/MLXLLM/SharpAI/SharpAIDeepseekV4Registration.swift"]}
+
+
+def overlay_keys(kind):
+    out = set()
+    for rel in OVERLAY_FILES.get(kind, []):
+        src = open(os.path.join(root, rel), encoding="utf8").read()
+        m = re.search(r"static var creators[^{]*\{", src)
+        body = src[m.end():src.index("\n    }", m.end())]
+        out |= set(re.findall(r'^\s{12}"([A-Za-z0-9_.\-]+)"\s*:', body, re.M))
+    return out
+
+
 def registry_keys(path, enum_name):
     src = open(os.path.join(root, path), encoding="utf8").read()
     start = src.index(f"enum {enum_name}")
@@ -40,7 +55,7 @@ def registry_keys(path, enum_name):
     return set(re.findall(r'^\s{8}"([A-Za-z0-9_.\-]+)"\s*:', body, re.M))
 
 
-keys = {k: registry_keys(REGISTRY_FILES[k], TYPE_REGISTRY[k]) for k in REGISTRY_FILES}
+keys = {k: registry_keys(REGISTRY_FILES[k], TYPE_REGISTRY[k]) | overlay_keys(k) for k in REGISTRY_FILES}
 
 rows = list(csv.DictReader(open(os.path.join(root, "scripts/conformance/model-coverage.csv"), encoding="utf8")))
 by_type = {}

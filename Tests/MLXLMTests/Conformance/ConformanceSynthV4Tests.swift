@@ -21,7 +21,7 @@ import Testing
 
 struct ConformanceSynthV4Case {
     var cfg: [String: Any]
-    var model: DeepseekV4Model
+    var model: SharpAIDeepseekV4Model
     var native: [ConformanceSynth.Entry]
     var raw: [ConformanceSynth.Entry]  // real layout, HF names
     var converted: [ConformanceSynth.Entry]  // real layout, mlx-converted names, per-expert tensors (loader input)
