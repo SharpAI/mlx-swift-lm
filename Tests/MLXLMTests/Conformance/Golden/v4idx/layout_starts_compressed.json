@@ -1,0 +1,1 @@
+{"dtype":"int","group":"layout","kind":"layout","name":"layout_starts_compressed","outputs":{"layers":[{"compressor":true,"indexer":true,"layer":0,"ratio":4},{"compressor":true,"indexer":false,"layer":1,"ratio":128},{"compressor":false,"indexer":false,"layer":2,"ratio":0},{"compressor":true,"indexer":true,"layer":3,"ratio":4}]},"ratios":[4,128,0,4],"tolerance":"exact"}

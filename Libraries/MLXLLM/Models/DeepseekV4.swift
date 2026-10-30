@@ -367,14 +367,24 @@ class DeepseekV4Attention: Module {
                 eps: config.rmsNormEps)
             : nil
 
-        // RoPE using compress_rope_theta (used for most layers with compress_ratio != 0)
-        // We use a single rope config as a simplification
-        let ropeBase = config.compressRopeTheta
+        // vLLM (commit 2eae56c, cited by the golden suite): layers with compress_ratio <= 1 use rope_theta and plain RoPE;
+        // compressed layers use compress_rope_theta with YaRN and force mscale = 0 so that position 0 stays the identity
+        // (deepseek_scaling_rope.py:52-55,110-111). The YaRN frequencies are checked against vLLM's generic YaRN code
+        // (common.py:32-68, deepseek_scaling_rope.py:73-101 at 739e594) by the `yarn` golden fixtures. Only these two
+        // branches are modelled: vLLM's rope_type selection for the V4 tree (deepseek_llama_scaling when
+        // attention_factor == 1.0, nested per-layer-type rope dicts) is not, and was not verifiable here (the
+        // cited file is not in any reachable tree); config.ropeScaling is used as is.
+        let ropeBase = ratio > 1 ? config.compressRopeTheta : config.ropeTheta
+        var ropeScaling: [String: StringOrNumber]? = ratio > 1 ? config.ropeScaling : nil
+        if ropeScaling != nil {
+            ropeScaling?["mscale"] = .float(0)
+            ropeScaling?["mscale_all_dim"] = .float(0)
+        }
         self.rope = initializeRope(
             dims: config.qkRopeHeadDim,
             base: ropeBase,
             traditional: true,
-            scalingConfig: config.ropeScaling,
+            scalingConfig: ropeScaling,
             maxPositionEmbeddings: config.maxPositionEmbeddings
         )
     }

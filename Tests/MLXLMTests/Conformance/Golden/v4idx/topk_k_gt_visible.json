@@ -1,0 +1,1 @@
+{"R":2,"dtype":"float32","group":"k_gt_available","inputs":{"scores":[4,1,7,null,null,null,9,null,null,null,null,null]},"kind":"topk","name":"topk_k_gt_visible","nb":6,"outputs":{"select":[{"need":1,"strict":[0,2],"tie":[1]},{"need":1,"strict":[],"tie":[0]}]},"tolerance":"exact","topk":5}

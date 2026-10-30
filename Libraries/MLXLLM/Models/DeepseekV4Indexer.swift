@@ -11,9 +11,11 @@
 // the rotation: an orthonormal rotation of both operands leaves q.k unchanged, so only the CUDA kernel's
 // fp8 quantisation (not modelled) would see it.
 //
-// INFERRED, not covered by any oracle (no V4 source offline):
+// Items 1-3 are checked against a float64 oracle transcribed from vLLM's DeepSeek-V4 sources
+// (ConformanceV4IndexerGoldenTests, tools/conformance/golden/v4idx/; not modelled there: fp8 quantisation, tie order).
+// Item 4 is still INFERRED (no oracle):
 //   1. score[t, b] = sum_h w[t, h] * relu(q_h[t] . k[b]), w = weights_proj(x) * nHeads^-0.5 * headDim^-0.5
-//      (the repo's DeepseekV32Indexer formula).
+//      (vLLM attention.py:1004,1100).
 //   2. q = wq_b(qNorm(wqA(x))) per index head; RoPE on the LAST `ropeDim` channels of q (position t) and
 //      of k (position b * ratio), with the layer's rope.
 //   3. only complete blocks (b + 1) * 4 - 1 <= t are candidates; k = min(index_topk, #candidates); a query
@@ -83,7 +85,9 @@ extension SharpAIOverlay {
             select(scores(x, qr: qr, rope: rope, keys: keys, start: start))
         }
 
-        private func select(_ s: MLXArray) -> MLXArray {
+        /// The selection step on a score matrix [B, L, nb] (-inf = not visible). Internal so the golden suite can feed it
+        /// ties and rows with fewer than k visible entries directly.
+        func select(_ s: MLXArray) -> MLXArray {
             let nb = s.dim(-1)
             let k = min(topk, nb)
             let top = argPartition(-s, kth: k - 1, axis: -1)[.ellipsis, ..<k]  // [B, L, k]
