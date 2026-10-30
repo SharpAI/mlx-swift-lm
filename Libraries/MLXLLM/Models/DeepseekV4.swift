@@ -52,6 +52,13 @@ public struct DeepseekV4Configuration: Codable, Sendable {
     var ropeScaling: [String: StringOrNumber]?
     var maxPositionEmbeddings: Int
 
+    // Sparse indexer shape and quantization metadata (optional; absent in older configs)
+    var indexHeadDim: Int? = nil
+    var indexNHeads: Int? = nil
+    var indexTopk: Int? = nil
+    var expertDtype: String? = nil
+    var quantizationConfig: [String: JSONValue]? = nil
+
     // Nope head dim (derived)
     var nopeHeadDim: Int { headDim - qkRopeHeadDim }
 
@@ -85,6 +92,11 @@ public struct DeepseekV4Configuration: Codable, Sendable {
         case ropeTheta = "rope_theta"
         case ropeScaling = "rope_scaling"
         case maxPositionEmbeddings = "max_position_embeddings"
+        case indexHeadDim = "index_head_dim"
+        case indexNHeads = "index_n_heads"
+        case indexTopk = "index_topk"
+        case expertDtype = "expert_dtype"
+        case quantizationConfig = "quantization_config"
     }
 }
 
