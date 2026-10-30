@@ -51,16 +51,23 @@ extension SharpAIOverlay {
             self._norm.wrappedValue = RMSNorm(dimensions: headDim, eps: eps)
         }
 
+        /// kv / score projections with a float32 result. vLLM multiplies the (bf16) hidden state with an fp32 OUTPUT
+        /// (`torch.mm(..., out_dtype=torch.float32)`, attention.py:698-703) and keeps the compressor state and the
+        /// pooling in fp32 (compressor.py:261); rounding them to the model dtype before the softmax is off by ~1e-2.
+        func project(_ x: MLXArray) -> (kv: MLXArray, score: MLXArray) {
+            let xf = x.asType(.float32)
+            return (wkv(xf), wgate(xf))
+        }
+
         /// x: [B, T, hidden] -> [B, T / ratio, headDim] (RMSNorm applied, no RoPE). Trailing tokens that
         /// do not fill a block are dropped.
         func callAsFunction(_ x: MLXArray) -> MLXArray {
             let b = x.dim(0), nb = x.dim(1) / ratio
             if nb == 0 { return zeros([b, 0, headDim], dtype: x.dtype) }
             let xs = x[0..., ..<(nb * ratio)]
+            let (kv, score) = project(xs)
             return norm(
-                Self.pool(
-                    kv: wkv(xs), score: wgate(xs), ape: ape, ratio: ratio, overlap: overlap,
-                    headDim: headDim))
+                Self.pool(kv: kv, score: score, ape: ape, ratio: ratio, overlap: overlap, headDim: headDim))
         }
 
         /// Batched, vectorised form of `SharpAIOverlayGapReference.softmaxPoolCompress`.

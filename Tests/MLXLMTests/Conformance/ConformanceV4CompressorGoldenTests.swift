@@ -292,18 +292,18 @@ struct ConformanceV4CompressorGoldenTests {
         #expect(n == 23)
     }
 
-    @Test("gap: bfloat16 (production dtype) pooling is not fp32 like vLLM (full-sequence and cached)", arguments: bf16Cases)
-    func bf16Gap(_ c: G.Case) throws {
+    @Test("bfloat16 (production dtype): fp32 projection and pooling like vLLM (full-sequence and cached)", arguments: bf16Cases)
+    func bf16(_ c: G.Case) throws {
         let m = try G.manifest()
         let (pooled, entries) = G.fullPath(c)
         let p = G.compare(pooled, golden: c.pooledNormed, nb: c.blocks, c: c, positional: false, m)
         let e = G.compare(entries, golden: c.entries, nb: c.blocks, c: c, positional: true, m)
-        let (fails, _) = G.cachedPath(c, chunks: [1], m)
-        print("[v4comp][stats] bf16 \(c.name) full pooled maxAbs=\(p.maxAbs) excess=\(p.worstExcess) | entries maxAbs=\(e.maxAbs) excess=\(e.worstExcess) | cached token-by-token failing steps=\(fails.count) | out dtype \(pooled.dtype)")
-        ConformanceGap.knownIssue("V4Compressor pools in the input dtype: wkv(x) / wgate(x) are rounded to bfloat16 BEFORE the softmax; vLLM takes an fp32 GEMM output and pools in fp32 (attention.py:698-703 out_dtype=float32, compressor.py:261). Entries are off by up to ~1e-2 absolute (bf16 budget 4e-3 relative)") {
-            ConformanceGap.expect(p.ok, "\(c.name) pooled_normed: worst excess \(p.worstExcess), max abs \(p.maxAbs), \(p.firstBad ?? "")")
-            ConformanceGap.expect(e.ok, "\(c.name) entries: worst excess \(e.worstExcess), max abs \(e.maxAbs), \(e.firstBad ?? "")")
-            ConformanceGap.expect(fails.isEmpty, "\(c.name) cached: \(fails.prefix(2))")
+        print("[v4comp][stats] bf16 \(c.name) full pooled maxAbs=\(p.maxAbs) excess=\(p.worstExcess) | entries maxAbs=\(e.maxAbs) excess=\(e.worstExcess) | out dtype \(pooled.dtype)")
+        #expect(p.ok, "\(c.name) pooled_normed: worst excess \(p.worstExcess), max abs \(p.maxAbs), \(p.firstBad ?? "")")
+        #expect(e.ok, "\(c.name) entries: worst excess \(e.worstExcess), max abs \(e.maxAbs), \(e.firstBad ?? "")")
+        for plan in G.plans(c) {
+            let (fails, _) = G.cachedPath(c, chunks: plan, m)
+            #expect(fails.isEmpty, "\(fails.prefix(2))")
         }
     }
 

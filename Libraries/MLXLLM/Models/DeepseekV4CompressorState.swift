@@ -215,7 +215,7 @@ extension SharpAIOverlay.V4Compressor {
         _ x: MLXArray, state s: inout SharpAIOverlay.V4CompressorState, rope: RoPELayer, ropeDim: Int
     ) -> MLXArray? {
         let l = x.dim(1)
-        let kv = wkv(x), sc = wgate(x)
+        let (kv, sc) = project(x)
         let m = s.tailRows
         let fullKV = s.tailKV.map { concatenated([$0, kv], axis: 1) } ?? kv
         let fullSc = s.tailScore.map { concatenated([$0, sc], axis: 1) } ?? sc
