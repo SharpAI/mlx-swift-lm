@@ -295,6 +295,13 @@ def main():
         "reference": ["dequant_ref.py", "dequant_crosscheck.py"],
         "vllm_commit": VLLM_COMMIT, "torch_version": torch.__version__, "numpy_version": np.__version__,
         "tolerances": TOL, "crosscheck": stats, "files": files,
+        # the oracle + generator sources the fixtures were produced by; the Swift suite re-hashes them, so editing one
+        # without regenerating (and committing) the fixtures is noticed
+        "tools": {
+            n: {"sha256": hashlib.sha256(open(os.path.join(HERE, n), "rb").read()).hexdigest(),
+                "bytes": os.path.getsize(os.path.join(HERE, n))}
+            for n in ("dequant_ref.py", "dequant_crosscheck.py", "gen_dequant_golden.py")
+        },
     }
     with open(os.path.join(a.out, "MANIFEST.json"), "w") as f:
         json.dump(manifest, f, indent=1, sort_keys=True)
