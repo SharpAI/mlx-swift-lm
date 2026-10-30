@@ -397,13 +397,16 @@ struct DequantGoldenTests {
 
     // MARK: ConformanceGap (no Swift path)
 
-    /// All Swift sources under Libraries/ (text), for the "is there a loader for X" probes.
+    /// `source` without comments, string literals kept. STUB (red): returns the text unchanged.
+    static func codeOnly(_ source: String) -> String { source }
+
+    /// All Swift sources under Libraries/ (text, comments removed), for the "is there a loader for X" probes.
     static let librarySources: String = {
         let root = DequantGolden.repoRoot.appendingPathComponent("Libraries")
         var text = ""
         if let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) {
             for case let u as URL in en where u.pathExtension == "swift" {
-                text += (try? String(contentsOf: u, encoding: .utf8)) ?? ""
+                text += codeOnly((try? String(contentsOf: u, encoding: .utf8)) ?? "")
             }
         }
         return text
@@ -432,6 +435,16 @@ struct DequantGoldenTests {
     }
 
     // MARK: non-vacuity and coverage
+
+    @Test("loader-gap probes read code, not comments (a comment mentioning weight_packed must not close the gap)")
+    func probesIgnoreComments() {
+        let src = "// weight_packed in a line comment\n/* weight_global_scale\n in a block */\nlet a = \"http://x\" // trailing note\nlet k = \"weight_packed\"\n"
+        let code = Self.codeOnly(src)
+        #expect(code.contains("let a") && code.contains("\"http://x\""), "string literals (even with //) stay")
+        #expect(!code.contains("in a line comment") && !code.contains("in a block") && !code.contains("trailing note"))
+        #expect(code.contains("\"weight_packed\""))
+        #expect(!code.contains("weight_global_scale"))
+    }
 
     @Test("fixture integrity problems are reported as a problem string (no trap): tampered content, wrong size, unknown file")
     func integrityIsReported() {
