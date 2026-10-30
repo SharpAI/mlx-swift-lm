@@ -131,7 +131,7 @@ def main():
             "enforced_in": "ConformanceSwigluGoldenTests.swift SwigluGolden.tolerances (this block only documents them; manifestComplete fails if they differ)",
             "rule": "|swift - golden| <= atol + rtol*|golden|; golden is exact float64 math on dtype-rounded inputs, so the budget is dtype rounding only. Set a priori from the dtype's unit roundoff u and the number of rounded operations (sigmoid, gate*sigmoid, *up, optional clamps which are exact): about 3-5 roundings plus a few ulp of fast-math exp.",
             "float32": {"rtol": 2e-6, "atol": 1e-30, "why": "u=6e-8; 5 roundings + Metal fast exp (<=3 ulp) is ~4e-7; 2e-6 leaves 5x margin. atol 1e-30 only guards denormal flush; the earlier 1e-20 made ~78 swigluoai goldens below 5e-15 effectively unchecked. swigluoai adds an exp-tail term |1.702*gate|*2*2^-24 (INFERRED conditioning argument)."},
-            "bfloat16": {"rtol": 2e-2, "atol": 1e-30, "why": "u=2^-9=2e-3; up to ~5 successive roundings if MLX keeps bf16 intermediates -> 1e-2; same rtol vLLM's own test_activation.py:90 uses for bf16."},
+            "bfloat16": {"rtol": 2e-2, "atol": 1e-30, "why": "bf16 has 8 significant bits: round-to-nearest u=2^-8=3.9e-3 (same convention as the kda, v4route and v4idx manifests); up to ~5 successive roundings if MLX keeps bf16 intermediates -> 5u=1.95e-2 <= 2e-2; same rtol vLLM's own test_activation.py:90 uses for bf16 (swigluoai/swiglustep)."},
             "float16": {"rtol": 2e-3, "atol": 1e-7, "why": "u=2^-11=4.9e-4; ~5 roundings -> 2.5e-3 worst case, vLLM test uses 2e-3 (test_activation.py:90); atol = 1.7 subnormal steps (6e-8 each) for results below fp16 min normal 6.1e-5."},
         },
         "files": files,

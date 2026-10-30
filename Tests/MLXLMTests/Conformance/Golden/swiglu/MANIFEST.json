@@ -20,7 +20,7 @@
  "generator": {
   "command": "VLLM_ROOT=<vLLM checkout at 739e5945d> venv/bin/python -I tools/conformance/golden/swiglu/generate.py",
   "scripts": {
-   "generate.py": "e6dde83e947d97cd46c75cebf4be5d7533c4bf1eee752228fd1f898b636840b6",
+   "generate.py": "a7139b84231c3c438d66561d7ae38d900bad0bea067d4a9fdc475fa6413e208d",
    "swiglu_ref.py": "c1da43eeb88ac03eb51bb924111e2ac89f9f1c908c39d789c1773b6ad2f9def0"
   }
  },
@@ -41,7 +41,7 @@
   "bfloat16": {
    "atol": 1e-30,
    "rtol": 0.02,
-   "why": "u=2^-9=2e-3; up to ~5 successive roundings if MLX keeps bf16 intermediates -> 1e-2; same rtol vLLM's own test_activation.py:90 uses for bf16."
+   "why": "bf16 has 8 significant bits: round-to-nearest u=2^-8=3.9e-3 (same convention as the kda, v4route and v4idx manifests); up to ~5 successive roundings if MLX keeps bf16 intermediates -> 5u=1.95e-2 <= 2e-2; same rtol vLLM's own test_activation.py:90 uses for bf16 (swigluoai/swiglustep)."
   },
   "enforced_in": "ConformanceSwigluGoldenTests.swift SwigluGolden.tolerances (this block only documents them; manifestComplete fails if they differ)",
   "float16": {
