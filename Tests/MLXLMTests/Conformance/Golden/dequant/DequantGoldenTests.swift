@@ -87,10 +87,11 @@ enum DequantGolden {
     static func doubles(_ v: Any?) -> [Double] { (v as! [Any]).map(d) }
     static func ints(_ v: Any?) -> [Int] { (v as! [Any]).map { ($0 as! NSNumber).intValue } }
 
-    /// float32_affine_cancellation: atol scales with the largest scale of the case (see MANIFEST "why").
-    static func affineTolerance(maxScale: Double) -> (rtol: Double, atol: Double) {
+    /// float32_affine_cancellation. `scales[i]` is the scale of the group element i belongs to.
+    /// STUB (red): still uses the case-wide largest scale for every element.
+    static func affineMismatch(_ got: [Float], _ want: [Double], scales: [Double]) -> String? {
         let t = (manifest()["tolerances"] as! [String: [String: Any]])["float32_affine_cancellation"]!
-        return (d(t["rtol"]!), d(t["atol_per_max_scale"]!) * maxScale)
+        return mismatch(got, want, rtol: d(t["rtol"]!), atol: d(t["atol_per_max_scale"]!) * scales.max()!)
     }
 
     static func tolerance(_ name: String) -> (rtol: Double, atol: Double) {
@@ -341,6 +342,12 @@ struct DequantGoldenTests {
         })
     func int4ViaAffine(id: String) {
         let c = G.entry("int4_pack_quantized.json", id)
+        let (got, scales) = Self.int4Dequant(c)
+        G.check("int4/\(id)", G.affineMismatch(got, G.doubles(c["expected"]), scales: scales))
+    }
+
+    /// Row-major [n, k] result of the int4 case through MLX affine, and the scale of each element's group.
+    static func int4Dequant(_ c: [String: Any]) -> (got: [Float], scales: [Double]) {
         let (n, k, g) = (c["rows"] as! Int, c["cols"] as! Int, c["group"] as! Int)
         let words = G.ints(c["weight_packed"]).map { UInt32(truncatingIfNeeded: $0) }
         let w = MLXArray(words, [n, k / 8])
@@ -355,14 +362,20 @@ struct DequantGoldenTests {
             zp = MLXArray(z, [n, cols])
         }
         let got = dequantized(w, scales: s, biases: -(zp * s), groupSize: g, bits: 4, mode: .affine, dtype: .float32)
-        let t = G.affineTolerance(maxScale: G.doubles(c["scale"]).max()!)
-        G.check("int4/\(id)", G.mismatch(G.floats(got), G.doubles(c["expected"]), rtol: t.rtol, atol: t.atol))
+        let sc = G.doubles(c["scale"])
+        return (G.floats(got), (0 ..< n * k).map { sc[($0 / k) * (k / g) + ($0 % k) / g] })
     }
 
     @Test("AWQ int4 (vLLM awq_pack layout) -> convertAutoAWQ -> MLX affine dequantize equals the golden [K,N]^T",
         arguments: G.ids("awq_int4.json"))
     func awq(id: String) {
         let c = G.entry("awq_int4.json", id)
+        let (got, scales) = Self.awqDequant(c)
+        G.check("awq/\(id)", G.affineMismatch(got, G.doubles(c["expected_KxN"]), scales: scales))
+    }
+
+    /// Row-major [K, N] result of the AWQ case through convertAutoAWQ + MLX affine, and the scale of each element's group.
+    static func awqDequant(_ c: [String: Any]) -> (got: [Float], scales: [Double]) {
         let (k, n, g) = (c["in_features"] as! Int, c["out_features"] as! Int, c["group"] as! Int)
         var weights: [String: MLXArray] = [
             "layer.qweight": MLXArray(G.ints(c["qweight"]).map { Int32(truncatingIfNeeded: $0) }, G.ints(c["qweight_shape"])),
@@ -374,8 +387,8 @@ struct DequantGoldenTests {
         let w = weights["layer.weight"]!, s = weights["layer.scales"]!, b = weights["layer.biases"]!
         #expect(w.dtype == .uint32 && w.shape == [n, k / 8])
         let got = dequantized(w, scales: s, biases: b, groupSize: g, bits: 4, mode: .affine, dtype: .float32)  // [N, K]
-        let t = G.affineTolerance(maxScale: G.doubles(c["scales"]).max()!)
-        G.check("awq/\(id)", G.mismatch(G.floats(got.transposed()), G.doubles(c["expected_KxN"]), rtol: t.rtol, atol: t.atol))
+        let sc = G.doubles(c["scales"])
+        return (G.floats(got.transposed()), (0 ..< k * n).map { sc[(($0 / n) / g) * n + $0 % n] })
     }
 
     // MARK: ConformanceGap (no Swift path)
@@ -415,6 +428,49 @@ struct DequantGoldenTests {
     }
 
     // MARK: non-vacuity and coverage
+
+    @Test("tolerances are tight: a 1-ulp float32 product error, and an error just above one small-scale group's own bound, are rejected")
+    func tolerancesAreTight() {
+        // fp8 * float32 scale is one correctly rounded float32 product, so equality is required (no slack for 1 ulp)
+        let ch = G.entry("fp8_scaled.json", "channel_4x8", key: "channel")
+        let want = G.doubles(ch["expected"])
+        let exact = want.map { Float($0) }
+        let p = G.tolerance("float32_product")
+        #expect(G.mismatch(exact, want, rtol: p.rtol, atol: p.atol) == nil)
+        let ulp = exact.map { $0 != 0 && $0.isFinite ? $0.nextUp : $0 }
+        #expect(G.mismatch(ulp, want, rtol: p.rtol, atol: p.atol) != nil, "a 1-ulp product error must be rejected")
+
+        // affine: the bound is per group (15 * 2^-23 * that group's scale), not per case
+        var qualified = 0
+        let ratio = 4.0
+        for (what, got, scales, want) in affineCases() {
+            guard let lo = scales.indices.filter({ want[$0] != 0 }).min(by: { scales[$0] < scales[$1] }),
+                scales.max()! > ratio * scales[lo]
+            else { continue }
+            qualified += 1
+            #expect(G.affineMismatch(got, want, scales: scales) == nil, "\(what): baseline")
+            var bumped = want
+            bumped[lo] += 3 * 15 * pow(2.0, -23) * scales[lo]  // 3x the bound of its own group
+            #expect(G.affineMismatch(got, bumped, scales: scales) != nil, "\(what): small-scale group error accepted")
+        }
+        #expect(qualified >= 3, "probe is vacuous: too few cases mix a small and a large scale")
+    }
+
+    func affineCases() -> [(String, [Float], [Double], [Double])] {
+        var out = [(String, [Float], [Double], [Double])]()
+        for id in G.ids("int4_pack_quantized.json") {
+            let c = G.entry("int4_pack_quantized.json", id)
+            guard [32, 64].contains(c["group"] as! Int) else { continue }
+            let (got, scales) = Self.int4Dequant(c)
+            out.append(("int4/\(id)", got, scales, G.doubles(c["expected"])))
+        }
+        for id in G.ids("awq_int4.json") {
+            let c = G.entry("awq_int4.json", id)
+            let (got, scales) = Self.awqDequant(c)
+            out.append(("awq/\(id)", got, scales, G.doubles(c["expected_KxN"])))
+        }
+        return out
+    }
 
     @Test("mutation: perturbed goldens and swapped nibbles must FAIL the comparison")
     func mutationsFail() {
