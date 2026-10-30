@@ -88,9 +88,10 @@ struct ConformanceV4CompressorTests {
 
     // MARK: attention integration (inferred behaviour, pinned against an independent dense computation)
 
-    static func attentionConfig(ratios: [Int]) throws -> DeepseekV4Configuration {
+    static func attentionConfig(ratios: [Int], indexTopk: Int = 4) throws -> DeepseekV4Configuration {
         var o = try #require(try JSONSerialization.jsonObject(with: ConformanceDeepseekV4.tinyJSON()) as? [String: Any])
         o["compress_ratios"] = ratios
+        o["index_topk"] = indexTopk
         return try JSONDecoder().decode(DeepseekV4Configuration.self, from: JSONSerialization.data(withJSONObject: o))
     }
 

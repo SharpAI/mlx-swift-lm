@@ -316,6 +316,9 @@ class DeepseekV4Attention: Module {
     // KV compressor (SharpAI overlay, layers with compress_ratio > 1)
     @ModuleInfo(key: "compressor") var compressor: SharpAIOverlay.V4Compressor?
 
+    // Sparse indexer (SharpAI overlay, ratio-4 layers)
+    @ModuleInfo(key: "indexer") var indexer: SharpAIOverlay.V4Indexer?
+
     // Attention sink bias (per head, no .weight suffix)
     // Stored via update(parameters:) using the key "attn_sink"
     var attn_sink: MLXArray
@@ -354,6 +357,13 @@ class DeepseekV4Attention: Module {
             ratio > 1
             ? SharpAIOverlay.V4Compressor(
                 hiddenSize: config.hiddenSize, headDim: config.headDim, ratio: ratio,
+                eps: config.rmsNormEps)
+            : nil
+        self._indexer.wrappedValue =
+            ratio == 4 && config.indexNHeads != nil && config.indexHeadDim != nil && config.indexTopk != nil
+            ? SharpAIOverlay.V4Indexer(
+                hiddenSize: config.hiddenSize, qLoraRank: config.qLoraRank, nHeads: config.indexNHeads!,
+                headDim: config.indexHeadDim!, topk: config.indexTopk!, ropeDim: config.qkRopeHeadDim,
                 eps: config.rmsNormEps)
             : nil
 
@@ -437,7 +447,8 @@ class DeepseekV4Attention: Module {
 
         // --- Query ---
         // Low-rank Q: wq_a → q_norm → wq_b
-        var q = wqB(qNorm(wqA(x)))                       // [B, L, n_heads * head_dim]
+        let qr = qNorm(wqA(x))                            // q-lora residual (also read by the indexer)
+        var q = wqB(qr)                                   // [B, L, n_heads * head_dim]
         q = q.reshaped(B, L, numHeads, headDim)
             .transposed(0, 2, 1, 3)                       // [B, n_heads, L, head_dim]
         // Per-head RMS normalization (no learnable scale)
@@ -479,8 +490,9 @@ class DeepseekV4Attention: Module {
             let visible = SharpAIOverlay.v4Visibility(
                 length: L, blocks: compressed.dim(1), ratio: compressor.ratio
             ).expandedDimensions(axis: 0)
+            let readable = indexer.map { visible & $0.select(x, qr: qr, rope: rope) } ?? visible
             attended = SharpAIOverlay.v4CompressedAttention(
-                queries: queries, localKeys: kFull, compressed: compressed, compressedMask: visible,
+                queries: queries, localKeys: kFull, compressed: compressed, compressedMask: readable,
                 localMask: mask, scale: scale, sinks: sinksToUse)
         }
         let output = (attended ?? deepseekAttentionWithSinks(
@@ -880,9 +892,7 @@ public class DeepseekV4Model: Module, LLMModel, KVCacheDimensionProvider, LoRAMo
         for (key, value) in newWeights {
             // Drop rotary embedding precomputed frequencies
             if key.contains("rotary_emb.inv_freq") { continue }
-            // Drop indexer sub-module weights (compressor: SharpAIOverlay.V4Compressor, SL-35 step 4.1)
-            // TODO: implement the sparse indexer.
-            if key.contains(".attn.indexer.") { continue }
+            // compressor (SL-35 4.1) and indexer (SL-35 4.2) tensors are kept: SharpAIOverlay.V4Compressor / V4Indexer
             // Drop gate.tid2eid
             if key.contains(".ffn.gate.tid2eid") { continue }
 

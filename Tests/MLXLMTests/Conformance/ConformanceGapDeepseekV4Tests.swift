@@ -144,9 +144,12 @@ struct ConformanceGapDeepseekV4Tests {
             }
         }
         #expect(!keys.contains { $0.hasPrefix("model.layers.0.attn.compressor.") })
-        ConformanceGap.knownIssue("DeepseekV4 has no indexer module (sanitize drops .attn.indexer.*)") {
-            ConformanceGap.expect(keys.contains { $0.hasPrefix("model.layers.1.attn.indexer.") })
+        // Indexer landed (SL-35 step 4.2): ratio-4 layer 1 owns one (with its own compressor), ratio-128 layer 2 none.
+        for k in ["wq_b.weight", "weights_proj.weight", "compressor.ape", "compressor.wkv.weight",
+                  "compressor.wgate.weight", "compressor.norm.weight"] {
+            #expect(keys.contains("model.layers.1.attn.indexer.\(k)"), "layer 1 lacks indexer.\(k)")
         }
+        #expect(!keys.contains { $0.hasPrefix("model.layers.2.attn.indexer.") || $0.hasPrefix("model.layers.0.attn.indexer.") })
     }
 
     @Test("V4 hash-MoE layers (index < num_hash_layers) own a gate.tid2eid [vocab, top-k] table")
@@ -164,10 +167,12 @@ struct ConformanceGapDeepseekV4Tests {
     func sanitizeKeepsTensors() async throws {
         let m = try await ConformanceDeepseekV4.tinyModel()
         let landed = "model.layers.0.attn.compressor.wkv.weight"  // compressor: SL-35 step 4.1
-        let probe = ["model.layers.0.attn.indexer.wq_b.weight", "model.layers.0.ffn.gate.tid2eid"]
+        let landedIx = "model.layers.0.attn.indexer.wq_b.weight"  // indexer: SL-35 step 4.2
+        let probe = ["model.layers.0.ffn.gate.tid2eid"]
         let out = m.sanitize(
-            weights: Dictionary(uniqueKeysWithValues: (probe + [landed]).map { ($0, MLXArray.zeros([2, 2])) }))
+            weights: Dictionary(uniqueKeysWithValues: (probe + [landed, landedIx]).map { ($0, MLXArray.zeros([2, 2])) }))
         #expect(out[landed] != nil, "sanitize dropped \(landed)")
+        #expect(out[landedIx] != nil, "sanitize dropped \(landedIx)")
         for k in probe {
             ConformanceGap.knownIssue("DeepseekV4.sanitize drops \(k)") {
                 ConformanceGap.expect(out[k] != nil)

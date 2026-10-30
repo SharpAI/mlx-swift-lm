@@ -177,9 +177,9 @@ struct ConformanceSynthV4Tests {
         }
     }
 
-    /// Groups still without a home in our module. `.compressor` landed in SL-35 step 4.1 and is asserted plainly.
-    static let missingFromOurs: [ConformanceSynthV4Layout.Group] = [.indexer, .tid2eid]
-    static let landedGroups: [ConformanceSynthV4Layout.Group] = [.compressor]
+    /// Groups still without a home in our module. `.compressor` (4.1) and `.indexer` (4.2) landed in SL-35 and are asserted plainly.
+    static let missingFromOurs: [ConformanceSynthV4Layout.Group] = [.tid2eid]
+    static let landedGroups: [ConformanceSynthV4Layout.Group] = [.compressor, .indexer]
 
     @Test("real tensors our module has no parameter for", arguments: ConformanceSynthV4Layout.Group.allCases)
     func realTensorsWithoutHome(_ g: ConformanceSynthV4Layout.Group) async throws {
