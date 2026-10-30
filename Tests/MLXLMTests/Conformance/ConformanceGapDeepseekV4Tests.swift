@@ -118,7 +118,7 @@ struct ConformanceGapDeepseekV4Tests {
         #expect(fixtureKeys.contains(key), "fixture must carry \(key)")
         let decoded = try ConformanceDeepseekV4.decodedKeys(data)
         ConformanceGap.knownIssue("DeepseekV4Configuration silently ignores `\(key)`") {
-            #expect(decoded.contains(key))
+            ConformanceGap.expect(decoded.contains(key))
         }
     }
 
@@ -130,7 +130,7 @@ struct ConformanceGapDeepseekV4Tests {
         // tiny config: num_hidden_layers = 3, num_nextn_predict_layers = 1.
         let built = m.model.layers.count
         ConformanceGap.knownIssue("DeepseekV4 builds num_hidden_layers - num_nextn_predict_layers main layers") {
-            #expect(built == 3, "built \(built) layers, spec says 3 (compress_ratios has 4 = 3 + 1 MTP)")
+            ConformanceGap.expect(built == 3, "built \(built) layers, spec says 3 (compress_ratios has 4 = 3 + 1 MTP)")
         }
     }
 
@@ -142,10 +142,10 @@ struct ConformanceGapDeepseekV4Tests {
         // Layers 1 and 2 are only built once the layer-count gap above is fixed, so key off layer 1 only
         // (it exists today) for the indexer and either layer for the compressor.
         ConformanceGap.knownIssue("DeepseekV4 has no compressor module (sanitize drops .attn.compressor.*)") {
-            #expect(keys.contains { $0.hasPrefix("model.layers.1.attn.compressor.") })
+            ConformanceGap.expect(keys.contains { $0.hasPrefix("model.layers.1.attn.compressor.") })
         }
         ConformanceGap.knownIssue("DeepseekV4 has no indexer module (sanitize drops .attn.indexer.*)") {
-            #expect(keys.contains { $0.hasPrefix("model.layers.1.attn.indexer.") })
+            ConformanceGap.expect(keys.contains { $0.hasPrefix("model.layers.1.attn.indexer.") })
         }
     }
 
@@ -155,8 +155,8 @@ struct ConformanceGapDeepseekV4Tests {
         let params = Dictionary(uniqueKeysWithValues: m.parameters().flattened())
         let t = params["model.layers.0.ffn.gate.tid2eid"]
         ConformanceGap.knownIssue("DeepseekV4 has no tid2eid parameter (sanitize drops it)") {
-            #expect(t != nil)
-            #expect(t?.shape == [64, 2])
+            ConformanceGap.expect(t != nil)
+            ConformanceGap.expect(t?.shape == [64, 2])
         }
     }
 
@@ -168,7 +168,7 @@ struct ConformanceGapDeepseekV4Tests {
         let out = m.sanitize(weights: Dictionary(uniqueKeysWithValues: probe.map { ($0, MLXArray.zeros([2, 2])) }))
         for k in probe {
             ConformanceGap.knownIssue("DeepseekV4.sanitize drops \(k)") {
-                #expect(out[k] != nil)
+                ConformanceGap.expect(out[k] != nil)
             }
         }
     }
