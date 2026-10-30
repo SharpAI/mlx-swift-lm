@@ -83,7 +83,9 @@ extension SharpAIOverlay {
             select(scores(x, qr: qr, rope: rope, keys: keys, start: start))
         }
 
-        private func select(_ s: MLXArray) -> MLXArray {
+        /// The selection step on a score matrix [B, L, nb] (-inf = not visible). Internal so the golden suite can feed it
+        /// ties and rows with fewer than k visible entries directly.
+        func select(_ s: MLXArray) -> MLXArray {
             let nb = s.dim(-1)
             let k = min(topk, nb)
             let top = argPartition(-s, kth: k - 1, axis: -1)[.ellipsis, ..<k]  // [B, L, k]
