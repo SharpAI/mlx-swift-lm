@@ -412,7 +412,7 @@ def write_json(path, obj):
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    root = os.path.abspath(os.path.join(here, "..", "..", ".."))
+    root = os.path.abspath(os.path.join(here, "..", "..", "..", ".."))
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(root, "Tests", "MLXLMTests", "Conformance", "Golden", "v4idx"))
     a = ap.parse_args()

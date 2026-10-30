@@ -166,11 +166,11 @@ enum V4IdxGolden {
         return url.appendingPathComponent("Golden/v4idx")
     }()
 
-    /// <repo>/tools/conformance/golden (generator and oracle), derived from this file's path.
+    /// <repo>/tools/conformance/golden/v4idx (generator and oracle), derived from this file's path.
     static let defaultToolsDirectory: URL = {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0 ..< 4 { url.deleteLastPathComponent() }
-        return url.appendingPathComponent("tools/conformance/golden")
+        return url.appendingPathComponent("tools/conformance/golden/v4idx")
     }()
 
     static func sha256(_ data: Data) -> String {
