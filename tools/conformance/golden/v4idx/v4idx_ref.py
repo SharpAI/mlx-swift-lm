@@ -27,9 +27,13 @@ INFERRED / NOT MODELLED (kept short, each is also listed in MANIFEST.json "note"
       rotation of both operands would leave q.k unchanged anyway.
   I3  Tie-breaking among equal scores is not specified by vLLM (its tests compare the multiset of selected VALUES). The golden
       therefore encodes {strict: indices that must be selected, tie: indices tied at the threshold, need: how many of them}.
-  I4  RoPE: fixtures use plain GPT-J RoPE (theta given). That is exactly vLLM's `deepseek_yarn` with factor 1.0 (the SWA layers,
-      common/rope.py:46-52, deepseek_scaling_rope.py:73-101 with scaling_factor == 1). The YaRN variant of compressed layers is a
-      separate unit and is NOT covered by these fixtures.
+  I4  RoPE: the score/rope fixtures use plain GPT-J RoPE (theta given). That is exactly vLLM's `deepseek_yarn` with factor 1.0
+      (the SWA layers, deepseek_scaling_rope.py:73-101 with scaling_factor == 1). The YaRN variant of the compressed layers is
+      the `yarn` fixtures: yarn_inv_freq() below is the generic YaRN code that vLLM's DeepseekScalingRotaryEmbedding calls
+      (common.py:32-68, deepseek_scaling_rope.py:73-101), read from the vLLM 739e594 tree (3rd_party/vllm). INFERRED: that the
+      V4 compressed layers feed it theta = compress_rope_theta and mscale = mscale_all_dim = 0 (so the cos/sin scale is
+      exactly 1). The rope_type SELECTION of the current V4 tree (deepseek_yarn vs deepseek_llama_scaling when
+      attention_factor == 1.0; nested per-layer-type rope dicts) is NOT modelled: that file is not in any tree available here.
   I5  The compressed keys are INPUTS (the compressor is another lane); this oracle only RoPEs raw entries (position b*ratio).
   I6  The attention sink is an extra logit (NOT multiplied by the softmax scale) whose value row is 0; -inf == no sink
       (weight_utils.py:1564-1572 make_attention_sink initialises to -inf "no sink effect").
@@ -51,13 +55,45 @@ def inv_freq(theta, rot_dim):
     return 1.0 / (theta ** (torch.arange(0, rot_dim, 2, dtype=F64) / rot_dim))
 
 
-def gptj_rope(x, pos, theta):
+def yarn_find_correction_dim(num_rotations, dim, base, max_position_embeddings):
+    """vllm/model_executor/layers/rotary_embedding/common.py:32-41 (vLLM 739e594, the generic YaRN helpers that
+    DeepseekScalingRotaryEmbedding calls): dim * ln(max_pos / (num_rotations * 2 pi)) / (2 ln base)."""
+    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
+
+
+def yarn_find_correction_range(low_rot, high_rot, dim, base, max_position_embeddings):
+    """common.py:44-57 with truncate=True: floor(low), ceil(high), clamped to [0, dim - 1]."""
+    low = math.floor(yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings))
+    high = math.ceil(yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings))
+    return max(low, 0), min(high, dim - 1)
+
+
+def yarn_linear_ramp_mask(low, high, dim):
+    """common.py:60-68: clamp((arange(dim) - low) / (high - low), 0, 1); high += 0.001 when low == high."""
+    if low == high:
+        high += 0.001
+    return torch.clamp((torch.arange(dim, dtype=F64) - low) / (high - low), 0, 1)
+
+
+def yarn_inv_freq(theta, rot_dim, factor, original_max_position, beta_fast, beta_slow, extrapolation_factor=1.0):
+    """deepseek_scaling_rope.py:73-101 (DeepseekScalingRotaryEmbedding._compute_inv_freq, vLLM 739e594), in float64.
+    get_rope passes max_position_embeddings = rope_parameters["original_max_position_embeddings"]
+    (rotary_embedding/__init__.py:275-301 for deepseek_yarn / deepseek_llama_scaling)."""
+    pos_freqs = theta ** (torch.arange(0, rot_dim, 2, dtype=F64) / rot_dim)
+    inv_freq_extrapolation = 1.0 / pos_freqs
+    inv_freq_interpolation = 1.0 / (factor * pos_freqs)
+    low, high = yarn_find_correction_range(beta_fast, beta_slow, rot_dim, theta, original_max_position)
+    mask = (1 - yarn_linear_ramp_mask(low, high, rot_dim // 2)) * extrapolation_factor
+    return inv_freq_interpolation * (1 - mask) + inv_freq_extrapolation * mask
+
+
+def gptj_rope(x, pos, theta, freqs=None):
     """x [..., rot_dim] rotated at integer positions `pos` (broadcast against x's leading dims, last dim removed).
     tests/kernels/test_deepseek_v4_cpu_kernels.py:71-76 _apply_gptj_rope: even/odd interleaved pairs,
     out_even = x_even*cos - x_odd*sin ; out_odd = x_even*sin + x_odd*cos. cos/sin = cos/sin(pos * inv_freq)
     (rotary_embedding/base.py:96-102)."""
     rot_dim = x.shape[-1]
-    ang = pos.to(F64).unsqueeze(-1) * inv_freq(theta, rot_dim)          # [..., rot_dim/2]
+    ang = pos.to(F64).unsqueeze(-1) * (inv_freq(theta, rot_dim) if freqs is None else freqs)  # [..., rot_dim/2]
     cos, sin = ang.cos(), ang.sin()
     x_even, x_odd = x[..., 0::2], x[..., 1::2]
     out_even = x_even * cos - x_odd * sin

@@ -100,7 +100,17 @@ enum V4IdxGolden {
         let sink: [Double]?
     }
 
+    struct Yarn: Decodable, Sendable {
+        let factor: Double
+        let originalMax: Int
+        let betaFast: Double
+        let betaSlow: Double
+        let low: Int
+        let high: Int
+    }
+
     struct Outputs: Decodable, Sendable {
+        let invFreq: [Double]?
         let keysRoped: [Double]?
         let scores: [Double?]?
         let select: [Selection]?
@@ -142,6 +152,8 @@ enum V4IdxGolden {
         let localMask: String?
         // rope
         let offset: Int?
+        // yarn
+        let yarn: Yarn?
         // layout
         let ratios: [Int]?
         let inputs: Inputs?
@@ -268,7 +280,7 @@ enum V4IdxGolden {
         }
     }
 
-    static let kinds = ["score", "topk", "visibility", "swa", "merge", "layout", "rope"]
+    static let kinds = ["score", "topk", "visibility", "swa", "merge", "layout", "rope", "yarn"]
     static let scoreIDs = ids(kind: "score")
     static let topkIDs = ids(kind: "topk")
     static let visibilityIDs = ids(kind: "visibility")
@@ -276,6 +288,7 @@ enum V4IdxGolden {
     static let mergeIDs = ids(kind: "merge")
     static let layoutIDs = ids(kind: "layout")
     static let ropeIDs = ids(kind: "rope")
+    static let yarnIDs = ids(kind: "yarn")
 
     static func fixture(_ id: CaseID) throws -> (Fixture, ToleranceClass) {
         let loaded = try shared.get()
@@ -615,7 +628,7 @@ struct ConformanceV4IndexerGoldenTests {
         let loaded = try G.shared.get()
         #expect(loaded.manifest.count > 0)
         #expect(loaded.fixtures.count == loaded.manifest.count)
-        let all = G.scoreIDs + G.topkIDs + G.visibilityIDs + G.swaIDs + G.mergeIDs + G.layoutIDs + G.ropeIDs
+        let all = G.scoreIDs + G.topkIDs + G.visibilityIDs + G.swaIDs + G.mergeIDs + G.layoutIDs + G.ropeIDs + G.yarnIDs
         let used = Set(all.map(\.name))
         #expect(used.count == all.count, "duplicate case names")
         #expect(used == Set(loaded.fixtures.map(\.name)), "a fixture has no test")
@@ -797,6 +810,33 @@ struct ConformanceV4IndexerGoldenTests {
         eval(y)
         let c = G.check(y.asArray(Float.self), want, tol: tol.y)
         #expect(c.ok, "\(f.name): ratio-0 layer rope max|d|=\(c.maxAbsError) = \(c.ratio)x the allowed error (vLLM common/rope.py:42-44: rope_theta, plain RoPE)")
+    }
+
+    @Test("compressed layers rotate with vLLM's YaRN-blended inverse frequencies", arguments: G.yarnIDs)
+    func yarnFrequencies(_ id: G.CaseID) throws {
+        let (f, tol) = try G.fixture(id)
+        let y = try G.req(f.yarn, "yarn")
+        let theta = try G.req(f.theta, "theta"), rd = try G.req(f.ropeDim, "ropeDim")
+        let L = try G.req(f.L, "L"), off = try G.req(f.offset, "offset")
+        let cfg = try G.tinyConfig { o in
+            o["qk_rope_head_dim"] = rd
+            o["head_dim"] = 2 * rd
+            o["index_head_dim"] = rd
+            o["compress_rope_theta"] = theta
+            // the production shape of Flash's rope_scaling (type yarn); no mscale keys: the layer forces them to 0.
+            o["rope_scaling"] = [
+                "type": "yarn", "factor": y.factor, "original_max_position_embeddings": y.originalMax,
+                "beta_fast": y.betaFast, "beta_slow": y.betaSlow,
+            ] as [String: Any]
+        }
+        let attn = DeepseekV4Attention(config: cfg, layerIndex: 1)  // ratio 4: a compressed layer
+        let x = MLXArray(try G.floats(f.inputs?.x, "x"), [1, 1, L, rd])
+        let want = try G.req(f.outputs.out, "out")
+        let out = attn.rope(x, offset: off)
+        eval(out)
+        let c = G.check(out.asArray(Float.self), want, tol: tol.y)
+        print("V4IDX-GOLDEN \(f.name): yarn rope max|d|=\(c.maxAbsError) ratio=\(c.ratio)")
+        #expect(c.ok, "\(f.name): YaRN rope max|d|=\(c.maxAbsError) = \(c.ratio)x the allowed error (vLLM deepseek_scaling_rope.py:73-101, ramp pairs \(y.low)..\(y.high))")
     }
 
     @Test("YaRN must not rescale the rotated channels (vLLM forces mscale 0, so position 0 is the identity)")

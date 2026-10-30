@@ -345,6 +345,30 @@ def rope_case(name, theta, offset, L, rd=8):
     }
 
 
+def yarn_case(name, theta, rd, offset, L, factor, orig, beta_fast, beta_slow):
+    """YaRN-blended inverse frequencies (the compressed layers' rope): vLLM's find_correction_range + linear ramp, float64."""
+    g = seeded(name)
+    x = rnd(torch.randn(L, rd, generator=g, dtype=F64), "float32")
+    freqs = ref.yarn_inv_freq(theta, rd, factor, orig, beta_fast, beta_slow)
+    low, high = ref.yarn_find_correction_range(beta_fast, beta_slow, rd, theta, orig)
+    out = ref.gptj_rope(x, offset + torch.arange(L), theta, freqs=freqs)
+    return {
+        "name": name, "kind": "yarn", "group": "rope", "dtype": "float32", "tolerance": "rope_yarn_fp32",
+        "ropeDim": rd, "theta": theta, "offset": offset, "L": L,
+        "yarn": {"factor": factor, "originalMax": orig, "betaFast": beta_fast, "betaSlow": beta_slow,
+                 "low": low, "high": high},
+        "inputs": {"x": flat(x)}, "outputs": {"out": flat(out, "g10"), "invFreq": flat(freqs, "g10")},
+    }
+
+
+YARN_CASES = [
+    # Flash's production rope_scaling (config.json): ramp over pairs 15..25 of 32
+    lambda: yarn_case("yarn_flash_offset0", 160000.0, 64, 0, 6, 16.0, 65536, 32.0, 1.0),
+    lambda: yarn_case("yarn_flash_offset37", 160000.0, 64, 37, 6, 16.0, 65536, 32.0, 1.0),
+    # different factor / betas / theta / dim: catches a swapped or ignored parameter
+    lambda: yarn_case("yarn_betas16_2_factor4", 10000.0, 32, 500, 6, 4.0, 4096, 16.0, 2.0),
+]
+
 ROPE_CASES = [
     lambda: rope_case("rope_theta10000_offset0", 10000.0, 0, 6),
     lambda: rope_case("rope_theta160000_offset3", 160000.0, 3, 5),
@@ -381,6 +405,13 @@ TOLERANCES = {
         "mode": "normwise", "y": {"rtol": 5e-6, "atol": 1e-7},
         "why": "float32 RoPE vs float64: the rotation angle pos * inv_freq is formed in float32 (<= 8 * 1 * 6e-8 = 5e-7 rad "
                "for pos <= 8 and the largest frequency), cos/sin and the 2-term products add ~2e-7. 5e-6 is ~10x that."},
+    "rope_yarn_fp32": {
+        "mode": "normwise", "y": {"rtol": 4e-5, "atol": 1e-7},
+        "why": "float32 YaRN RoPE vs float64: MLX forms the blended frequency in float32 (pow, a quotient of products) and "
+               "the angle pos * freq in float32 (pos <= 542). Measured worst 1.0e-5 absolute = 0.034 of a 1e-4 budget "
+               "(yarn_betas16_2_factor4, offset 500), i.e. 3.4e-6 relative to max|want|. 4e-5 is ~12x measured. A wrong "
+               "ramp or correction range moves a frequency by a factor up to the YaRN factor (4..16): errors >= 1e-1."
+    },
     "merge_fp32": {
         "mode": "normwise", "y": {"rtol": 2e-6, "atol": 1e-7},
         "why": "float32 softmax attention over <= 14+3 keys, head dim 8, logits |s| <~ 4, normwise vs max|out|. Measured worst "
@@ -420,7 +451,7 @@ def main():
     for f in os.listdir(a.out):
         if f.endswith(".json"):
             os.remove(os.path.join(a.out, f))
-    makers = SCORE_CASES + TOPK_CASES + VIS_CASES + SWA_CASES + MERGE_CASES + LAYOUT_CASES + ROPE_CASES
+    makers = SCORE_CASES + TOPK_CASES + VIS_CASES + SWA_CASES + MERGE_CASES + LAYOUT_CASES + ROPE_CASES + YARN_CASES
     fixtures = [m() for m in makers]
     names = [f["name"] for f in fixtures]
     assert len(set(names)) == len(names), "duplicate fixture names"
