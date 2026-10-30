@@ -15,6 +15,8 @@ struct ConformanceGapMigrationTests {
         // SL-36 golden suites with knownIssue bodies. ConformanceKdaGoldenTests / ConformanceKdaDifferentialTests have
         // none (the scanner fails a listed file with no body), so they are not listed.
         "ConformanceSwigluGoldenTests.swift", "Golden/dequant/DequantGoldenTests.swift",
+        // SL-36 V4 golden suites that carry knownIssue bodies (the compressor golden suite has none).
+        "ConformanceV4IndexerGoldenTests.swift", "ConformanceV4RouteGoldenTests.swift",
     ]
 
     /// Bodies of every `ConformanceGap.knownIssue(...) { ... }` call (brace matched, strings skipped naively).

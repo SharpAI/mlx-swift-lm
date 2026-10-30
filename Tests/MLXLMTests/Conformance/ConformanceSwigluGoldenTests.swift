@@ -7,7 +7,7 @@
 //   silu(gate)*up          -> compiledSiluProduct, SwitchGLU default init, DeepseekV4Expert (limit 0)
 //   swigluoai (GPT-OSS)    -> GPTOSS.swift SwiGLUSwitchGLU (compiledSwiglu inside)
 //   V4 dense expert        -> DeepseekV4Expert(swiguLimit:)
-//   V4 routed experts      -> DeepseekV4MoE.switchMLP (SwitchGLU with the activation closure)
+//   V4 routed experts      -> DeepseekV4MoE.switchMLP (SwitchGLU with the activationProduct closure)
 //   Step silu-then-clamp   -> no Swift path exists (pinned as a gap)
 // The projections are 0/1 selection matrices, so the only arithmetic in the output is the activation
 // (a single non-zero product per dot product is exact in every dtype).
@@ -17,10 +17,13 @@
 //    sanitize (stride(by: 2) split of gate_up_proj) is NOT exercised: a gate/up swap there would not be noticed.
 //  * Tolerances are constants in this file (SwigluGolden.tolerances). MANIFEST.json repeats them and the test
 //    manifestComplete fails if the two differ, so loosening one without the other is caught.
-//  * The V4 oracle is INFERRED (vLLM 739e5945d has no DeepSeek-V4 model; no V4 reference code is in this repo
-//    or in 3rd_party). v4Dense/v4Routed therefore characterize the shipping code against an inferred formula;
-//    only the region where gate >= -limit and |up| <= limit is independent of the unknown clamp sidedness
-//    (v4RoutedGateOnly).
+//  * V4 clamp: silu(min(gate, limit)) * clamp(up, -limit, limit), i.e. gate max-only and up two-sided, on the shared AND
+//    the routed experts. Source: vLLM SiluAndMulWithClamp.forward_native (vllm/model_executor/layers/activation.py:239-243,
+//    commit 2eae56c as cited by the V4 routing lane, tools/conformance/golden/v4route_ref.py [AC]; that tree is not in
+//    3rd_party, whose vLLM is 739e5945d without a V4 model, so the line number was not re-read here). The fixture's
+//    `golden_gate_max_only` column is that formula and is what the V4 tests compare against; the older `golden` column
+//    (two-sided gate clamp, "reading A") was an inference and is kept only to prove the fixture separates the two readings.
+//    The chunk layout (gate = first half) and the oracle's torch float64 arithmetic are unchanged assumptions.
 //  * GPT-OSS swiglu runs in float32 for bfloat16/float16 input (see gptossDTypePromotion), so it is held to the
 //    float32 tolerance in every dtype; the bfloat16/float16 rows of the tolerance table are not used for it.
 
@@ -416,61 +419,21 @@ struct ConformanceSwigluGoldenTests {
         }
     }
 
-    @Test("V4 dense (shared) expert: shipping silu(clamp(gate)) * clamp(up), both two-sided (oracle INFERRED)")
+    @Test("V4 dense (shared) expert: silu(min(gate, limit)) * clamp(up, -limit, limit) (vLLM activation.py:239-243)")
     func v4Dense() throws {
-        // Characterization: the oracle's sidedness is inferred (no V4 reference available), so this pins the shipping
-        // behaviour; it does not prove it right.
-        let r = try Self.check("v4_clamped.json", label: "V4 dense") { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
+        let r = try Self.check("v4_clamped.json", label: "V4 dense", golden: \.goldenGateMaxOnly) { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
         #expect(r.nonzero > 0)
     }
 
-    /// Elements where the unknown V4 clamp sidedness cannot matter: gate >= -limit (both gate readings agree) and |up| <= limit.
-    /// float16 only: the routed path does not clamp up, so a huge up in ANOTHER column of the row makes that hidden value overflow
-    /// (|silu(clamp(gate))| <= limit, so limit * |up| > 65504 is a sufficient overflow test); the down projection then computes
-    /// 0 * inf = NaN and poisons the whole row. Those rows are symptoms of the up gap (v4Routed), not of the gate path.
-    static func rowOverflowsFloat16(_ c: S.Case, _ i: Int) -> Bool {
-        guard c.dtype == "float16" else { return false }
-        let base = (i / c.d) * 2 * c.d + c.d   // chunk layout: up of column k is x[base + k]
-        return (0 ..< c.d).contains { c.limit * abs(c.x[base + $0]) > 65504 }
-    }
-
-    static let v4Independent: @Sendable (S.Case, String, Int) -> Bool = { c, l, i in
-        let gu = S.gateUp(c, layout: l, i)
-        return gu.gate >= -c.limit && abs(gu.up) <= c.limit && !rowOverflowsFloat16(c, i)
-    }
-
-    @Test("V4 routed experts: silu(clamp(gate)) * up is exact in the region independent of the inferred oracle")
-    func v4RoutedGateOnly() throws {
-        let f = try S.load("v4_clamped.json")
-        var region = 0, negativeGates = 0, disagree = 0
-        for c in f.cases {
-            let alt = try #require(c.goldenGateMaxOnly)
-            for i in 0 ..< c.golden.count where Self.v4Independent(c, f.layout, i) {
-                region += 1
-                if S.gateUp(c, layout: f.layout, i).gate < 0 { negativeGates += 1 }
-                if c.golden[i] != alt[i] { disagree += 1 }
-            }
-        }
-        #expect(disagree == 0, "the two gate-clamp readings differ inside the region meant to be independent of them")
-        #expect(region > 0 && negativeGates > 0, "region \(region), negative gates \(negativeGates)")
-        let r = try Self.check("v4_clamped.json", label: "V4 routed gate-only", include: Self.v4Independent) { c, l in try S.viaV4Routed(c, layout: l) }
+    @Test("V4 routed experts (DeepseekV4MoE.switchMLP): silu(min(gate, limit)) * clamp(up, -limit, limit) (vLLM activation.py:239-243)")
+    func v4Routed() throws {
+        let r = try Self.check("v4_clamped.json", label: "V4 routed", golden: \.goldenGateMaxOnly) { c, l in try S.viaV4Routed(c, layout: l) }
+        #expect(r.compared == 90 && r.nonzero > 0)
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
     }
 
-    @Test("V4 routed experts (DeepseekV4MoE.switchMLP): up must be clamped too (oracle INFERRED)")
-    func v4Routed() throws {
-        let r = try Self.check("v4_clamped.json", label: "V4 routed") { c, l in try S.viaV4Routed(c, layout: l) }
-        // Precondition (outside the gap): the path ran, produced output, and the failures are not all-zero garbage.
-        #expect(r.compared == 90 && r.nonzero > 0)
-        // Evidence is internal, not external: DeepseekV4Expert (same file, :566-568) clamps up two-sided and this closure does not.
-        // No DeepSeek-V4 reference is available, so treat this gap as provisional.
-        ConformanceGap.knownIssue("PROVISIONAL (inferred oracle): DeepseekV4MoE routed experts (SwitchGLU activation closure, DeepseekV4.swift:~676) clamp gate but NOT up, while DeepseekV4Expert clamps both: |up| > swiglu_limit is passed through") {
-            ConformanceGap.expect(r.failures.isEmpty, "\(r.failures.prefix(3))")
-        }
-    }
-
-    @Test("V4 fixture separates the two gate-clamp readings (which one is right is NOT asserted: oracle INFERRED)")
+    @Test("V4 fixture separates the two gate-clamp readings (max-only is vLLM's; the two-sided column is kept as the control)")
     func v4FixtureSeparatesReadings() throws {
         let f = try S.load("v4_clamped.json")
         var differing = 0
@@ -489,10 +452,11 @@ struct ConformanceSwigluGoldenTests {
             ("v4_clamped.json", { _ in true }, nil, { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }),
         ]
         for (file, only, tolD, run) in runs {
+            let col: KeyPath<S.Case, [Double]?>? = file.hasPrefix("v4_") ? \.goldenGateMaxOnly : nil
             var extra: (S.Case, String, Int) -> Double = { _, _, _ in 0 }
             if file.hasPrefix("swigluoai") { extra = Self.oaiExtra }
-            let ok = try Self.check(file, label: "nonvacuity", only: only, tolDType: tolD, extraRtol: extra, run: run)
-            let mutated = try Self.check(file, mutate: true, only: only, tolDType: tolD, extraRtol: extra, run: run)
+            let ok = try Self.check(file, label: "nonvacuity", golden: col, only: only, tolDType: tolD, extraRtol: extra, run: run)
+            let mutated = try Self.check(file, mutate: true, golden: col, only: only, tolDType: tolD, extraRtol: extra, run: run)
             #expect(ok.failures.isEmpty, "\(file) baseline must pass: \(ok.failures.prefix(3))")
             #expect(mutated.failures.count == mutated.compared, "\(file): perturbed golden accepted in \(mutated.compared - mutated.failures.count)/\(mutated.compared) cases")
         }

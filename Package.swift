@@ -208,6 +208,10 @@ let package = Package(
                 "Conformance/Golden/kda",
                 // SwiGLU golden fixtures: same, read through #filePath by ConformanceSwigluGoldenTests.
                 "Conformance/Golden/swiglu",
+                // V4 compressor / indexer / routing golden fixtures: same, read through #filePath by the V4 golden suites.
+                "Conformance/Golden/v4comp",
+                "Conformance/Golden/v4idx",
+                "Conformance/Golden/v4route",
             ],
             resources: [.process("Resources/1080p_30.mov"), .process("Resources/audio_only.mov")]
         ),
