@@ -8,7 +8,8 @@ import Testing
 
 struct ConformanceGapMigrationTests {
     static let files = [
-        "ConformanceGapGdnTests.swift", "ConformanceGapSoftcapTests.swift",
+        "ConformanceGapGdnTests.swift",
+        // ConformanceGapSoftcapTests.swift left the list: the softcap gap closed and the test is a plain regression test.
         // ConformanceGapDeepseekV4Tests.swift left the list in SL-35 4.3: every gap it pinned has landed and
         // its asserts are plain, so it has no knownIssue body for the scanner to find.
         "ConformanceSynthV4Tests.swift",
