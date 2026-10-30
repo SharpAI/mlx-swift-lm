@@ -365,6 +365,17 @@ struct ConformanceSwigluGoldenTests {
     static let fp16SigmoidSubnormalGate = -9.70
     static let fp16SigmoidZeroGate = -17.33
 
+    /// Shape of a float16 silu gap, per path: every bad element sits below the sigmoid-subnormal gate and every zero output
+    /// below the sigmoid-zero gate. Empty `bad` (path fixed) has no violations.
+    static func float16GapShapeViolations(_ bad: [S.Bad]) -> [String] {
+        var out: [String] = []
+        let normal = bad.filter { $0.gate >= fp16SigmoidSubnormalGate }
+        if !normal.isEmpty { out.append("bad element with sigmoid still in float16's normal range: \(normal.prefix(3))") }
+        let zeroRepresentable = bad.filter { $0.out == 0 && $0.gate >= fp16SigmoidZeroGate }
+        if !zeroRepresentable.isEmpty { out.append("zero output where sigmoid(gate) is representable: \(zeroRepresentable.prefix(3))") }
+        return out
+    }
+
     @Test("gap: float16 silu(gate)*up is off for strongly negative gates (all three silu paths)")
     func siluFloat16Gap() throws {
         // Measured (run log, 32 bad elements of the float16 cases, identical in all three paths): every bad element has
@@ -385,12 +396,15 @@ struct ConformanceSwigluGoldenTests {
         print("[swiglu][fp16-silu] bad=\(a.bad.count) zero-output=\(zeroed.count) max gate of bad=\(a.bad.map(\.gate).max() ?? 0) max gate of zero-output=\(zeroed.map(\.gate).max() ?? 0)")
         // Non-vacuity (independent of the gap): the float16 cases really were compared.
         #expect(a.compared > 0 && b.compared > 0 && d.compared > 0, "no float16 element was compared")
-        // The classification below describes the gap while it EXISTS, so it is asserted only then. Nothing here
-        // asserts that the gap still exists: once the float16 path is fixed `a.bad` is empty, this test stays green
-        // and the gap wrapper reports [gap][FIXED] (a failure under CONFORMANCE_STRICT=1).
-        if !a.bad.isEmpty && !b.bad.isEmpty && !d.bad.isEmpty {  // a partly fixed set is still an open gap: only the full shape is pinned
-            #expect(a.bad.allSatisfy { $0.gate < Self.fp16SigmoidSubnormalGate }, "bad element with sigmoid still in float16's normal range: \(a.bad.filter { $0.gate >= Self.fp16SigmoidSubnormalGate }.prefix(3))")
-            #expect(zeroed.allSatisfy { $0.gate < Self.fp16SigmoidZeroGate }, "zero output where sigmoid(gate) is representable: \(zeroed.filter { $0.gate >= Self.fp16SigmoidZeroGate }.prefix(3))")
+        // The classification below describes the gap while it EXISTS, so each path's shape is asserted only while THAT path
+        // still fails. Nothing here asserts that the gap still exists: once the float16 path is fixed `bad` is empty, this
+        // test stays green and the gap wrapper reports [gap][FIXED] (a failure under CONFORMANCE_STRICT=1). A partly fixed
+        // set keeps the pins of the paths that still fail.
+        let paths: [(String, [S.Bad])] = [("compiledSiluProduct", a.bad), ("SwitchGLU", b.bad), ("V4Expert", d.bad)]
+        for (name, bad) in paths {
+            for v in Self.float16GapShapeViolations(bad) { Issue.record("\(name): \(v)") }
+        }
+        if !a.bad.isEmpty && !b.bad.isEmpty && !d.bad.isEmpty {
             #expect(a.bad.count == b.bad.count && a.bad.count == d.bad.count, "the three silu paths fail on different elements")
         }
         ConformanceGap.knownIssue("float16 silu(gate)*up misses rtol 2e-3 / atol 1e-7 for strongly negative gates (compiledSiluProduct, SwitchGLU, DeepseekV4Expert limit 0)") {
@@ -443,6 +457,18 @@ struct ConformanceSwigluGoldenTests {
         let r = try Self.check("v4_clamped.json", label: "V4 routed", include: Self.notFloat16SigmoidTail) { c, l in try S.viaV4Routed(c, layout: l) }
         #expect(r.compared == (try S.manifest().files["v4_clamped.json"]?.cases ?? -1) && r.nonzero > 0)
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
+    }
+
+    @Test("float16 gap shape pins apply to each path that still fails, independently of the other paths")
+    func float16GapShapePinsPerPath() throws {
+        let c = try #require(try S.load("silu_and_mul.json").cases.first)
+        let inGap = S.Bad(c: c, index: 0, out: 1, golden: 1, gate: -12, up: 1)
+        let normalRange = S.Bad(c: c, index: 1, out: 1, golden: 1, gate: -5, up: 1)
+        let zeroInRange = S.Bad(c: c, index: 2, out: 0, golden: 1, gate: -12, up: 1)
+        #expect(Self.float16GapShapeViolations([]).isEmpty, "a fixed path has nothing to pin")
+        #expect(Self.float16GapShapeViolations([inGap]).isEmpty)
+        #expect(!Self.float16GapShapeViolations([normalRange]).isEmpty, "gate above the subnormal threshold must be reported")
+        #expect(!Self.float16GapShapeViolations([zeroInRange]).isEmpty, "zero output above the zero threshold must be reported")
     }
 
     @Test("gap: V4 float16 silu(gate)*up is off for strongly negative gates (same float16 sigmoid rounding as siluFloat16Gap)")
