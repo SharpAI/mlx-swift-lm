@@ -27,7 +27,7 @@ Steps (also usable by hand):
 1. `kda_diff.py gen --out DIR --n N --seed S` writes `DIR/cases.json` and `DIR/cases/<name>.json` (golden fixture
    format, float64 truth included). The case name is the data seed (`kd<S>_<idx>` -> crc32).
 2. `KDA_DIFF_DIR=DIR swift test --filter ConformanceKdaDifferentialTests` runs every case through the kernel request
-   and the fallback and writes `DIR/out/<name>.json`. The suite does not judge.
+   and the fallback and writes `DIR/out/<name>.json`. **The suite does not judge: `swift test` exits 0 even if every case raised, so its exit code is not a verdict.** Only `compare` (step 3, or `run_local.sh`, which runs it) decides pass or fail.
 3. `kda_diff.py compare --dir DIR` prints one row per case and path (`kernel`, `kernel*` = a fallback-shaped case
    that asked for the kernel, `fallback`) with max abs error, max rel error (normwise, vs max|truth|) and
    error/allowed ratio for y and state, a header line with the python/torch/numpy versions the fixtures were generated with, then the failing seed names and shapes. Exit 1 if any ratio is above 1,

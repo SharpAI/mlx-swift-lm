@@ -85,5 +85,6 @@ struct ConformanceKdaDifferentialTests {
             try encoder.encode(result).write(to: outDir.appendingPathComponent(entry.name + ".json"))
         }
         print("KDA-DIFF wrote \(index.cases.count) case outputs to \(outDir.path), \(errors) execution errors")
+        print("KDA-DIFF this suite does NOT judge: a zero exit code is not a verdict. Run `kda_diff.py compare --dir \(dir.path)` (or run_local.sh) and read its exit code.")
     }
 }
