@@ -466,9 +466,9 @@ def main():
                      "dtype": fx["dtype"], "tolerance": fx["tolerance"]}
     manifest = {
         "schema": 1,
-        "generator": "tools/conformance/golden/gen_v4idx_golden.py",
+        "generator": "tools/conformance/golden/v4idx/gen_v4idx_golden.py",
         "generatorSha256": sha256(os.path.join(here, "gen_v4idx_golden.py")),
-        "oracle": "tools/conformance/golden/v4idx_ref.py",
+        "oracle": "tools/conformance/golden/v4idx/v4idx_ref.py",
         "oracleSha256": sha256(os.path.join(here, "v4idx_ref.py")),
         "vllmCommit": VLLM_COMMIT,
         "vllm_provenance": VP.statements("2eae56c", "739e5945d"),
