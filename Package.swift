@@ -206,6 +206,8 @@ let package = Package(
                 "README.md",
                 // KDA golden fixtures: read through #filePath by ConformanceKdaGoldenTests, never as bundle resources.
                 "Conformance/Golden/kda",
+                // SwiGLU golden fixtures: same, read through #filePath by ConformanceSwigluGoldenTests.
+                "Conformance/Golden/swiglu",
             ],
             resources: [.process("Resources/1080p_30.mov"), .process("Resources/audio_only.mov")]
         ),

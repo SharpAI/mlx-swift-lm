@@ -12,6 +12,9 @@ struct ConformanceGapMigrationTests {
         // ConformanceGapDeepseekV4Tests.swift left the list in SL-35 4.3: every gap it pinned has landed and
         // its asserts are plain, so it has no knownIssue body for the scanner to find.
         "ConformanceSynthV4Tests.swift",
+        // SL-36 golden suites with knownIssue bodies. ConformanceKdaGoldenTests / ConformanceKdaDifferentialTests have
+        // none (the scanner fails a listed file with no body), so they are not listed.
+        "ConformanceSwigluGoldenTests.swift", "Golden/dequant/DequantGoldenTests.swift",
     ]
 
     /// Bodies of every `ConformanceGap.knownIssue(...) { ... }` call (brace matched, strings skipped naively).
