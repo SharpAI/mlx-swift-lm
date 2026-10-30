@@ -204,3 +204,37 @@ jobs:
         run: |
           cd SwiftLM
           bash tests/test-speculative-eval.sh
+
+  sealed-offline:
+    # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights and no
+    # pip. NOT a required check (branch protection is untouched). The dependency fetch happens before the seal;
+    # scripts/conformance/offline-build/run-blocked.sh then self-tests the seal, resolves from the SwiftPM cache,
+    # builds clean and runs the filters, failing on a vacuous (zero-test) filter.
+    name: Sealed offline conformance (macOS 15)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode 26 (Swift 6.2)
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Checkout SharpAI/mlx-swift
+        uses: actions/checkout@v4
+        with:
+          repository: SharpAI/mlx-swift
+          path: mlx-swift
+
+      - name: Redirect mlx-swift dependency to local checkout
+        run: |
+          sed -i '' -E 's|\.package\(path: "\.\./mlx-swift"\),|\.package(path: "./mlx-swift"),|' Package.swift
+
+      - name: Prefetch dependencies (network allowed, before the seal)
+        run: swift package resolve
+
+      - name: Build and test with network blocked
+        env:
+          FILTERS: "Conformance SharpAIOverlay"
+        run: bash scripts/conformance/offline-build/run-blocked.sh
