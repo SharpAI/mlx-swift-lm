@@ -21,8 +21,8 @@
 //    the routed experts. Source: vLLM SiluAndMulWithClamp.forward_native (vllm/model_executor/layers/activation.py:239-243,
 //    commit 2eae56c as cited by the V4 routing lane, tools/conformance/golden/v4route_ref.py [AC]; that tree is not in
 //    3rd_party, whose vLLM is 739e5945d without a V4 model, so the line number was not re-read here). The fixture's
-//    `golden_gate_max_only` column is that formula and is what the V4 tests compare against; the older `golden` column
-//    (two-sided gate clamp, "reading A") was an inference and is kept only to prove the fixture separates the two readings.
+//    `golden` column is that formula and is what the V4 tests compare against; the `golden_gate_symmetric_control`
+//    column (two-sided gate clamp, "reading A") was an inference and is kept only to prove the fixture separates the two readings.
 //    The chunk layout (gate = first half) and the oracle's torch float64 arithmetic are unchanged assumptions.
 //  * GPT-OSS swiglu runs in float32 for bfloat16/float16 input (see gptossDTypePromotion), so it is held to the
 //    float32 tolerance in every dtype; the bfloat16/float16 rows of the tolerance table are not used for it.
@@ -44,10 +44,10 @@ enum SwigluGolden {
         let d: Int
         let x: [Double]
         let golden: [Double]
-        let goldenGateMaxOnly: [Double]?
+        let goldenGateSymmetricControl: [Double]?
         enum CodingKeys: String, CodingKey {
             case name, dtype, limit, rows, d, x, golden
-            case goldenGateMaxOnly = "golden_gate_max_only"
+            case goldenGateSymmetricControl = "golden_gate_symmetric_control"
         }
     }
     struct File: Decodable {
@@ -433,14 +433,14 @@ struct ConformanceSwigluGoldenTests {
 
     @Test("V4 dense (shared) expert: silu(min(gate, limit)) * clamp(up, -limit, limit) (vLLM activation.py:239-243)")
     func v4Dense() throws {
-        let r = try Self.check("v4_clamped.json", label: "V4 dense", golden: \.goldenGateMaxOnly, include: Self.notFloat16SigmoidTail) { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
+        let r = try Self.check("v4_clamped.json", label: "V4 dense", include: Self.notFloat16SigmoidTail) { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
         #expect(r.nonzero > 0)
     }
 
     @Test("V4 routed experts (DeepseekV4MoE.switchMLP): silu(min(gate, limit)) * clamp(up, -limit, limit) (vLLM activation.py:239-243)")
     func v4Routed() throws {
-        let r = try Self.check("v4_clamped.json", label: "V4 routed", golden: \.goldenGateMaxOnly, include: Self.notFloat16SigmoidTail) { c, l in try S.viaV4Routed(c, layout: l) }
+        let r = try Self.check("v4_clamped.json", label: "V4 routed", include: Self.notFloat16SigmoidTail) { c, l in try S.viaV4Routed(c, layout: l) }
         #expect(r.compared == (try S.manifest().files["v4_clamped.json"]?.cases ?? -1) && r.nonzero > 0)
         #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
     }
@@ -448,8 +448,8 @@ struct ConformanceSwigluGoldenTests {
     @Test("gap: V4 float16 silu(gate)*up is off for strongly negative gates (same float16 sigmoid rounding as siluFloat16Gap)")
     func v4Float16SigmoidGap() throws {
         let only: (S.Case) -> Bool = { $0.dtype == "float16" }
-        let dense = try Self.check("v4_clamped.json", label: "V4 dense fp16", golden: \.goldenGateMaxOnly, only: only) { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
-        let routed = try Self.check("v4_clamped.json", label: "V4 routed fp16", golden: \.goldenGateMaxOnly, only: only) { c, l in try S.viaV4Routed(c, layout: l) }
+        let dense = try Self.check("v4_clamped.json", label: "V4 dense fp16", only: only) { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }
+        let routed = try Self.check("v4_clamped.json", label: "V4 routed fp16", only: only) { c, l in try S.viaV4Routed(c, layout: l) }
         // Classification (plain asserts): every out-of-tolerance element has a gate where sigmoid is a float16 subnormal.
         for (name, r) in [("dense", dense), ("routed", routed)] {
             #expect(r.compared > 0, "\(name): no float16 element was compared")
@@ -469,7 +469,7 @@ struct ConformanceSwigluGoldenTests {
         let f = try S.load("v4_clamped.json")
         var differing = 0
         for c in f.cases {
-            let alt = try #require(c.goldenGateMaxOnly)
+            let alt = try #require(c.goldenGateSymmetricControl)
             differing += zip(c.golden, alt).filter { $0 != $1 }.count
         }
         #expect(differing > 0, "negative-gate cases must separate clamp(gate, -L, L) from clamp(gate, max: L)")
@@ -483,7 +483,7 @@ struct ConformanceSwigluGoldenTests {
             ("v4_clamped.json", Self.notFloat16, nil, { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }),
         ]
         for (file, only, tolD, run) in runs {
-            let col: KeyPath<S.Case, [Double]?>? = file.hasPrefix("v4_") ? \.goldenGateMaxOnly : nil   // float16 V4 is a pinned gap
+            let col: KeyPath<S.Case, [Double]?>? = nil   // v4_clamped `golden` is already the max-only (vLLM) column; float16 V4 is a pinned gap
             var extra: (S.Case, String, Int) -> Double = { _, _, _ in 0 }
             if file.hasPrefix("swigluoai") { extra = Self.oaiExtra }
             let ok = try Self.check(file, label: "nonvacuity", golden: col, only: only, tolDType: tolD, extraRtol: extra, run: run)
