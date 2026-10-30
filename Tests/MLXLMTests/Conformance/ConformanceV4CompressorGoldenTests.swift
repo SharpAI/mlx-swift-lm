@@ -129,6 +129,8 @@ enum V4CompGolden {
 
     /// Compares out [1, nb, headDim] with the first nb*headDim golden values. `positional`: the RoPE'd entries, whose
     /// tolerance grows with the entry's position b * ratio (angle error of float32 position * freq).
+    /// bf16 + `positional`: the rotation reads the already rounded (even, odd) pair, so a rope channel's tolerance adds
+    /// rtol * (|xe| + |xo|) with the pair taken from the golden pooled_normed (MANIFEST bfloat16 reasoning).
     static func compare(_ out: MLXArray?, golden: [Double], nb: Int, c: Case, positional: Bool, _ m: Manifest) -> Report {
         var r = Report()
         guard let out else {
@@ -149,7 +151,12 @@ enum V4CompGolden {
             r.compared += 1
             if !v.isFinite { r.worstExcess = .infinity; r.firstBad = r.firstBad ?? "non-finite at \(i)"; continue }
             r.maxAbs = max(r.maxAbs, err)
-            let ex = err / (atol + t.rtol * abs(g))
+            var scale = abs(g)
+            if positional, c.dtype == "bfloat16", i % c.headDim >= c.headDim - c.ropeDim {
+                let even = i - ((i % c.headDim) - (c.headDim - c.ropeDim)) % 2   // traditional RoPE: pairs (2j, 2j + 1)
+                scale += abs(c.pooledNormed[even]) + abs(c.pooledNormed[even + 1])
+            }
+            let ex = err / (atol + t.rtol * scale)
             if ex > r.worstExcess { r.worstExcess = ex }
             if ex > 1, r.firstBad == nil { r.firstBad = "#\(i) (block \(b), ch \(i % c.headDim)) swift=\(v) golden=\(g)" }
         }

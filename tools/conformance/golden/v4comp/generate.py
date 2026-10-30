@@ -264,11 +264,15 @@ def main():
         "tolerances": {
             "bfloat16": {
                 "rtol": 4e-3, "atol": 2e-5, "atol_per_position": 1.5e-7,
-                "reasoning": "What an implementation gets if it multiplies the bf16 inputs with an fp32 output and pools in fp32 like vLLM "
-                             "(attention.py:698-703, compressor.py:261) and only then returns bfloat16: one final bf16 rounding, half an "
-                             "ulp = 2^-9 = 2e-3 relative, doubled for the RoPE rotation of already rounded pairs -> rtol 4e-3; atol and "
-                             "the per-position angle term as for float32. It deliberately does NOT allow bf16 rounding of kv / score "
-                             "BEFORE the softmax pooling, which vLLM does not do."},
+                "reasoning": "The module computes in fp32 like vLLM (attention.py:698-703, compressor.py:261) and returns bfloat16 (the model "
+                             "dtype), so the output carries bf16 rounding: bf16 keeps 8 significant bits, a rounding is at most half an ulp = "
+                             "2^-8 = 3.9e-3 relative (rtol 4e-3; NOT 2^-9). pooled_normed: one rounding, |err| <= rtol |golden|. RoPE'd entries: "
+                             "the rotation reads the already rounded pair (xe, xo) and rounds its output, so for a rope channel "
+                             "|err| <= rtol (|xe| + |xo| + |golden|) with xe, xo the golden pooled_normed pair (a cancelling output element "
+                             "is small relative to its inputs, so a per-element relative bound would be wrong); nope channels keep one "
+                             "rounding. atol and the per-position angle term as for float32. Tighter checks live in the Swift suite: the "
+                             "bf16 pooled output must equal the float32 result rounded once, exactly. It deliberately does NOT allow bf16 "
+                             "rounding of kv / score BEFORE the softmax pooling, which vLLM does not do."},
             "float32": {
                 "rtol": 2e-5, "atol": 2e-5, "atol_per_position": 1.5e-7,
                 "reasoning": "Inputs and weights are float32-exact, the oracle is float64, Swift runs float32 on Metal. pooled_normed: a "

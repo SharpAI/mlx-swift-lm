@@ -5,7 +5,7 @@
  "python": "3.15.0",
  "numpy": "2.5.4",
  "generator": {
-  "generate.py": "e7c53279b7d68b608569db79c5c5b8a462852d33476cacce68ab703bca055a65",
+  "generate.py": "fd42bdba16fda2d106ad7d14f34982180bfd4a9ea462bce9d895f4c2348099df",
   "v4comp_ref.py": "93b556e8ddf24d1f1f63b102eb44f3b795318c178f868a93b44c0f60b2ec0036"
  },
  "files": {
@@ -27,7 +27,7 @@
    "rtol": 0.004,
    "atol": 2e-05,
    "atol_per_position": 1.5e-07,
-   "reasoning": "What an implementation gets if it multiplies the bf16 inputs with an fp32 output and pools in fp32 like vLLM (attention.py:698-703, compressor.py:261) and only then returns bfloat16: one final bf16 rounding, half an ulp = 2^-9 = 2e-3 relative, doubled for the RoPE rotation of already rounded pairs -> rtol 4e-3; atol and the per-position angle term as for float32. It deliberately does NOT allow bf16 rounding of kv / score BEFORE the softmax pooling, which vLLM does not do."
+   "reasoning": "The module computes in fp32 like vLLM (attention.py:698-703, compressor.py:261) and returns bfloat16 (the model dtype), so the output carries bf16 rounding: bf16 keeps 8 significant bits, a rounding is at most half an ulp = 2^-8 = 3.9e-3 relative (rtol 4e-3; NOT 2^-9). pooled_normed: one rounding, |err| <= rtol |golden|. RoPE'd entries: the rotation reads the already rounded pair (xe, xo) and rounds its output, so for a rope channel |err| <= rtol (|xe| + |xo| + |golden|) with xe, xo the golden pooled_normed pair (a cancelling output element is small relative to its inputs, so a per-element relative bound would be wrong); nope channels keep one rounding. atol and the per-position angle term as for float32. Tighter checks live in the Swift suite: the bf16 pooled output must equal the float32 result rounded once, exactly. It deliberately does NOT allow bf16 rounding of kv / score BEFORE the softmax pooling, which vLLM does not do."
   },
   "float32": {
    "rtol": 2e-05,
