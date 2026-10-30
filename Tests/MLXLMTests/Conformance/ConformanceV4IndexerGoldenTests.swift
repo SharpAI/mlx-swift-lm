@@ -187,7 +187,7 @@ enum V4IdxGolden {
 
     /// sha256 of MANIFEST.json. Regenerating the fixtures (or changing the oracle and rerunning the generator) changes the
     /// manifest and so fails the default load until this line is edited: the change shows up in a second file.
-    static let pinnedManifestSha256 = "fc7810addc142a72e760f6b2591d41036fb9ca098024c1ed2af62531428b62ef"
+    static let pinnedManifestSha256 = "c4f23da9313c885ca414689e6f3b8c4aa8624b65509fec5fbc822bbd78a6d103"
 
     /// Loads and VERIFIES a fixture directory. Throws (never skips) when anything is off.
     static func load(from dir: URL, toolsDir: URL = defaultToolsDirectory, pinnedManifestSha256: String? = nil) throws -> Loaded {
