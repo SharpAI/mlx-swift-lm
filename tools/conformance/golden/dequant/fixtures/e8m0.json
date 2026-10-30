@@ -1,0 +1,45 @@
+{
+ "bytes": [
+  {
+   "byte": 0,
+   "value": 5.877471754111438e-39
+  },
+  {
+   "byte": 1,
+   "value": 1.1754943508222875e-38
+  },
+  {
+   "byte": 2,
+   "value": 2.350988701644575e-38
+  },
+  {
+   "byte": 126,
+   "value": 0.5
+  },
+  {
+   "byte": 127,
+   "value": 1.0
+  },
+  {
+   "byte": 128,
+   "value": 2.0
+  },
+  {
+   "byte": 253,
+   "value": 8.507059173023462e+37
+  },
+  {
+   "byte": 254,
+   "value": 1.7014118346046923e+38
+  }
+ ],
+ "format": "e8m0",
+ "source": "Q/utils/mxfp8_utils.py:118, Q/utils/mxfp6_utils.py:78",
+ "special": {
+  "byte": 255,
+  "note": "I3: exp2(255-127)=2^128 overflows float32 (formula -> inf); OCP/torch define 255 as NaN",
+  "torch_float8_e8m0fnu": "nan",
+  "vllm_formula_float32": "inf"
+ },
+ "vllm_commit": "739e5945d"
+}
