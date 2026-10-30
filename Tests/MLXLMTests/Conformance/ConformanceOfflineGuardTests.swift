@@ -57,25 +57,6 @@ private struct TransferringDownloader: Downloader {
     }
 }
 
-/// A cache miss whose provider ignores cancellation: reports partial progress at once, then keeps "transferring"
-/// for `seconds` without ever looking at `Task.isCancelled`.
-private struct StubbornDownloader: Downloader {
-    let finished: FlagBox
-    let seconds: Double
-    func download(
-        id: String, revision: String?, matching patterns: [String], useLatest: Bool,
-        progressHandler: @Sendable @escaping (Progress) -> Void
-    ) async throws -> URL {
-        let p = Progress(totalUnitCount: 100)
-        p.completedUnitCount = 10
-        progressHandler(p)
-        let end = Date().addingTimeInterval(seconds)
-        while Date() < end { usleep(50_000) }
-        finished.set(true)
-        return URL(fileURLWithPath: "/tmp/stub-stubborn")
-    }
-}
-
 /// A gate the test controls. `wait()` suspends without holding a thread and ignores task cancellation, so it
 /// cannot starve the cooperative pool. `open()` releases every waiter, now and later.
 private final class Gate: @unchecked Sendable {
@@ -90,6 +71,15 @@ private final class Gate: @unchecked Sendable {
         waiters = []
         lock.unlock()
         for c in w { c.resume() }
+    }
+
+    /// Hang guard only: opens `gate` after 60 s so a wrapper that waits for the provider makes the test fail
+    /// instead of hanging. It is never what makes a passing run pass. Cancel the returned task when done.
+    static func openAfterHangGuard(_ gate: Gate) -> Task<Void, Never> {
+        Task {
+            try? await Task.sleep(nanoseconds: 60_000_000_000)
+            gate.open()
+        }
     }
 
     func wait() async {
@@ -202,12 +192,13 @@ struct ConformanceOfflineGuardTests {
     }
 
     /// A provider that ignores cancellation must not hold the caller: the miss is reported as soon as it is seen,
-    /// while the provider is still "transferring". Progress is reported synchronously on the provider's first
+    /// while the provider is still blocked on a gate the test controls (no clock involved). Progress is reported synchronously on the provider's first
     /// instruction, so this also covers a miss that is recorded before the wrapper has finished setting up.
     @Test func hfHubOfflineThrowsWithoutWaitingForStubbornProvider() async throws {
+        let gate = Gate()
         let finished = FlagBox()
-        let stub = StubbornDownloader(finished: finished, seconds: 3)
-        let start = Date()
+        let stub = GatedDownloader(gate: gate, finished: finished, reportsAfterRelease: false)
+        let guardTask = Gate.openAfterHangGuard(gate)
         var thrown: Error?
         await SharpAIOverlay.OfflineGuard.$environmentOverride.withValue(["HF_HUB_OFFLINE": "1"]) {
             do {
@@ -217,12 +208,13 @@ struct ConformanceOfflineGuardTests {
                 thrown = error
             }
         }
-        let elapsed = Date().timeIntervalSince(start)
+        guardTask.cancel()
         #expect(thrown is SharpAIOverlay.OfflineError, "got \(String(describing: thrown))")
-        #expect(elapsed < 1.5, "waited \(elapsed)s for the provider")
-        #expect(finished.value == nil, "the provider must still be running when the error is thrown")
-        // let the leaked provider drain so it cannot spill into other tests
-        for _ in 0 ..< 100 where finished.value == nil { try await Task.sleep(nanoseconds: 50_000_000) }
+        #expect(finished.value == nil, "the provider must still be blocked when the error is thrown")
+        // release the provider and let it drain so it cannot spill into other tests
+        gate.open()
+        for _ in 0 ..< 600 where finished.value == nil { try await Task.sleep(nanoseconds: 50_000_000) }
+        #expect(finished.value == true, "the provider did not drain")
     }
 
     /// After the early throw the caller must hear nothing more: a provider that ignores cancellation and keeps
@@ -232,6 +224,7 @@ struct ConformanceOfflineGuardTests {
         let finished = FlagBox()
         let log = ProgressLog()
         let stub = GatedDownloader(gate: gate, finished: finished, reportsAfterRelease: true)
+        let guardTask = Gate.openAfterHangGuard(gate)
         var thrown: Error?
         await SharpAIOverlay.OfflineGuard.$environmentOverride.withValue(["HF_HUB_OFFLINE": "1"]) {
             do {
@@ -242,6 +235,7 @@ struct ConformanceOfflineGuardTests {
                 thrown = error
             }
         }
+        guardTask.cancel()
         #expect(thrown is SharpAIOverlay.OfflineError, "got \(String(describing: thrown))")
         #expect(finished.value == nil, "the provider must still be blocked when the error is thrown")
         gate.open()
