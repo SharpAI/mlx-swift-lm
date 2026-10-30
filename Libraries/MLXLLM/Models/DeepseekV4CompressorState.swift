@@ -226,10 +226,12 @@ extension SharpAIOverlay.V4Compressor {
             let usePrev = overlap && j0 >= 1
             let from = usePrev ? start - ratio : start
             let end = start + (j1 - j0) * ratio
+            // same rounding as the full-sequence forward: fp32 pooling and norm, one cast to the model dtype
             var fresh = norm(
                 Self.pool(
                     kv: fullKV[0..., from ..< end], score: fullSc[0..., from ..< end], ape: ape, ratio: ratio,
-                    overlap: overlap, headDim: headDim))
+                    overlap: overlap, headDim: headDim)
+            ).asType(x.dtype)
             if usePrev { fresh = fresh[0..., 1...] }  // block j0 - 1 was already finished
             fresh = SharpAIOverlay.v4RopeCompressed(
                 fresh, rope: rope, ropeDim: ropeDim, ratio: ratio, firstBlock: j0)

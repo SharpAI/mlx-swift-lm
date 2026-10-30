@@ -59,15 +59,18 @@ extension SharpAIOverlay {
             return (wkv(xf), wgate(xf))
         }
 
-        /// x: [B, T, hidden] -> [B, T / ratio, headDim] (RMSNorm applied, no RoPE). Trailing tokens that
-        /// do not fill a block are dropped.
+        /// x: [B, T, hidden] -> [B, T / ratio, headDim] (RMSNorm applied, no RoPE), in x.dtype. Trailing tokens
+        /// that do not fill a block are dropped.
         func callAsFunction(_ x: MLXArray) -> MLXArray {
             let b = x.dim(0), nb = x.dim(1) / ratio
             if nb == 0 { return zeros([b, 0, headDim], dtype: x.dtype) }
             let xs = x[0..., ..<(nb * ratio)]
             let (kv, score) = project(xs)
-            return norm(
-                Self.pool(kv: kv, score: score, ape: ape, ratio: ratio, overlap: overlap, headDim: headDim))
+            let pooled = Self.pool(
+                kv: kv, score: score, ape: ape, ratio: ratio, overlap: overlap, headDim: headDim)
+            // fp32 inside, model dtype out: float32 entries would promote the attention keys and every later
+            // activation of a bf16 model.
+            return norm(pooled).asType(x.dtype)
         }
 
         /// Batched, vectorised form of `SharpAIOverlayGapReference.softmaxPoolCompress`.
