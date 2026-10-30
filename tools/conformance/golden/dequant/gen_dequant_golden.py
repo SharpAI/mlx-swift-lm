@@ -261,10 +261,10 @@ def fx_awq():
 TOL = {
     "float32_exact": {"rtol": 0.0, "atol": 0.0,
                       "why": "mxfp4 / nvfp4 (exactly representable global scales) / int4 / awq: every product is a small-mantissa value times a power of two or a short-mantissa float32; the float32 result is exact, so equality is required"},
-    "float32_product": {"rtol": 1.2e-7, "atol": 0.0,
-                        "why": "fp8 * float32 scale: one float32 rounding of an exact product (<= 2^-24 = 6e-8 relative); allow 2 ulp (1.2e-7) for the matmul-by-identity route"},
-    "float32_affine_cancellation": {"rtol": 1.2e-7, "atol": 0.0, "atol_per_max_scale": 15 * 2.0 ** -23,
-                                    "why": "MLX affine dequantize computes q*scale + bias with bias = -zp*scale: two float32 roundings of terms up to 15*scale that cancel, so the absolute error is up to 2 * 2^-24 * 15 * max(scale) (= 15 * 2^-23 * max(scale)) even where the exact result is tiny or zero; vLLM's (q-zp)*scale has one rounding"},
+    "float32_product": {"rtol": 0.0, "atol": 0.0,
+                        "why": "fp8 * float32 scale: the fp8 value has <= 4 significant bits, so the product has <= 28 bits and is exact in float64; Float(float64 product) and MLX's float32 multiply are the same single correctly rounded result. The matmul-by-identity route only adds exact zeros. Equality is required: a 1-ulp bug must fail"},
+    "float32_affine_cancellation": {"rtol": 1.2e-7, "atol": 0.0, "atol_per_scale": 15 * 2.0 ** -23,
+                                    "why": "MLX affine dequantize computes q*scale + bias with bias = -zp*scale: two float32 roundings of terms up to 15*scale that cancel, so the absolute error is up to 2 * 2^-24 * 15 * scale (= 15 * 2^-23 * scale, the scale of the element's OWN group) even where the exact result is tiny or zero; vLLM's (q-zp)*scale has one rounding"},
     "bfloat16_values": {"rtol": 0.0, "atol": 0.0, "why": "every fp8 e4m3 value has 3 mantissa bits, exactly representable in bfloat16"},
 }
 

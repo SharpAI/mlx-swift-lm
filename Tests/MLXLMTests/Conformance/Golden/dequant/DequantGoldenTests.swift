@@ -91,11 +91,13 @@ enum DequantGolden {
     static func doubles(_ v: Any?) -> [Double] { (v as! [Any]).map(d) }
     static func ints(_ v: Any?) -> [Int] { (v as! [Any]).map { ($0 as! NSNumber).intValue } }
 
-    /// float32_affine_cancellation. `scales[i]` is the scale of the group element i belongs to.
-    /// STUB (red): still uses the case-wide largest scale for every element.
+    /// float32_affine_cancellation. `scales[i]` is the scale of the group element i belongs to: the absolute
+    /// tolerance of element i is atol_per_scale * scales[i] (its OWN group's scale, see MANIFEST "why").
     static func affineMismatch(_ got: [Float], _ want: [Double], scales: [Double]) -> String? {
+        guard scales.count == got.count else { return "scales count \(scales.count) != \(got.count)" }
         let t = (manifest()["tolerances"] as! [String: [String: Any]])["float32_affine_cancellation"]!
-        return mismatch(got, want, rtol: d(t["rtol"]!), atol: d(t["atol_per_max_scale"]!) * scales.max()!)
+        let perScale = d(t["atol_per_scale"]!)
+        return mismatch(got, want, rtol: d(t["rtol"]!), atolAt: { perScale * scales[$0] })
     }
 
     static func tolerance(_ name: String) -> (rtol: Double, atol: Double) {
@@ -105,6 +107,11 @@ enum DequantGolden {
 
     /// nil when `got` equals the float32 rounding of `want` within rtol/atol (NaN matches NaN, inf matches inf).
     static func mismatch(_ got: [Float], _ want: [Double], rtol: Double, atol: Double) -> String? {
+        mismatch(got, want, rtol: rtol, atolAt: { _ in atol })
+    }
+
+    /// Same, with an absolute tolerance per element index.
+    static func mismatch(_ got: [Float], _ want: [Double], rtol: Double, atolAt: (Int) -> Double) -> String? {
         guard got.count == want.count else { return "count \(got.count) != \(want.count)" }
         var bad = [String]()
         for i in got.indices {
@@ -115,7 +122,7 @@ enum DequantGolden {
                 bad.append("[\(i)] got NaN want \(w)")
             } else if w.isInfinite || g.isInfinite {
                 if g != w { bad.append("[\(i)] got \(g) want \(w)") }
-            } else if Double(abs(g - w)) > atol + rtol * Double(abs(w)) {
+            } else if Double(abs(g - w)) > atolAt(i) + rtol * Double(abs(w)) {
                 bad.append("[\(i)] got \(g) want \(w)")
             }
         }
