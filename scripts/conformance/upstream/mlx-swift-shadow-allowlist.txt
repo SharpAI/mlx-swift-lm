@@ -3,13 +3,6 @@
 # finding exactly (an allowed OVERLAP does not silence a COLLISION of the same key). Every entry needs a reason
 # and an owner action.
 
-# LANDED upstream (checked against ml-explore/mlx-swift 78d3cc1d, 2026-10-28): mlx-swift now ships its own
-# `compile(shapeless:_:)` @Sendable overloads (Source/MLX/Transforms+Compile.swift) and ml-explore/mlx-swift-lm
-# f5b0677 no longer carries CompileOverloads.swift. Action: delete Libraries/MLXLMCommon/CompileOverloads.swift
-# when the SharpAI/mlx-swift fork syncs past that mlx-swift commit; then remove these lines.
-COLLISION .compile(shapeless:_:)  # shim pending removal, see above
-OVERLAP .compile(shapeless:_:)  # shim pending removal (upstream also has the defaulted inputs:/outputs: form)
-
 # Upstream-owned duplicate: identical Libraries/MLXEmbedders/Extensions/MLXArray+Helper.swift is in
 # ml-explore/mlx-swift-lm f5b0677 AND ml-explore/mlx-swift 78d3cc1d declares the same member. Not our code;
 # watch it when the mlx-swift pin advances (call sites in MLXEmbedders may become ambiguous). Report upstream if so.
