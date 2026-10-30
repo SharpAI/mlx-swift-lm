@@ -69,12 +69,12 @@ validate_scratch() {
 # Stage-1 detector. LIMITS: the sandbox already denies network*, so a real fetch cannot succeed and `resolve` exiting
 # non-zero is the authoritative proof that a dependency is missing from the cache. This check is a second, advisory
 # signal on a SUCCESSFUL resolve, and it is deliberately lenient about SwiftPM's wording: a Fetching/Updating/Cloning
-# https line counts as a network fetch only if it does not mention the cache outside its URL (any case; a repo URL such as
+# https line counts as a network fetch only if it does not mention the cache outside its URL (the URL ends at whitespace, an opening or closing parenthesis, a quote or a comma, so a marker glued to it survives; any case; a repo URL such as
 # .../swift-cache does not count), so "Fetched ... from
 # cache (0.4s)", "(cached)" etc. pass. If SwiftPM stops printing such lines the check goes silent (it never
 # false-fails); it then proves nothing beyond the sandbox + exit status.
 fetched_from_network() {   # <resolve.log>; prints the offending lines, returns 0 when there are any
-    awk '/(Fetching|Updating|Cloning) https?:\/\// { l = $0; gsub(/https?:\/\/[^ ]*/, "", l); if (tolower(l) !~ /cache/) print }' "$1" | grep .
+    awk '/(Fetching|Updating|Cloning) https?:\/\// { l = $0; gsub(/https?:\/\/[^ \t(),"'"'"']*/, "", l); if (tolower(l) !~ /cache/) print }' "$1" | grep .
 }
 
 if [ "${1:-}" = "--check-resolve-log" ]; then     # test hook
