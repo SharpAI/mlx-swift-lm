@@ -54,13 +54,13 @@ private func makeQwen35TextConfig(
     return try JSONDecoder().decode(Qwen35TextConfiguration.self, from: Data(json.utf8))
 }
 
-/// Builds a minimal DeepseekV4Configuration
+/// Builds a minimal SharpAIDeepseekV4Configuration
 private func makeDeepseekV4Config(
     numMTPLayers: Int = 0,
     numHiddenLayers: Int = 4,
     hiddenSize: Int = 64,
     vocabSize: Int = 100
-) throws -> DeepseekV4Configuration {
+) throws -> SharpAIDeepseekV4Configuration {
     let json = """
     {
         "model_type": "deepseek_v4",
@@ -99,7 +99,7 @@ private func makeDeepseekV4Config(
         "norm_topk_prob": false
     }
     """
-    return try JSONDecoder().decode(DeepseekV4Configuration.self, from: Data(json.utf8))
+    return try JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: Data(json.utf8))
 }
 
 /// A hybrid Qwen3.5 trunk with stand-in MTP heads, so drafts are made without the
@@ -449,18 +449,18 @@ extension MLXTestingSuite {
             #expect(castedOpt != nil, "Qwen35TextModel must satisfy MTPLanguageModel at runtime")
         }
 
-        // 2.5 — DeepseekV4Model MTP array conditionally allocated
-        @Test("DeepseekV4Model.mtpLayers is empty without MTP env var")
+        // 2.5 — SharpAIDeepseekV4Model MTP array conditionally allocated
+        @Test("SharpAIDeepseekV4Model.mtpLayers is empty without MTP env var")
         func testDeepseekMTPArrayEmptyWithoutEnvVar() throws {
             guard ProcessInfo.processInfo.environment["SWIFTLM_MTP_ENABLE"] != "1" else {
                 return
             }
             let config = try makeDeepseekV4Config(numMTPLayers: 2)
-            let model = DeepseekV4Model(config)
+            let model = SharpAIDeepseekV4Model(config)
             // num_hidden_layers counts the main layers only; the MTP block is index num_hidden_layers
             // (HF config: compress_ratios has num_hidden_layers + num_nextn_predict_layers entries).
             #expect(model.model.layers.count == config.numHiddenLayers,
-                    "DeepseekV4Model.layers count should exclude MTP layers when SWIFTLM_MTP_ENABLE is not set")
+                    "SharpAIDeepseekV4Model.layers count should exclude MTP layers when SWIFTLM_MTP_ENABLE is not set")
         }
 
         // 2.6 — DeepseekV4 callMTP fallback returns single tensor
@@ -468,7 +468,7 @@ extension MLXTestingSuite {
         func testDeepseekCallMTPFallback() throws {
             let vocabSize = 100
             let config = try makeDeepseekV4Config(numMTPLayers: 0, vocabSize: vocabSize)
-            let model = DeepseekV4Model(config)
+            let model = SharpAIDeepseekV4Model(config)
 
             let inputs = MLXArray([1, 2]).reshaped(1, 2)
             let results = model.callMTP(inputs, cache: nil as [KVCache]?)

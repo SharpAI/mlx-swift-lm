@@ -85,7 +85,31 @@ def first_config(text):
     return None
 
 
-def registry_entries(root, path, enum_name):
+# Fork overlays that add model_types to a registry outside the upstream-owned literal (SL-41).
+# Each overlay file has a `static var creators` block of `"model_type": ...` entries and decodes one
+# Configuration type (its first `XConfiguration.self` / `decode(X.self`).
+OVERLAYS = {
+    "llm": ["Libraries/MLXLLM/SharpAI/SharpAIDeepseekV4Registration.swift"],
+}
+
+
+def overlay_entries(root, kind):
+    out = {}
+    for rel in OVERLAYS.get(kind, []):
+        src = open(os.path.join(root, rel), encoding="utf8").read()
+        m = re.search(r"static var creators[^{]*\{", src)
+        body = src[m.end():match_brace(src, m.end() - 1)]
+        cfg = None
+        for n in re.findall(r"\b([A-Z][A-Za-z0-9_]*Configuration)\.self", src):
+            if n != "ArchitectureConfiguration":
+                cfg = n
+                break
+        for k in re.findall(r'^\s{12}"([A-Za-z0-9_.\-]+)"\s*:', body, re.M):
+            out[k] = cfg
+    return out
+
+
+def registry_entries(root, path, enum_name, kind=None):
     """-> {model_type: configuration-type-name or None}"""
     src = open(os.path.join(root, path), encoding="utf8").read()
     start = src.index(f"enum {enum_name}")
@@ -111,6 +135,7 @@ def registry_entries(root, path, enum_name):
                 if fn:
                     name = first_config(src[fn.end():match_brace(src, fn.end() - 1)])
         out[h.group(1)] = name
+    out.update(overlay_entries(root, kind))  # overlay wins on a clash, same as the runtime merge
     return out
 
 
@@ -186,7 +211,7 @@ def load_fixtures(root):
 def build(root):
     """One row per (fixture, registry): a model_type can be registered in several registries
     (e.g. gemma4 in LLM and VLM) and each registry may use a different Configuration type."""
-    regs = {kind: registry_entries(root, path, enum) for kind, path, enum in REGISTRIES}
+    regs = {kind: registry_entries(root, path, enum, kind) for kind, path, enum in REGISTRIES}
     index = TypeIndex(root)
     prefer = {"llm": "/MLXLLM/", "vlm": "/MLXVLM/", "embedder": "/MLXEmbedders/"}
     rows = []

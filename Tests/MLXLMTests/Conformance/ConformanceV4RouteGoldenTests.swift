@@ -1,5 +1,5 @@
-// V4 routing / clamped SwiGLU / mHC golden fixtures: the REAL shipping Swift code (DeepseekV4Gate, DeepseekV4Expert,
-// DeepseekV4MoE, hcPre / hcPost / hcHead in DeepseekV4.swift) against a float64 oracle transcribed from vLLM
+// V4 routing / clamped SwiGLU / mHC golden fixtures: the REAL shipping Swift code (SharpAIDeepseekV4Gate, SharpAIDeepseekV4Expert,
+// SharpAIDeepseekV4MoE, sharpAIHCPre / sharpAIHCPost / sharpAIHCHead in SharpAIDeepseekV4.swift) against a float64 oracle transcribed from vLLM
 // (commit 2eae56c) and committed as JSON. The tests never run python and never touch the network; the fixtures are
 // located through `#filePath` (no Package.swift resource change) and verified against MANIFEST.json (sha256 per
 // file, plus the sha256 of the generator and the oracle) at load, so a changed fixture fails loudly.
@@ -12,7 +12,7 @@
 // expert and the whole MoE output; the hyper-connection pre / post / head / pre->post chain. Where the shipping code
 // disagrees with the oracle the case is listed in `V4RouteGolden.gaps` with the reason and runs through
 // `ConformanceGap.knownIssue`; CONFORMANCE_GAP_RAW=1 shows the raw failure, CONFORMANCE_STRICT=1 fails once a gap is
-// fixed. upstream-watch: Libraries/MLXLLM/Models/DeepseekV4.swift.
+// fixed. upstream-watch: Libraries/MLXLLM/SharpAI/SharpAIDeepseekV4.swift.
 
 import Foundation
 import MLX
@@ -306,11 +306,11 @@ enum V4RouteGolden {
     // MARK: running the real code
 
     /// The shipped Flash config with dimensions overridden (the same trick the other V4 suites use).
-    static func config(_ overrides: [String: Any]) throws -> DeepseekV4Configuration {
+    static func config(_ overrides: [String: Any]) throws -> SharpAIDeepseekV4Configuration {
         var o = try #require(try JSONSerialization.jsonObject(with: ConformanceDeepseekV4.tinyJSON()) as? [String: Any])
         for (k, v) in overrides { o[k] = v }
         return try JSONDecoder().decode(
-            DeepseekV4Configuration.self, from: JSONSerialization.data(withJSONObject: o))
+            SharpAIDeepseekV4Configuration.self, from: JSONSerialization.data(withJSONObject: o))
     }
 
     static func violations(_ f: Fixture) throws -> [String] {
@@ -336,7 +336,7 @@ enum V4RouteGolden {
             "norm_topk_prob": try #require(p.normTopkProb),
             "routed_scaling_factor": try #require(p.routedScalingFactor),
         ])
-        let gate = DeepseekV4Gate(config: cfg, layerIndex: isHash ? 0 : 1)  // num_hash_layers = 1
+        let gate = SharpAIDeepseekV4Gate(config: cfg, layerIndex: isHash ? 0 : 1)  // num_hash_layers = 1
         let dt = dtype(f)
         var params: [(String, MLXArray)] = [("weight", array(try input(f, "weight"), dt))]
         if isHash {
@@ -386,7 +386,7 @@ enum V4RouteGolden {
 
     static func runExpert(_ f: Fixture, _ m: Manifest) throws -> [String] {
         let p = f.params
-        let expert = DeepseekV4Expert(
+        let expert = SharpAIDeepseekV4Expert(
             hiddenSize: try #require(p.H), intermediateSize: try #require(p.I),
             swiguLimit: Float(try #require(p.swigluLimit)))
         expert.update(parameters: ModuleParameters.unflattened([
@@ -409,7 +409,7 @@ enum V4RouteGolden {
             "norm_topk_prob": try #require(p.normTopkProb),
             "routed_scaling_factor": try #require(p.routedScalingFactor), "n_shared_experts": 1,
         ])
-        let moe = DeepseekV4MoE(config: cfg, layerIndex: isHash ? 0 : 1)
+        let moe = SharpAIDeepseekV4MoE(config: cfg, layerIndex: isHash ? 0 : 1)
         var params: [(String, MLXArray)] = [
             ("gate.weight", array(try input(f, "gateWeight"), .float32)),
             ("switch_mlp.gate_proj.weight", array(try input(f, "wg"), .float32)),
@@ -433,7 +433,7 @@ enum V4RouteGolden {
 
     static func runHcPre(_ f: Fixture, _ m: Manifest) throws -> [String] {
         let p = f.params
-        let (y, post, comb) = hcPre(
+        let (y, post, comb) = sharpAIHCPre(
             x: array(try input(f, "x"), .float32), hcFn: array(try input(f, "fn"), .float32),
             hcScale: array(try input(f, "scale"), .float32), hcBase: array(try input(f, "base"), .float32),
             hcMult: try #require(p.hc), sinkhornIters: try #require(p.sinkhornIters),
@@ -446,7 +446,7 @@ enum V4RouteGolden {
 
     static func runHcPost(_ f: Fixture, _ m: Manifest) throws -> [String] {
         let dt = dtype(f)
-        let y = hcPost(
+        let y = sharpAIHCPost(
             x: array(try input(f, "x"), dt), residual: array(try input(f, "residual"), dt),
             post: array(try input(f, "post"), .float32), comb: array(try input(f, "comb"), .float32))
         eval(y)
@@ -455,7 +455,7 @@ enum V4RouteGolden {
 
     static func runHcHead(_ f: Fixture, _ m: Manifest) throws -> [String] {
         let p = f.params
-        let y = hcHead(
+        let y = sharpAIHCHead(
             x: array(try input(f, "x"), .float32), hcFn: array(try input(f, "fn"), .float32),
             hcScale: array(try input(f, "scale"), .float32), hcBase: array(try input(f, "base"), .float32),
             rmsEps: Float(try #require(p.rmsEps)), eps: Float(try #require(p.hcEps)))
@@ -466,13 +466,13 @@ enum V4RouteGolden {
     static func runHcChain(_ f: Fixture, _ m: Manifest) throws -> [String] {
         let p = f.params
         let x = array(try input(f, "x"), .float32)
-        let (y, post, comb) = hcPre(
+        let (y, post, comb) = sharpAIHCPre(
             x: x, hcFn: array(try input(f, "fn"), .float32),
             hcScale: array(try input(f, "scale"), .float32), hcBase: array(try input(f, "base"), .float32),
             hcMult: try #require(p.hc), sinkhornIters: try #require(p.sinkhornIters),
             rmsEps: Float(try #require(p.rmsEps)), eps: Float(try #require(p.hcEps)))
         let sub = y * Float(try #require(p.sublayerScale)) + Float(try #require(p.sublayerShift))
-        let out = hcPost(x: sub, residual: x, post: post, comb: comb)
+        let out = sharpAIHCPost(x: sub, residual: x, post: post, comb: comb)
         eval(out)
         return compare(out, try output(f, "y"), tol: try tol(m, f, "y"), label: "y", tag: f.name)
     }

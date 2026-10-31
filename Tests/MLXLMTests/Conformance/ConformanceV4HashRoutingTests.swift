@@ -21,7 +21,7 @@ import Testing
 @testable import MLXLLM
 
 struct ConformanceV4HashRoutingTests {
-    static func config() throws -> DeepseekV4Configuration {
+    static func config() throws -> SharpAIDeepseekV4Configuration {
         try ConformanceV4CompressorTests.attentionConfig(ratios: [0, 4, 128, 0])
     }
 
@@ -40,7 +40,7 @@ struct ConformanceV4HashRoutingTests {
     @Test("hash gate: indices come from tid2eid[token ids], weights from the gathered learned scores")
     func hashGateMatchesRecomputation() throws {
         let cfg = try Self.config()
-        let gate = DeepseekV4Gate(config: cfg, layerIndex: 0)  // num_hash_layers = 1 -> hash
+        let gate = SharpAIDeepseekV4Gate(config: cfg, layerIndex: 0)  // num_hash_layers = 1 -> hash
         let tab = Self.table(vocab: cfg.vocabSize, experts: cfg.nRoutedExperts, topk: cfg.numExpertsPerTok)
         gate.update(parameters: ModuleParameters.unflattened([
             ("weight", MLXRandom.normal([cfg.nRoutedExperts, cfg.hiddenSize], key: MLXRandom.key(2))),
@@ -76,18 +76,18 @@ struct ConformanceV4HashRoutingTests {
     @Test("hash layers own tid2eid and no e_score_correction_bias; learned layers the opposite")
     func parameterLayout() throws {
         let cfg = try Self.config()
-        let hash = Set(DeepseekV4Gate(config: cfg, layerIndex: 0).parameters().flattened().map { $0.0 })
-        let learned = Set(DeepseekV4Gate(config: cfg, layerIndex: 1).parameters().flattened().map { $0.0 })
+        let hash = Set(SharpAIDeepseekV4Gate(config: cfg, layerIndex: 0).parameters().flattened().map { $0.0 })
+        let learned = Set(SharpAIDeepseekV4Gate(config: cfg, layerIndex: 1).parameters().flattened().map { $0.0 })
         #expect(hash == ["weight", "tid2eid"])
         #expect(learned == ["weight", "e_score_correction_bias"])
-        let t = DeepseekV4Gate(config: cfg, layerIndex: 0).tid2eid
+        let t = SharpAIDeepseekV4Gate(config: cfg, layerIndex: 0).tid2eid
         #expect(t?.shape == [cfg.vocabSize, cfg.numExpertsPerTok] && t?.dtype == .int32)
     }
 
     @Test("learned layers ignore token ids")
     func learnedLayerIgnoresIds() throws {
         let cfg = try Self.config()
-        let gate = DeepseekV4Gate(config: cfg, layerIndex: 1)
+        let gate = SharpAIDeepseekV4Gate(config: cfg, layerIndex: 1)
         gate.update(parameters: ModuleParameters.unflattened([
             ("weight", MLXRandom.normal([cfg.nRoutedExperts, cfg.hiddenSize], key: MLXRandom.key(2))),
         ]))

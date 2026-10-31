@@ -184,7 +184,7 @@ struct ConformanceMissingOpsTests {
 
         let dynamic: Set<String>
         switch type {
-        case "deepseek_v4": dynamic = try Self.roundTripIgnored(DeepseekV4Configuration.self, fixture: type, file: url.lastPathComponent)
+        case "deepseek_v4": dynamic = try Self.roundTripIgnored(SharpAIDeepseekV4Configuration.self, fixture: type, file: url.lastPathComponent)
         case "nemotron_h": dynamic = try Self.roundTripIgnored(NemotronHConfiguration.self, fixture: type, file: url.lastPathComponent)
         case "glm4_moe": dynamic = try Self.roundTripIgnored(GLM4MoEConfiguration.self, fixture: type, file: url.lastPathComponent)
         case "lfm2": dynamic = try Self.roundTripIgnored(LFM2Configuration.self, fixture: type, file: url.lastPathComponent)

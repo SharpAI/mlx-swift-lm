@@ -8,9 +8,9 @@ import MLXLMCommon
 import MLXNN
 import XCTest
 
-/// Minimal config that matches the DeepseekV4Configuration field names, but with
+/// Minimal config that matches the SharpAIDeepseekV4Configuration field names, but with
 /// tiny dimensions so the full forward pass runs quickly in CI.
-private func makeSmallConfig() -> DeepseekV4Configuration {
+private func makeSmallConfig() -> SharpAIDeepseekV4Configuration {
     // Use JSON decode so all CodingKeys are exercised
     let json = """
     {
@@ -48,10 +48,10 @@ private func makeSmallConfig() -> DeepseekV4Configuration {
     }
     """
     let data = json.data(using: .utf8)!
-    return try! JSONDecoder().decode(DeepseekV4Configuration.self, from: data)
+    return try! JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: data)
 }
 
-public class DeepseekV4Tests: XCTestCase {
+public class SharpAIDeepseekV4Tests: XCTestCase {
 
     // MARK: - Configuration
 
@@ -71,7 +71,7 @@ public class DeepseekV4Tests: XCTestCase {
 
     func testModelOutputShape() throws {
         let config = makeSmallConfig()
-        let model = DeepseekV4Model(config)
+        let model = SharpAIDeepseekV4Model(config)
 
         // num_hidden_layers counts the main layers only; the MTP block is index num_hidden_layers
         let expectedLayers = config.numHiddenLayers
@@ -88,19 +88,19 @@ public class DeepseekV4Tests: XCTestCase {
 
     func testKVHeadsCount() {
         let config = makeSmallConfig()
-        let model = DeepseekV4Model(config)
+        let model = SharpAIDeepseekV4Model(config)
         let expected = config.numHiddenLayers
         XCTAssertEqual(model.kvHeads.count, expected)
         XCTAssertTrue(model.kvHeads.allSatisfy { $0 == 1 },
                       "V4 uses unified KV with single head per layer")
     }
 
-    // MARK: - HCParams Module
+    // MARK: - SharpAIHCParams Module
 
     func testHCParamsLoadedFromCheckpointKeys() throws {
-        // Verify HCParams sub-modules are reachable at the right key paths
+        // Verify SharpAIHCParams sub-modules are reachable at the right key paths
         let config = makeSmallConfig()
-        let block = DeepseekV4Block(config: config)
+        let block = SharpAIDeepseekV4Block(config: config)
 
         // After construction, hc_attn and hc_ffn should be zeroed/ones placeholders
         let hcAttnFnShape = block.hc_attn.fn.shape
@@ -114,7 +114,7 @@ public class DeepseekV4Tests: XCTestCase {
 
     func testHCHeadShape() {
         let config = makeSmallConfig()
-        let inner = DeepseekV4ModelInner(config: config)
+        let inner = SharpAIDeepseekV4ModelInner(config: config)
         let hc = config.hcMult
         XCTAssertEqual(inner.hc_head.fn.shape, [hc, hc * config.hiddenSize])
         XCTAssertEqual(inner.hc_head.base.shape, [hc])
@@ -125,7 +125,7 @@ public class DeepseekV4Tests: XCTestCase {
 
     func testAttentionModuleKeyNames() throws {
         let config = makeSmallConfig()
-        let attn = DeepseekV4Attention(config: config)
+        let attn = SharpAIDeepseekV4Attention(config: config)
 
         // Verify correct key-named properties exist (checked via parameter collection)
         // wqA, qNorm, wqB, wkv, kvNorm, woA, woB
@@ -143,7 +143,7 @@ public class DeepseekV4Tests: XCTestCase {
 
     func testBlockModuleKeyNames() throws {
         let config = makeSmallConfig()
-        let block = DeepseekV4Block(config: config)
+        let block = SharpAIDeepseekV4Block(config: config)
         let params = block.parameters()
 
         XCTAssertNotNil(params["attn"], "attn module missing (was 'self_attn')")
@@ -158,7 +158,7 @@ public class DeepseekV4Tests: XCTestCase {
 
     func testSanitizeDropsMTPLayers() {
         let config = makeSmallConfig()
-        let model = DeepseekV4Model(config)
+        let model = SharpAIDeepseekV4Model(config)
 
         // Build fake weights including the MTP block (index numHiddenLayers)
         var fakeWeights: [String: MLXArray] = [:]
@@ -183,7 +183,7 @@ public class DeepseekV4Tests: XCTestCase {
 
     func testSanitizeStacksPerExpertWeightsWhenPresent() {
         let config = makeSmallConfig()
-        let model = DeepseekV4Model(config)
+        let model = SharpAIDeepseekV4Model(config)
 
         // Simulate a non-pre-stacked checkpoint (expert weights as separate keys)
         var fakeWeights: [String: MLXArray] = [:]
@@ -213,7 +213,7 @@ public class DeepseekV4Tests: XCTestCase {
     func testSanitizeDropsCompressorIndexerKeys() {
         // Compressor (SL-35 4.1) and indexer (SL-35 4.2) are implemented; ensure sanitize keeps their tensors.
         let config = makeSmallConfig()
-        let model = DeepseekV4Model(config)
+        let model = SharpAIDeepseekV4Model(config)
 
         var fakeWeights: [String: MLXArray] = [
             "model.layers.0.attn.wkv.weight": zeros([1, 1]),
@@ -245,7 +245,7 @@ public class DeepseekV4Tests: XCTestCase {
     func testMoEGateRoutingShape() {
         let config = makeSmallConfig()
         // Layer 1 is a learned-routing layer; layer 0 (< num_hash_layers) is a hash layer that needs token ids (SL-35 4.3).
-        let gate = DeepseekV4Gate(config: config, layerIndex: 1)
+        let gate = SharpAIDeepseekV4Gate(config: config, layerIndex: 1)
         gate.weight = MLXRandom.uniform(low: 0, high: 1, [config.nRoutedExperts, config.hiddenSize])
         gate.e_score_correction_bias = zeros([config.nRoutedExperts])
 
@@ -263,7 +263,7 @@ public class DeepseekV4Tests: XCTestCase {
     func testBatchedForwardConsistency() throws {
         // Running the same token twice as a batch vs individually should give same logits
         let config = makeSmallConfig()
-        let model = DeepseekV4Model(config)
+        let model = SharpAIDeepseekV4Model(config)
 
         let tokenArray = MLXArray([42, 100, 7])[.newAxis, .ellipsis]  // [1, 3]
 
@@ -294,7 +294,7 @@ public class DeepseekV4Tests: XCTestCase {
 
         // Load and decode config
         let configData = try Data(contentsOf: configPath)
-        let config = try JSONDecoder().decode(DeepseekV4Configuration.self, from: configData)
+        let config = try JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: configData)
         XCTAssertEqual(config.vocabSize, 129280)
         XCTAssertEqual(config.numHiddenLayers, 43)
         XCTAssertEqual(config.numNextnPredictLayers, 1)
@@ -340,13 +340,13 @@ public class DeepseekV4Tests: XCTestCase {
         let configPath = modelPath.appendingPathComponent("config.json")
         let configData = try Data(contentsOf: configPath)
         try? "STAGE:configRead".write(toFile: "/tmp/dsv4_debug.txt", atomically: true, encoding: .utf8)
-        let config = try JSONDecoder().decode(DeepseekV4Configuration.self, from: configData)
+        let config = try JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: configData)
         try? "STAGE:configDecoded vocab=\(config.vocabSize)".write(toFile: "/tmp/dsv4_debug.txt", atomically: true, encoding: .utf8)
         // Read base config for per-layer quantization
         let baseConfig = try JSONDecoder().decode(BaseConfiguration.self, from: configData)
 
         // Create model and load weights with per-layer quantization
-        let model = DeepseekV4Model(config)
+        let model = SharpAIDeepseekV4Model(config)
         try? "STAGE:modelCreated".write(toFile: "/tmp/dsv4_debug.txt", atomically: true, encoding: .utf8)
 
         do {

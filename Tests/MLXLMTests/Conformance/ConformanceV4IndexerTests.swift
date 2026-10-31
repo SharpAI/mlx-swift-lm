@@ -30,7 +30,7 @@ struct ConformanceV4IndexerTests {
         var visible: [[Bool]]
     }
 
-    static func expected(attn: DeepseekV4Attention, x: MLXArray, topk: Int) throws -> Expected {
+    static func expected(attn: SharpAIDeepseekV4Attention, x: MLXArray, topk: Int) throws -> Expected {
         let ix = try #require(attn.indexer)
         let L = x.dim(1), nh = ix.nHeads, hd = ix.headDim, rd = ix.ropeDim, nope = hd - rd
         let comp = ix.compressor
@@ -70,9 +70,9 @@ struct ConformanceV4IndexerTests {
         return Expected(scores: scores, selected: selected, visible: visible)
     }
 
-    static func make(topk: Int, tokens: Int) throws -> (DeepseekV4Attention, MLXArray) {
+    static func make(topk: Int, tokens: Int) throws -> (SharpAIDeepseekV4Attention, MLXArray) {
         let cfg = try ConformanceV4CompressorTests.attentionConfig(ratios: [0, 4, 128, 0], indexTopk: topk)
-        let attn = DeepseekV4Attention(config: cfg, layerIndex: 1)
+        let attn = SharpAIDeepseekV4Attention(config: cfg, layerIndex: 1)
         ConformanceV4CompressorTests.randomize(attn, seed: 17, scale: 0.4, skip: ["attn_sink"])
         let x = MLXRandom.normal([1, tokens, cfg.hiddenSize], key: MLXRandom.key(31))
         return (attn, x)
@@ -89,8 +89,8 @@ struct ConformanceV4IndexerTests {
         #expect(ix.compressor.ape.shape == [4, 16])
         // ratio 128 and ratio 0 layers have none.
         let cfg = attn.config
-        #expect(DeepseekV4Attention(config: cfg, layerIndex: 2).indexer == nil)
-        #expect(DeepseekV4Attention(config: cfg, layerIndex: 0).indexer == nil)
+        #expect(SharpAIDeepseekV4Attention(config: cfg, layerIndex: 2).indexer == nil)
+        #expect(SharpAIDeepseekV4Attention(config: cfg, layerIndex: 0).indexer == nil)
     }
 
     @Test("select() picks the oracle's top-k visible blocks per query")

@@ -17,13 +17,13 @@ import Testing
 @testable import MLXLLM
 
 enum ConformanceV4DecodeCache {
-    static func model(ratios: [Int], headDim: Int? = nil) async throws -> DeepseekV4Model {
+    static func model(ratios: [Int], headDim: Int? = nil) async throws -> SharpAIDeepseekV4Model {
         var o = try JSONSerialization.jsonObject(with: ConformanceDeepseekV4.tinyJSON()) as! [String: Any]
         o["compress_ratios"] = ratios
         if let headDim { o["head_dim"] = headDim }
         let data = try JSONSerialization.data(withJSONObject: o)
         let m = try await LLMTypeRegistry.shared.createModel(configuration: data, modelType: "deepseek_v4")
-        let model = try #require(m as? DeepseekV4Model)
+        let model = try #require(m as? SharpAIDeepseekV4Model)
         eval(model)
         return model
     }
@@ -46,7 +46,7 @@ enum ConformanceV4DecodeCache {
     }
 
     /// Feed `t` in chunks of the given sizes (the last size repeats); returns logits [1, T, vocab].
-    static func run(_ m: DeepseekV4Model, _ t: MLXArray, cache: [KVCache], chunks: [Int]) -> MLXArray {
+    static func run(_ m: SharpAIDeepseekV4Model, _ t: MLXArray, cache: [KVCache], chunks: [Int]) -> MLXArray {
         var outs: [MLXArray] = []
         var pos = 0, i = 0
         while pos < t.dim(1) {
@@ -240,7 +240,7 @@ struct ConformanceV4CacheRegistrationTests {
 /// and the compressor state drift apart and later decode attends over the wrong keys.
 @Suite(.serialized)
 struct ConformanceV4CacheTrimTests {
-    static func prefilled(ratios: [Int], tokens n: Int) async throws -> (DeepseekV4Model, [KVCache], MLXArray) {
+    static func prefilled(ratios: [Int], tokens n: Int) async throws -> (SharpAIDeepseekV4Model, [KVCache], MLXArray) {
         let m = try await ConformanceV4DecodeCache.model(ratios: ratios)
         let t = ConformanceV4DecodeCache.tokens(n)
         let cache = try m.newCache(parameters: nil)

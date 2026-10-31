@@ -57,7 +57,9 @@ weights. Tracking issue and survey method: SharpAI/SwiftLM#254.
    public type or function breaks the build when upstream adds it -- this is exactly how the
    `compile(shapeless:)` shims broke mlx-swift#28 (fixed by mlx-swift-lm#89).
 4. **Register if absent.** Overlay registration must check `ModelTypeRegistry.contains(_:)` first, so
-   an upstream registration wins automatically.
+   an upstream registration wins automatically. **Exception (SL-41, owner decision): `deepseek_v4`.** Ours
+   wins over a future upstream V4; it is registered by `SharpAIDeepseekV4Overlay` through a merge at the end of
+   the `LLMTypeRegistry.shared` literal, with an explicit ours-wins closure (see `upstream/UPSTREAM_WATCH.md`).
 5. **Upstream watch.** Record, next to each overlay, the upstream symbol / `model_type` to look for;
    the periodic upstream check runs this harness after every sync.
 

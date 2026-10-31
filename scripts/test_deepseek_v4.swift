@@ -25,13 +25,13 @@ print("✓ Model shards found at \(modelPath.path)")
 // 2. Load config
 let configPath = modelPath.appendingPathComponent("config.json")
 let configData = try Data(contentsOf: configPath)
-let config = try JSONDecoder().decode(DeepseekV4Configuration.self, from: configData)
+let config = try JSONDecoder().decode(SharpAIDeepseekV4Configuration.self, from: configData)
 let baseConfig = try JSONDecoder().decode(BaseConfiguration.self, from: configData)
 print("✓ Config decoded: vocab=\(config.vocabSize), layers=\(config.numHiddenLayers), mtp=\(config.numNextnPredictLayers)")
 
 // 3. Build model
 print("Building model graph...")
-let model = DeepseekV4Model(config)
+let model = SharpAIDeepseekV4Model(config)
 print("✓ Model graph built")
 
 // 4. Load weights
