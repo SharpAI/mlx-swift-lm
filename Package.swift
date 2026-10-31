@@ -109,8 +109,7 @@ let package = Package(
             ],
             path: "Libraries/MLXVLM",
             exclude: [
-                "README.md",
-                "Models/test_features.patch"
+                "README.md"
             ]
         ),
         .target(
