@@ -74,13 +74,16 @@ private final class Gate: @unchecked Sendable {
     }
 
     /// Hang guard only: opens `gate` after 60 s so a wrapper that waits for the provider makes the test fail
-    /// instead of hanging. It is never what makes a passing run pass. Cancel the returned task when done.
-    static func openAfterHangGuard(_ gate: Gate) -> Task<Void, Never> {
+    /// instead of hanging. It is never what makes a passing run pass. Cancel the returned task when done: a cancelled guard
+    /// returns without opening the gate (see `hangGuardDoesNotOpenTheGateWhenCancelled`).
+    static func openAfterHangGuard(_ gate: Gate, nanoseconds: UInt64 = 60_000_000_000) -> Task<Void, Never> {
         Task {
-            try? await Task.sleep(nanoseconds: 60_000_000_000)
+            do { try await Task.sleep(nanoseconds: nanoseconds) } catch { return }   // cancelled: leave the gate shut
             gate.open()
         }
     }
+
+    var opened: Bool { lock.lock(); defer { lock.unlock() }; return isOpen }
 
     func wait() async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
@@ -130,6 +133,25 @@ private struct GatedDownloader: Downloader {
 @Suite("ConformanceOfflineGuard")
 struct ConformanceOfflineGuardTests {
     static let on = ["SWIFTLM_OFFLINE": "1"]
+
+    /// Cancelling the hang guard must NOT open the gate: only the timeout may. With `try?` the cancelled sleep fell
+    /// through to `gate.open()`, so `guardTask.cancel()` released the provider and raced the "still blocked" checks.
+    @Test func hangGuardDoesNotOpenTheGateWhenCancelled() async {
+        let gate = Gate()
+        let guardTask = Gate.openAfterHangGuard(gate)
+        try? await Task.sleep(nanoseconds: 20_000_000)   // let the guard reach its sleep
+        guardTask.cancel()
+        await guardTask.value
+        #expect(!gate.opened, "cancelling the hang guard opened the gate")
+    }
+
+    /// The timeout path still works: an uncancelled guard opens the gate.
+    @Test func hangGuardOpensTheGateOnTimeout() async {
+        let gate = Gate()
+        let guardTask = Gate.openAfterHangGuard(gate, nanoseconds: 10_000_000)
+        await guardTask.value
+        #expect(gate.opened)
+    }
 
     @Test func envParsing() {
         #expect(!SharpAIOverlay.OfflineGuard.isOffline(environment: [:]))
