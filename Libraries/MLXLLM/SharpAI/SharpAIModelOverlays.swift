@@ -12,7 +12,7 @@
 //   - creators that always throw (dots3_note_mtp, k3_dspark, kimi_k3_mtp, minimax_m2,
 //     minimax_m3_dspark, minimax_m3_mtp, muse_spark_dspark, sarvam_mla, unknown, params.json)
 //   - models that build but cannot generate (inkling_model, inkling_mm_model, pangu_ultra_moe_mtp)
-//   - conditional or experimental ones (beam, step5)
+//   - conditional or experimental ones (step5)
 //   - encoder-style models that the generation path does not serve (modernbert, llama_bidirec,
 //     deepseek_v3_bidirec, openai_privacy_filter, jina_embeddings_v5)
 // Keys are listed one per line: scripts/conformance/gen_expectations.py and
@@ -32,6 +32,7 @@ public enum SharpAIModelOverlays {
         "PanguEmbedded",
         "alice_ai",
         "axk1",
+        "beam",
         "bailing_moe_v3",
         "cohere2_moe",
         "deepseek_v32",
@@ -76,6 +77,7 @@ public enum SharpAIModelOverlays {
             add(SharpAIAliceAiOverlay.creators)
             add(SharpAIAxk1Overlay.creators)
             add(SharpAIBailingMoeV3Overlay.creators)
+            add(SharpAIBeamOverlay.creators)
             add(SharpAICohere2MoeOverlay.creators)
             add(SharpAIDeepseekV32Overlay.creators)
             add(SharpAIDomynedgeOverlay.creators)

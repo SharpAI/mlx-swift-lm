@@ -114,7 +114,11 @@ def wired_entries(root, kind):
             if n != "ArchitectureConfiguration":
                 cfg = n
                 break
-        for k in re.findall(r'^\s+"([A-Za-z0-9_.\-]+)"\s*:\s*[{c\w]', text, re.M):
+        keys = re.findall(r'^\s+"([A-Za-z0-9_.\-]+)"\s*:\s*[{c\w]', text, re.M)
+        # A registration may key its dictionary by `modelType: {` with `static let modelType = "x"` (Beam).
+        if re.search(r"^\s+modelType\s*:\s*\{", text, re.M):
+            keys += re.findall(r'static let modelType\s*=\s*"([A-Za-z0-9_.\-]+)"', text)
+        for k in keys:
             if k in wired:
                 out[k] = cfg
     return out
