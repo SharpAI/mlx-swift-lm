@@ -45,6 +45,17 @@ enum SharpAIAirgap {
         (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?["vocab_size"] as? Int ?? 32
     }
 
+    /// The tensors as a checkpoint stores them. Most overlays' `sanitize` leaves already-converted names alone, so the
+    /// model's own parameters round-trip as they are. alice_ai is the exception: its `sanitize` adds 1 to 1-D norm weights
+    /// (zero-centred checkpoint -> plain RMSNorm), so the checkpoint must hold weight - 1 for the load to give the reference back.
+    static func checkpointTensor(key: String, name: String, _ array: MLXArray) -> MLXArray {
+        guard key == "alice_ai", array.ndim == 1 else { return array }
+        let norms = [".input_layernorm.weight", ".post_attention_layernorm.weight", "model.norm.weight",
+                     ".q_norm.weight", ".k_norm.weight"]
+        guard norms.contains(where: { name.hasSuffix($0) }) else { return array }
+        return array - MLXArray(1, dtype: array.dtype)
+    }
+
     static let cases: [Case] = [
         .init(key: "PanguEmbedded", json: #"""
 {"model_type":"PanguEmbedded","hidden_size":32,"num_hidden_layers":2,"intermediate_size":64,"num_attention_heads":4,"num_key_value_heads":2,"rms_norm_eps":1e-05,"vocab_size":100,"bias":true}
@@ -133,11 +144,43 @@ enum SharpAIAirgap {
         .init(key: "telechat3", json: #"""
 {"architectures":["TeleChat3ForCausalLM"],"model_type":"telechat3","hidden_size":8,"intermediate_size":16,"num_hidden_layers":1,"num_attention_heads":2,"num_key_value_heads":1,"vocab_size":32,"rms_norm_eps":1e-05,"rope_scaling":{"type":"telechat3-yarn","factor":4.0,"original_max_position_embeddings":16}}
 """#),
+        .init(key: "alice_ai", json: #"""
+{"model_type": "alice_ai", "hidden_size": 16, "num_hidden_layers": 4, "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 8, "layer_types": ["linear_attention", "linear_attention", "linear_attention", "full_attention"], "hidden_act": "silu", "rms_norm_eps": 1e-06, "vocab_size": 32, "rope_theta": 10000.0, "partial_rotary_factor": 0.5, "max_position_embeddings": 64, "tie_word_embeddings": false, "linear_num_key_heads": 2, "linear_num_value_heads": 2, "linear_key_head_dim": 4, "linear_value_head_dim": 4, "linear_conv_kernel_dim": 4, "block_attn_res_block_size": 2, "num_experts": 4, "num_experts_per_tok": 2, "moe_intermediate_size": 8, "shared_expert_intermediate_size": 8, "norm_topk_prob": true, "router_score_function": "sigmoid"}
+"""#),
+        .init(key: "axk1", json: #"""
+{"model_type": "axk1", "architectures": ["AXK1ForCausalLM"], "vocab_size": 32, "hidden_size": 8, "intermediate_size": 16, "moe_intermediate_size": 8, "num_hidden_layers": 2, "num_attention_heads": 2, "num_key_value_heads": 2, "n_routed_experts": 4, "n_shared_experts": 1, "num_experts_per_tok": 2, "n_group": 2, "topk_group": 1, "norm_topk_prob": true, "routed_scaling_factor": 1.0, "first_k_dense_replace": 1, "moe_layer_freq": 1, "q_lora_rank": 4, "kv_lora_rank": 4, "qk_rope_head_dim": 2, "qk_nope_head_dim": 2, "v_head_dim": 4, "rms_norm_eps": 1e-06, "rope_theta": 10000.0, "max_position_embeddings": 128, "attention_bias": false}
+"""#),
+        .init(key: "bailing_moe_v3", json: #"""
+{"model_type": "bailing_moe_v3", "vocab_size": 32, "hidden_size": 16, "intermediate_size": 24, "num_hidden_layers": 2, "num_attention_heads": 2, "rms_norm_eps": 1e-06, "rope_theta": 10000.0, "q_lora_rank": null, "kv_lora_rank": 8, "qk_nope_head_dim": 4, "qk_rope_head_dim": 4, "v_head_dim": 4, "num_experts": 4, "num_experts_per_tok": 2, "moe_intermediate_size": 8, "num_shared_experts": 1, "moe_shared_expert_intermediate_size": 8, "first_k_dense_replace": 1, "n_group": 2, "topk_group": 1, "routed_scaling_factor": 2.5, "layer_group_size": 4, "gated_attention_proj_granularity_type": "head_wise", "tie_word_embeddings": false, "use_bias": false}
+"""#),
+        .init(key: "k2_horizon", json: #"""
+{"model_type": "k2_horizon", "architectures": ["K2HorizonForCausalLM"], "vocab_size": 32, "hidden_size": 8, "intermediate_size": 16, "num_hidden_layers": 2, "num_attention_heads": 2, "num_key_value_heads": 2, "rms_norm_eps": 1e-06, "max_position_embeddings": 128}
+"""#),
+        .init(key: "longcat_flash", json: #"""
+{"model_type": "longcat_flash", "architectures": ["LongcatFlashNgramForCausalLM"], "vocab_size": 32, "hidden_size": 16, "ffn_hidden_size": 24, "expert_ffn_hidden_size": 8, "num_layers": 2, "num_attention_heads": 2, "kv_lora_rank": 8, "q_lora_rank": 8, "qk_rope_head_dim": 2, "qk_nope_head_dim": 4, "v_head_dim": 4, "mla_scale_q_lora": true, "mla_scale_kv_lora": true, "routed_scaling_factor": 6.0, "n_routed_experts": 4, "zero_expert_num": 2, "zero_expert_type": "identity", "moe_topk": 2, "rms_norm_eps": 1e-05, "rope_theta": 5000000.0, "max_position_embeddings": 128, "ngram_vocab_size_ratio": 4, "emb_neighbor_num": 3, "emb_split_num": 2}
+"""#),
+        .init(key: "mimo_v2", json: #"""
+{"model_type": "mimo_v2", "vocab_size": 100, "hidden_size": 32, "intermediate_size": 48, "num_hidden_layers": 4, "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 8, "swa_num_attention_heads": 4, "swa_num_key_value_heads": 2, "swa_head_dim": 8, "hybrid_layer_pattern": [1, 0, 1, 0], "sliding_window_size": 4, "rope_theta": 10000.0, "swa_rope_theta": 10000.0, "max_position_embeddings": 128, "layernorm_epsilon": 1e-06, "hidden_act": "silu", "attention_bias": false, "add_swa_attention_sink_bias": true, "attention_value_scale": 0.5, "attention_projection_layout": "fused_qkv", "tie_word_embeddings": false, "num_nextn_predict_layers": 1, "moe_layer_freq": [0, 1, 1, 1], "n_routed_experts": 4, "num_experts_per_tok": 2, "moe_intermediate_size": 16, "n_shared_experts": 0, "norm_topk_prob": true, "n_group": 1, "topk_group": 1, "routed_scaling_factor": 1.0}
+"""#),
+        .init(key: "step3p5", json: #"""
+{"architectures": ["Step3p5ForCausalLM"], "model_type": "step3p5", "hidden_size": 32, "intermediate_size": 48, "num_hidden_layers": 3, "vocab_size": 100, "num_attention_heads": 4, "num_attention_groups": 2, "head_dim": 8, "max_position_embeddings": 64, "attention_other_setting": {"attention_type": "sliding_attention", "num_attention_heads": 6, "num_attention_groups": 2, "head_dim": 8}, "layer_types": ["full_attention", "sliding_attention", "full_attention", "full_attention"], "sliding_window": 4, "rope_theta": [10000.0, 10000.0, 5000000.0, 5000000.0], "partial_rotary_factors": [0.5, 1.0, 0.5, 0.5], "rope_scaling": {"rope_type": "llama3", "factor": 2.0, "original_max_position_embeddings": 32, "low_freq_factor": 1.0, "high_freq_factor": 32.0}, "yarn_only_types": ["full_attention"], "use_head_wise_attn_gate": true, "att_impl_type": "GQA", "hidden_act": "silu", "moe_layers_enum": "1,2", "moe_num_experts": 4, "moe_top_k": 2, "moe_intermediate_size": 16, "share_expert_dim": 16, "moe_router_activation": "sigmoid", "moe_router_scaling_factor": 3.0, "norm_expert_weight": true, "use_moe_router_bias": true, "need_fp32_gate": true, "swiglu_limits": [0.0, 7.0, 7.0, 0.0], "swiglu_limits_shared": [0.0, 16.0, 0.0, 0.0], "num_nextn_predict_layers": 1, "tie_word_embeddings": false}
+"""#),
+        .init(key: "vaultgemma", json: #"""
+{"architectures": ["VaultGemmaForCausalLM"], "model_type": "vaultgemma", "vocab_size": 100, "hidden_size": 32, "intermediate_size": 64, "num_hidden_layers": 2, "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 8, "hidden_activation": "gelu_pytorch_tanh", "max_position_embeddings": 64, "rms_norm_eps": 1e-06, "rope_theta": 10000.0, "tie_word_embeddings": true, "attention_bias": false, "query_pre_attn_scalar": 8, "sliding_window": 4, "layer_types": ["sliding_attention", "full_attention"], "final_logit_softcapping": 30.0, "attn_logit_softcapping": 50.0}
+"""#),
     ]
 }
 
 @Suite("SharpAI wired LLM overlays load air-gapped synthetic weights (SL-50)", .serialized)
 struct SharpAIAirgapLoadTests {
+
+    /// The air-gap table must cover every wired key, so a newly wired overlay cannot slip in unverified.
+    @Test("every wired LLM key has an air-gap case")
+    func coversEveryWiredKey() {
+        let covered = Set(SharpAIAirgap.cases.map(\.key))
+        #expect(covered == SharpAIModelOverlays.llmWiredKeys,
+                "missing: \(SharpAIModelOverlays.llmWiredKeys.subtracting(covered).sorted()), extra: \(covered.subtracting(SharpAIModelOverlays.llmWiredKeys).sorted())")
+    }
 
     @Test("synthetic checkpoint loads through the real loader and reproduces the logits", arguments: SharpAIAirgap.cases)
     func loadsSyntheticCheckpoint(_ c: SharpAIAirgap.Case) async throws {
@@ -161,7 +204,10 @@ struct SharpAIAirgapLoadTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         try data.write(to: dir.appendingPathComponent("config.json"))
-        try save(arrays: arrays, url: dir.appendingPathComponent("model.safetensors"))
+        let stored = Dictionary(uniqueKeysWithValues: arrays.map {
+            ($0.key, SharpAIAirgap.checkpointTensor(key: c.key, name: $0.key, $0.value))
+        })
+        try save(arrays: stored, url: dir.appendingPathComponent("model.safetensors"))
 
         let loaded = try await LLMTypeRegistry.shared.createModel(configuration: data, modelType: c.key)
         try await loadWeights(modelDirectory: dir, model: loaded)

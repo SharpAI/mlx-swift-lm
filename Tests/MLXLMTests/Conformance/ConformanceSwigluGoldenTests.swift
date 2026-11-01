@@ -8,7 +8,7 @@
 //   swigluoai (GPT-OSS)    -> GPTOSS.swift SwiGLUSwitchGLU (compiledSwiglu inside)
 //   V4 dense expert        -> SharpAIDeepseekV4Expert(swiguLimit:)
 //   V4 routed experts      -> SharpAIDeepseekV4MoE.switchMLP (SwitchGLU with the activationProduct closure)
-//   Step silu-then-clamp   -> no Swift path exists (pinned as a gap)
+//   Step silu-then-clamp   -> SharpAIStep3p5MLP (wired by SL-50; float16 is a pinned gap, see stepStyleMatchesGolden)
 // The projections are 0/1 selection matrices, so the only arithmetic in the output is the activation
 // (a single non-zero product per dot product is exact in every dtype).
 //
@@ -254,7 +254,7 @@ struct ConformanceSwigluGoldenTests {
         "silu_and_mul.json": ["compiledSiluProduct", "SwitchGLU(default)", "SharpAIDeepseekV4Expert(limit 0)"],
         "swigluoai_and_mul.json": ["GPTOSS SwiGLUSwitchGLU"],
         "v4_clamped.json": ["SharpAIDeepseekV4Expert(limit)", "SharpAIDeepseekV4MoE.switchMLP"],
-        "swiglustep_and_mul.json": ["gap: no Swift Step path"],
+        "swiglustep_and_mul.json": ["SharpAIStep3p5MLP"],
     ]
 
     typealias Result = (failures: [String], compared: Int, nonzero: Int, bad: [S.Bad])

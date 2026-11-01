@@ -121,7 +121,8 @@ def wired_entries(root, kind):
 
 
 def overlay_entries(root, kind):
-    out = wired_entries(root, kind)
+    """Ours-wins overlays only (the SL-41 DeepseekV4 hook). The SL-50 aggregate is upstream-wins: see registry_entries."""
+    out = {}
     for rel in OVERLAYS.get(kind, []):
         src = open(os.path.join(root, rel), encoding="utf8").read()
         m = re.search(r"static var creators[^{]*\{", src)
@@ -162,7 +163,10 @@ def registry_entries(root, path, enum_name, kind=None):
                 if fn:
                     name = first_config(src[fn.end():match_brace(src, fn.end() - 1)])
         out[h.group(1)] = name
-    out.update(overlay_entries(root, kind))  # overlay wins on a clash, same as the runtime merge
+    # SL-50 aggregate: upstream wins on a clash, same as the runtime merge (`upstreamWins`), so only fill gaps.
+    for k, v in wired_entries(root, kind).items():
+        out.setdefault(k, v)
+    out.update(overlay_entries(root, kind))  # SL-41 V4 hook: ours wins on a clash, same as the runtime merge
     return out
 
 
