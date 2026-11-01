@@ -4,28 +4,34 @@ MLX Swift LM is a Swift package to build tools and applications with large langu
 
 > [!IMPORTANT]
 > **This is the SharpAI fork of [ml-explore/mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm).**
-> It tracks upstream (nothing in upstream `main` is missing here) and adds more model architectures,
-> DeepSeek-V4 support, an offline mode and a conformance test suite. The table below says exactly what
-> differs and how many models you get. Counts are for the commit this README ships with; the
-> [How to recount](#how-to-recount) section reproduces them.
+> It tracks upstream (nothing in upstream `main` is missing here) and adds **128 new model types**
+> (57 LLM, 72 VLM, one in both) on top of upstream's 101, plus DeepSeek-V4 support, an offline mode and a
+> conformance test suite. The table below shows exactly where each model stands.
+> Counts are for the commit this README ships with; [How to recount](#how-to-recount) reproduces them.
 
 ## How this fork differs from upstream
 
-| `model_type` registry | Upstream `ml-explore/mlx-swift-lm` | This fork (registered, works through the factory) | Difference |
+| | Upstream `ml-explore/mlx-swift-lm` | This fork: usable through the factory today | This fork: implemented in the repo (added on top) |
 | --- | ---: | ---: | ---: |
-| LLM (`LLMTypeRegistry`) | 67 | **72** | **+5** |
-| VLM (`VLMTypeRegistry`) | 22 | 22 | 0 |
-| Embedder (`EmbedderTypeRegistry`) | 12 | 12 | 0 |
+| **LLM** (`LLMTypeRegistry`) | 67 | **72** (+5) | **+57** new types |
+| **VLM** (`VLMTypeRegistry`) | 22 | 22 | **+72** new types |
+| **Embedder** (`EmbedderTypeRegistry`) | 12 | 12 | — |
 
-The +5 LLM types are `deepseek_v3_2`, `gemma4_assistant`, `glm_moe_dsa`, `jamba_3b` and `deepseek_v4`
-(DeepSeek-V4, registered through a fork hook that wins over upstream).
+**The 127 new implementations are the main difference.** They live in `Libraries/MLXLLM/SharpAI/` (56) and
+`Libraries/MLXVLM/SharpAI/` (71): the model classes, configuration, weight sanitizing and creators, each
+with unit tests. Where they stand, stated exactly:
 
-**Coded but not registered yet.** The fork also contains 127 further model implementations under
-`Libraries/MLXLLM/SharpAI/` (56) and `Libraries/MLXVLM/SharpAI/` (71), covering 128 distinct `model_type`
-values (57 LLM, 72 VLM). They compile and have unit tests, but they are **not reachable through
-`LLMModelFactory` / `VLMModelFactory` on `main`**, and none has been loaded from a real checkpoint.
-Wiring them in is tracked as a separate step (LLM first, VLM after it needs processors).
-When a key is wired, upstream still wins if upstream registers the same `model_type`.
+- **Implemented and unit-tested: all 127.**
+- **Reachable through `LLMModelFactory` / `VLMModelFactory`: not yet on `main`.** Wiring the LLM ones is in
+  review (37 LLM types load from air-gapped synthetic checkpoints through the real factory path). The VLM
+  ones come after that, once their processors are added. If upstream registers the same `model_type`,
+  upstream wins.
+- **Verified against a real checkpoint: none yet.** Tests prove the code runs and its internal shapes
+  line up; they do not prove output matches the original model.
+
+The +5 LLM types already usable today are `deepseek_v3_2`, `gemma4_assistant`, `glm_moe_dsa`, `jamba_3b`
+and `deepseek_v4` (DeepSeek-V4, registered through a fork hook that wins over upstream). The fork also
+changes 41 existing upstream LLM model files.
 
 Other differences from upstream:
 
