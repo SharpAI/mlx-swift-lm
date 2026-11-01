@@ -41,6 +41,9 @@ struct SharpAIJais2Configuration: Codable, Sendable, ModelConfigurationValidatin
     /// transformers default base 10000 when absent. Read from top-level `rope_theta`
     /// or from `rope_parameters.rope_theta`.
     var ropeTheta: Float
+    /// RoPE scaling entries (`rope_type`, `factor`, ...) read from `rope_parameters`, or from
+    /// `rope_scaling` as a fallback. Nil when the rope type is absent or "default".
+    var ropeScaling: [String: StringOrNumber]?
     var maxPositionEmbeddings: Int?
     /// transformers default false when absent.
     var tieWordEmbeddings: Bool
@@ -66,6 +69,7 @@ struct SharpAIJais2Configuration: Codable, Sendable, ModelConfigurationValidatin
         case layerNormEps = "layer_norm_eps"
         case ropeTheta = "rope_theta"
         case ropeParameters = "rope_parameters"
+        case ropeScaling = "rope_scaling"
         case maxPositionEmbeddings = "max_position_embeddings"
         case tieWordEmbeddings = "tie_word_embeddings"
         case attentionBias = "attention_bias"
@@ -105,6 +109,19 @@ struct SharpAIJais2Configuration: Codable, Sendable, ModelConfigurationValidatin
         } else {
             ropeTheta = 10_000
         }
+        let scalingEntries =
+            (try? container.decodeIfPresent(
+                [String: StringOrNumber].self, forKey: .ropeParameters))
+            ?? (try? container.decodeIfPresent(
+                [String: StringOrNumber].self, forKey: .ropeScaling))
+        if let scalingEntries,
+            let typeValue = scalingEntries["rope_type"] ?? scalingEntries["type"],
+            case .string(let ropeType) = typeValue, ropeType != "default"
+        {
+            ropeScaling = scalingEntries
+        } else {
+            ropeScaling = nil
+        }
         maxPositionEmbeddings = try container.decodeIfPresent(
             Int.self, forKey: .maxPositionEmbeddings)
         tieWordEmbeddings =
@@ -130,6 +147,7 @@ struct SharpAIJais2Configuration: Codable, Sendable, ModelConfigurationValidatin
         try container.encode(kvHeads, forKey: .kvHeads)
         try container.encode(layerNormEps, forKey: .layerNormEps)
         try container.encode(ropeTheta, forKey: .ropeTheta)
+        try container.encodeIfPresent(ropeScaling, forKey: .ropeScaling)
         try container.encodeIfPresent(maxPositionEmbeddings, forKey: .maxPositionEmbeddings)
         try container.encode(tieWordEmbeddings, forKey: .tieWordEmbeddings)
         try container.encode(attentionBias, forKey: .attentionBias)

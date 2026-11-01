@@ -39,6 +39,24 @@ final class SharpAIQwen3OmniMoeSanitizeTests: XCTestCase {
             "vision_tower.deepstack_merger_list.1.linear_fc1.weight")
     }
 
+    func testOmniMergerSubKeysMapToQwen3VLNames() {
+        XCTAssertEqual(
+            SharpAIQwen3OmniMoeSanitize.checkpointName("thinker.visual.merger.ln_q.weight"),
+            "vision_tower.merger.norm.weight")
+        XCTAssertEqual(
+            SharpAIQwen3OmniMoeSanitize.checkpointName("thinker.visual.merger.mlp.0.bias"),
+            "vision_tower.merger.linear_fc1.bias")
+        XCTAssertEqual(
+            SharpAIQwen3OmniMoeSanitize.checkpointName("thinker.visual.merger.mlp.2.weight"),
+            "vision_tower.merger.linear_fc2.weight")
+        XCTAssertEqual(
+            SharpAIQwen3OmniMoeSanitize.checkpointName("thinker.visual.merger_list.0.mlp.2.weight"),
+            "vision_tower.deepstack_merger_list.0.linear_fc2.weight")
+        XCTAssertEqual(
+            SharpAIQwen3OmniMoeSanitize.checkpointName("thinker.visual.blocks.0.mlp.linear_fc1.weight"),
+            "vision_tower.blocks.0.mlp.linear_fc1.weight")
+    }
+
     func testExpertsStackIntoSwitchMLPAndConvWeightsTranspose() throws {
         let config = try config()
         let experts = config.textConfiguration.numExperts
@@ -89,5 +107,26 @@ final class SharpAIQwen3OmniMoeSanitizeTests: XCTestCase {
 
         XCTAssertNil(result["language_model.lm_head.weight"])
         XCTAssertNotNil(result["language_model.model.embed_tokens.weight"])
+    }
+
+    func testVisualPromptOrderFollowsPromptModalityOrder() {
+        // Features are laid out [images..., videos...]; the prompt has the video block first.
+        let ids = MLXArray([Int32(20), 20, 10, 5, 10]).reshaped([1, 5])
+        let order = SharpAIQwen3OmniMoeThinker.visualPromptOrder(
+            inputIds: ids, imageTokenId: 10, videoTokenId: 20,
+            imageTokenCount: 2, totalTokenCount: 4)
+        XCTAssertEqual(order?.asArray(Int32.self), [2, 3, 0, 1])
+    }
+
+    func testVisualPromptOrderIsNilWhenCountsDisagree() {
+        let ids = MLXArray([Int32(20), 20, 10, 5, 10]).reshaped([1, 5])
+        XCTAssertNil(
+            SharpAIQwen3OmniMoeThinker.visualPromptOrder(
+                inputIds: ids, imageTokenId: 10, videoTokenId: 20,
+                imageTokenCount: 3, totalTokenCount: 4))
+        XCTAssertNil(
+            SharpAIQwen3OmniMoeThinker.visualPromptOrder(
+                inputIds: ids, imageTokenId: 10, videoTokenId: 20,
+                imageTokenCount: 2, totalTokenCount: 5))
     }
 }

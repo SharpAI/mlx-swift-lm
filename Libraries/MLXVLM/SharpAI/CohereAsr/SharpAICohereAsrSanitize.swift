@@ -3,8 +3,9 @@
 //
 // Keys keep their HF names, except the subsampling conv list. HF interleaves relu modules
 // there, so the Swift list is shorter. Conv weights change from PyTorch layout to MLX layout.
-// UNVERIFIED: assumes an unconverted PyTorch checkpoint. An MLX-converted one would be
-// transposed again. Check against a real checkpoint before relying on this.
+// The layout is detected once from the first subsampling conv: (out, k, k, 1) means the
+// checkpoint is already in MLX layout and no conv weight is transposed. Anything else is
+// treated as PyTorch. Check against a real checkpoint before relying on this.
 
 import Foundation
 import MLX
@@ -20,13 +21,14 @@ public enum SharpAICohereAsrSanitizer {
         _ weights: [String: MLXArray], configuration: SharpAICohereAsrConfiguration
     ) throws -> [String: MLXArray] {
         var sanitized: [String: MLXArray] = [:]
+        let alreadyMLXLayout = isMLXLayout(weights, configuration: configuration)
 
         for (key, value) in weights {
             if shouldDrop(key) {
                 continue
             }
             let renamed = remapKey(key)
-            sanitized[renamed] = transposeConvWeight(renamed, value)
+            sanitized[renamed] = alreadyMLXLayout ? value : transposeConvWeight(renamed, value)
         }
 
         if configuration.tieWordEmbeddings && sanitized["proj_out.weight"] == nil {
@@ -60,6 +62,19 @@ public enum SharpAICohereAsrSanitizer {
             return key
         }
         return subsamplingPrefix + String(mapped) + String(rest[dot...])
+    }
+
+    /// True when the first subsampling conv is (out, k, k, 1). PyTorch stores it (out, 1, k, k).
+    /// A kernel size of 1 is ambiguous and counts as PyTorch.
+    static func isMLXLayout(
+        _ weights: [String: MLXArray], configuration: SharpAICohereAsrConfiguration
+    ) -> Bool {
+        let kernel = configuration.encoderConfiguration.subsamplingConvKernelSize
+        guard kernel > 1, let first = weights[subsamplingPrefix + "0.weight"], first.ndim == 4
+        else {
+            return false
+        }
+        return first.dim(1) == kernel && first.dim(2) == kernel && first.dim(3) == 1
     }
 
     /// PyTorch conv weights are (out, in / groups, k...). MLX wants (out, k..., in / groups).

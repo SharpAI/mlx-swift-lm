@@ -91,8 +91,7 @@ public class SharpAIPhi4SiglipModel: Module, VLMModel, KVCacheDimensionProvider 
         guard tokens.ndim == 2, tokens.dim(0) == 1 else {
             throw SharpAIPhi4SiglipError.batchedImageUnsupported(tokens.dim(0))
         }
-        // UNVERIFIED: image_token_index is absent from the real config, so this throws for images.
-        guard let imageTokenIndex = configuration.imageTokenIndex else {
+        guard let imageTokenIndex = configuration.resolvedImageTokenIndex else {
             throw SharpAIPhi4SiglipError.imageTokenIndexMissing
         }
 

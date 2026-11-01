@@ -109,6 +109,27 @@ final class SharpAIParam2moeConfigurationTests: XCTestCase {
         XCTAssertThrowsError(try config.validateModelConfiguration())
     }
 
+    func testValidationRejectsGroupsOfOneExpert() throws {
+        let config = try decode(
+            SharpAIParam2moeTestFixture.tinyJSON(
+                ["n_group": 4, "topk_group": 1, "num_experts_per_tok": 1]))
+
+        XCTAssertThrowsError(try config.validateModelConfiguration()) { error in
+            guard case SharpAIParam2moeError.invalidConfiguration = error else {
+                XCTFail("unexpected error: \(error)")
+                return
+            }
+        }
+    }
+
+    func testValidationRejectsTopKBeyondKeptGroups() throws {
+        let config = try decode(
+            SharpAIParam2moeTestFixture.tinyJSON(
+                ["n_group": 2, "topk_group": 1, "num_experts_per_tok": 3]))
+
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
     func testValidationRejectsHeadsThatDoNotDivideKVHeads() throws {
         let config = try decode(
             SharpAIParam2moeTestFixture.tinyJSON(["num_key_value_heads": 3]))

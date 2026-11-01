@@ -256,7 +256,15 @@ final class SharpAIUltravbertTextModel: Module {
         return norm(h)
     }
 
+    /// Disallowed positions get a large negative value that stays finite after the cast to
+    /// float16, so a row with no allowed key softmaxes to uniform instead of NaN.
+    static let maskedValue: Float = -30000
+
+    static func additiveMask(_ allowed: MLXArray) -> MLXArray {
+        which(allowed, MLXArray(Float(0)), MLXArray(maskedValue))
+    }
+
     private func additiveMask(_ allowed: MLXArray) -> MLXArray {
-        which(allowed, MLXArray(Float(0)), MLXArray(Float(-1e9)))
+        Self.additiveMask(allowed)
     }
 }

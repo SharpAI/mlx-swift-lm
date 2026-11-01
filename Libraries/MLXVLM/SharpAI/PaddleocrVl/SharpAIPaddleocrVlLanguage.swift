@@ -41,13 +41,6 @@ final class SharpAIPaddleocrVlMRoPE {
     }
 }
 
-private func sharpAIPaddleocrVlRotateHalf(_ x: MLXArray) -> MLXArray {
-    let half = x.dim(-1) / 2
-    let x1 = x[.ellipsis, 0 ..< half]
-    let x2 = x[.ellipsis, half...]
-    return concatenated([-x2, x1], axis: -1)
-}
-
 final class SharpAIPaddleocrVlTextAttention: Module {
     let heads: Int
     let kvHeads: Int

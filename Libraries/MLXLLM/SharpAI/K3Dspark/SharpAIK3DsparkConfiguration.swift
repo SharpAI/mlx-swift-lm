@@ -104,12 +104,19 @@ public struct SharpAIK3DsparkConfiguration: Decodable, Sendable, ModelConfigurat
         rmsNormEps = try c.decodeIfPresent(Float.self, forKey: .rmsNormEps) ?? 1e-6
         maxPositionEmbeddings =
             try c.decodeIfPresent(Int.self, forKey: .maxPositionEmbeddings) ?? 4096
-        ropeTheta = try c.decodeIfPresent(Float.self, forKey: .ropeTheta) ?? 50000
+        var theta = try c.decodeIfPresent(Float.self, forKey: .ropeTheta) ?? 50000
         let ropeParameters = try c.decodeIfPresent(
             [String: StringOrNumber].self, forKey: .ropeParameters)
         let ropeScalingValue = try c.decodeIfPresent(
             [String: StringOrNumber].self, forKey: .ropeScaling)
-        ropeScaling = ropeParameters ?? ropeScalingValue
+        var scaling = ropeParameters ?? ropeScalingValue
+        // rope_theta nested in rope_parameters takes precedence over the top-level value.
+        if let nestedTheta = scaling?["rope_theta"]?.asFloat() {
+            theta = nestedTheta
+            scaling?["rope_theta"] = nil
+        }
+        ropeTheta = theta
+        ropeScaling = scaling
         numTargetLayers = try c.decode(Int.self, forKey: .numTargetLayers)
         targetHiddenSize = try c.decode(Int.self, forKey: .targetHiddenSize)
         targetLayerIds = try c.decodeIfPresent([Int].self, forKey: .targetLayerIds) ?? []

@@ -69,8 +69,20 @@ public final class SharpAIQwen3OmniMoeThinker: Module, VLMModel, KVCacheDimensio
             let mergeSize = config.visionConfiguration.spatialMergeSize
             let splits = grids.map { $0.product / (mergeSize * mergeSize) }
             let splitIndices = cumulativeSplitIndices(from: splits)
-            let flattened = concatenated(visionHidden.split(indices: splitIndices)).asType(
+            var flattened = concatenated(visionHidden.split(indices: splitIndices)).asType(
                 textEmbeds.dtype)
+
+            // Vision output is ordered images then videos. Reorder rows into prompt order so a
+            // prompt with a video block before an image block gets each modality's features.
+            let imageTokenCount =
+                (imageGrids ?? []).map { $0.product / (mergeSize * mergeSize) }.reduce(0, +)
+            let promptOrder = Self.visualPromptOrder(
+                inputIds: inputIds, imageTokenId: config.imageTokenId,
+                videoTokenId: config.videoTokenId, imageTokenCount: imageTokenCount,
+                totalTokenCount: flattened.dim(0))
+            if let promptOrder {
+                flattened = take(flattened, promptOrder, axis: 0)
+            }
 
             let (merged, mask) = try scatter(
                 features: flattened, into: textEmbeds, inputIds: inputIds,
@@ -81,7 +93,11 @@ public final class SharpAIQwen3OmniMoeThinker: Module, VLMModel, KVCacheDimensio
             if !deepstackOutputs.isEmpty {
                 deepstackEmbeds = deepstackOutputs.map { layerFeatures in
                     let slices = layerFeatures.split(indices: splitIndices)
-                    return concatenated(slices).asType(textEmbeds.dtype)
+                    var features = concatenated(slices).asType(textEmbeds.dtype)
+                    if let promptOrder {
+                        features = take(features, promptOrder, axis: 0)
+                    }
+                    return features
                 }
             }
         }
@@ -146,6 +162,28 @@ public final class SharpAIQwen3OmniMoeThinker: Module, VLMModel, KVCacheDimensio
     private func castCacheOptional(_ cache: [any KVCache]?) -> [KVCache]? {
         guard let cache else { return nil }
         return castCache(cache)
+    }
+
+    /// Row indices that turn `[images..., videos...]` feature rows into prompt order. Nil when
+    /// the placeholder counts disagree with the features, so `scatter` reports the mismatch.
+    static func visualPromptOrder(
+        inputIds: MLXArray, imageTokenId: Int, videoTokenId: Int,
+        imageTokenCount: Int, totalTokenCount: Int
+    ) -> MLXArray? {
+        var nextImage = 0
+        var nextVideo = imageTokenCount
+        var order: [Int32] = []
+        for id in inputIds.asArray(Int.self) {
+            if id == imageTokenId {
+                order.append(Int32(nextImage))
+                nextImage += 1
+            } else if id == videoTokenId {
+                order.append(Int32(nextVideo))
+                nextVideo += 1
+            }
+        }
+        guard nextImage == imageTokenCount, order.count == totalTokenCount else { return nil }
+        return MLXArray(order)
     }
 
     private func cumulativeSplitIndices(from sizes: [Int]) -> [Int] {

@@ -94,7 +94,7 @@ public enum SharpAINemotronHOmniError: LocalizedError, Equatable {
         case .duplicateWeightKey(let key):
             return "Duplicate weight key after nemotron_h_omni sanitize: \(key)"
         case .visionTowerNotImplemented:
-            return "nemotron_h_omni image input needs the RADIO vision tower (not implemented)."
+            return "nemotron_h_omni image, video and audio input need the vision and sound towers (not implemented)."
         }
     }
 }

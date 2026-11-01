@@ -43,6 +43,38 @@ final class SharpAIDeepseekV41ConfigurationTests: XCTestCase {
         XCTAssertNoThrow(try config.validateModelConfiguration())
     }
 
+    private func assertTextConfigRejected(_ textFields: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        let json = """
+            { "model_type": "deepseek_v41", "text_config": { \(textFields) } }
+            """
+        let config = try JSONDecoder.json5().decode(
+            SharpAIDeepseekV41Configuration.self, from: Data(json.utf8))
+
+        XCTAssertThrowsError(try config.validateModelConfiguration(), file: file, line: line) {
+            error in
+            guard case ModelFactoryError.invalidConfiguration = error else {
+                XCTFail("unexpected error: \(error)", file: file, line: line)
+                return
+            }
+        }
+    }
+
+    func testValidationRejectsSourceLayerIdsOutsideCompressRatios() throws {
+        try assertTextConfigRejected(#""kv_source_layer_ids": [2], "compress_ratios": [0, 2]"#)
+        try assertTextConfigRejected(#""kv_source_layer_ids": [1]"#)
+        try assertTextConfigRejected(#""index_source_layer_ids": [3], "compress_ratios": [0, 2]"#)
+        try assertTextConfigRejected(#""kv_source_layer_ids": [0], "compress_ratios": [0, 2]"#)
+        try assertTextConfigRejected(#""index_source_layer_ids": [0], "compress_ratios": [0, 2]"#)
+    }
+
+    func testValidationRejectsUnsafeDimensions() throws {
+        try assertTextConfigRejected(#""o_groups": 0"#)
+        try assertTextConfigRejected(#""num_attention_heads": 6, "o_groups": 4"#)
+        try assertTextConfigRejected(#""n_routed_experts": 4, "num_experts_per_tok": 5"#)
+        try assertTextConfigRejected(#""num_experts_per_tok": 0"#)
+        try assertTextConfigRejected(#""hc_mult": 0"#)
+    }
+
     func testValidationRejectsOtherModelType() throws {
         let json = """
             { "model_type": "deepseek_v4" }

@@ -156,6 +156,46 @@ public struct SharpAIDeepseekV41TextConfiguration: Decodable, Sendable {
         case dsparkNumExpertsPerTok = "dspark_num_experts_per_tok"
     }
 
+    /// Rejects values that would otherwise trap during model construction or the first forward.
+    public func validate() throws {
+        func fail(_ message: String) -> ModelFactoryError {
+            .invalidConfiguration("deepseek_v41: \(message)")
+        }
+        for id in kvSourceLayerIds {
+            guard id >= 0, id < compressRatios.count else {
+                throw fail(
+                    "kv_source_layer_ids contains \(id), outside compress_ratios "
+                        + "(\(compressRatios.count) entries)")
+            }
+            guard compressRatios[id] >= 1 else {
+                throw fail("kv_source_layer_ids contains \(id), whose compress ratio is below 1")
+            }
+        }
+        for id in indexSourceLayerIds {
+            guard id >= 0, id < compressRatios.count else {
+                throw fail(
+                    "index_source_layer_ids contains \(id), outside compress_ratios "
+                        + "(\(compressRatios.count) entries)")
+            }
+            guard compressRatios[id] >= 1 else {
+                throw fail("index_source_layer_ids contains \(id), whose compress ratio is below 1")
+            }
+        }
+        guard oGroups >= 1, numAttentionHeads % oGroups == 0 else {
+            throw fail(
+                "num_attention_heads (\(numAttentionHeads)) must be divisible by "
+                    + "o_groups (\(oGroups)), which must be at least 1")
+        }
+        guard numExpertsPerTok >= 1, numExpertsPerTok <= nRoutedExperts else {
+            throw fail(
+                "num_experts_per_tok (\(numExpertsPerTok)) must be between 1 and "
+                    + "n_routed_experts (\(nRoutedExperts))")
+        }
+        guard hcMult >= 1 else {
+            throw fail("hc_mult must be at least 1, got \(hcMult)")
+        }
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         vocabSize = try c.decodeIfPresent(Int.self, forKey: .vocabSize) ?? 129_280
@@ -258,5 +298,6 @@ public struct SharpAIDeepseekV41Configuration: Decodable, Sendable, ModelConfigu
             throw ModelFactoryError.invalidConfiguration(
                 "deepseek_v41: model_type must be \(Self.expectedModelType), got \(modelType)")
         }
+        try text?.validate()
     }
 }

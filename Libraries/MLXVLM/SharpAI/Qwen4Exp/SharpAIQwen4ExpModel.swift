@@ -85,6 +85,20 @@ struct SharpAIQwen4ExpSettings {
             throw ModelFactoryError.invalidConfiguration(
                 "qwen4_exp: only indexer_kv_heads == 1 is ported, got \(indexerKV)")
         }
+        guard text.linearNumKeyHeads > 0, text.linearNumValueHeads > 0 else {
+            throw ModelFactoryError.invalidConfiguration(
+                "qwen4_exp: linear_num_key_heads and linear_num_value_heads must be positive")
+        }
+        guard text.numAttentionHeads > 0, text.numKeyValueHeads > 0,
+            text.numAttentionHeads % text.numKeyValueHeads == 0
+        else {
+            throw ModelFactoryError.invalidConfiguration(
+                "qwen4_exp: num_attention_heads must be a positive multiple of num_key_value_heads")
+        }
+        guard text.numExperts > 0, (1 ... text.numExperts).contains(text.numExpertsPerTok) else {
+            throw ModelFactoryError.invalidConfiguration(
+                "qwen4_exp: num_experts_per_tok must be between 1 and num_experts")
+        }
         guard text.linearNumValueHeads % text.linearNumKeyHeads == 0 else {
             throw ModelFactoryError.invalidConfiguration(
                 "qwen4_exp: linear_num_value_heads must be a multiple of linear_num_key_heads")
@@ -137,6 +151,10 @@ struct SharpAIQwen4ExpSettings {
         guard hcCount > 0, ngramSize >= 2 else {
             throw ModelFactoryError.invalidConfiguration(
                 "qwen4_exp: hc_count must be positive and ngram_size at least 2")
+        }
+        guard headsPerNgram > 0 else {
+            throw ModelFactoryError.invalidConfiguration(
+                "qwen4_exp: heads_per_ngram must be positive")
         }
         guard pleEmbedDim % ((ngramSize - 1) * headsPerNgram) == 0 else {
             throw ModelFactoryError.invalidConfiguration(

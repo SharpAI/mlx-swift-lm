@@ -114,6 +114,18 @@ final class SharpAIKimiK3TextModelTests: XCTestCase {
         XCTAssertFalse(caches[3] is MambaCache)  // MLA layer keeps a KV cache
     }
 
+    func testMoEUsesStackedSwitchExperts() throws {
+        let model = try makeTinyModel()
+        let keys = Set(model.parameters().flattened().map { $0.0 })
+        let prefix = "language_model.model.layers.1.block_sparse_moe."
+        XCTAssertTrue(keys.contains("\(prefix)switch_mlp.gate_proj.weight"))
+        XCTAssertTrue(keys.contains("\(prefix)switch_mlp.up_proj.weight"))
+        XCTAssertTrue(keys.contains("\(prefix)switch_mlp.down_proj.weight"))
+        XCTAssertFalse(keys.contains { $0.contains(".experts.") })
+        let gate = model.parameters().flattened().first { $0.0 == "\(prefix)switch_mlp.gate_proj.weight" }
+        XCTAssertEqual(gate?.1.dim(0), 4)  // num_experts
+    }
+
     private func makeTinyModel() throws -> SharpAIKimiK3Model {
         let config = try JSONDecoder.json5().decode(
             SharpAIKimiK3Configuration.self, from: Data(SharpAIKimiK3TextFixtures.tinyTextJSON.utf8))
@@ -138,5 +150,53 @@ final class SharpAIKimiK3ConvSanitizeTests: XCTestCase {
         XCTAssertNil(sanitized["\(base)v_conv1d.weight"])
         // Torch [C, 1, K] per branch becomes MLX [C, K, 1]; the three branches stack on channels.
         XCTAssertEqual(sanitized["\(base)conv1d.weight"]?.shape, [24, 4, 1])
+    }
+}
+
+
+final class SharpAIKimiK3ExpertStackingTests: XCTestCase {
+
+    func testPerExpertWeightsStackIntoSwitchProjections() {
+        let base = "language_model.model.layers.1.block_sparse_moe."
+        var weights: [String: MLXArray] = [:]
+        for expert in 0 ..< 3 {
+            weights["\(base)experts.\(expert).w1.weight"] = MLXArray.zeros([8, 16])
+            weights["\(base)experts.\(expert).w3.weight"] = MLXArray.zeros([8, 16])
+            weights["\(base)experts.\(expert).w2.weight"] = MLXArray.zeros([16, 8])
+        }
+        weights["\(base)gate.weight"] = MLXArray.zeros([3, 32])
+
+        let sanitized = SharpAIKimiK3Sanitizer.sanitize(weights)
+
+        XCTAssertEqual(sanitized["\(base)switch_mlp.gate_proj.weight"]?.shape, [3, 8, 16])
+        XCTAssertEqual(sanitized["\(base)switch_mlp.up_proj.weight"]?.shape, [3, 8, 16])
+        XCTAssertEqual(sanitized["\(base)switch_mlp.down_proj.weight"]?.shape, [3, 16, 8])
+        XCTAssertNil(sanitized["\(base)experts.0.w1.weight"])
+        XCTAssertEqual(sanitized["\(base)gate.weight"]?.shape, [3, 32])
+    }
+
+    func testStackedExpertOrderFollowsExpertIndex() {
+        let base = "language_model.model.layers.1.block_sparse_moe."
+        var weights: [String: MLXArray] = [:]
+        for expert in 0 ..< 3 {
+            let value = MLXArray.ones([2, 2]) * MLXArray(Float(expert))
+            weights["\(base)experts.\(expert).w1.weight"] = value
+        }
+
+        let sanitized = SharpAIKimiK3Sanitizer.sanitize(weights)
+
+        let stacked = sanitized["\(base)switch_mlp.gate_proj.weight"]
+        XCTAssertEqual(stacked?[2].max().item(Float.self), 2)
+        XCTAssertEqual(stacked?[1].max().item(Float.self), 1)
+    }
+
+    func testIncompleteExpertRunIsLeftUnchanged() {
+        let base = "language_model.model.layers.1.block_sparse_moe."
+        let weights: [String: MLXArray] = [
+            "\(base)experts.0.w1.weight": MLXArray.zeros([2, 2]),
+            "\(base)experts.2.w1.weight": MLXArray.zeros([2, 2]),
+        ]
+        let sanitized = SharpAIKimiK3Sanitizer.sanitize(weights)
+        XCTAssertEqual(Set(sanitized.keys), Set(weights.keys))
     }
 }

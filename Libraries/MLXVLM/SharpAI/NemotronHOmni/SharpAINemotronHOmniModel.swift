@@ -2,7 +2,7 @@
 //
 // Composition over NemotronHModel, which already runs the latent MoE path (fc1/fc2_latent_proj).
 // The text stack is stored under `language_model`. The vision tower is not implemented, so
-// image input throws. Sound input has no tower either.
+// image and video input throw. Sound input has no tower either, so audio throws too.
 
 import MLX
 import MLXLLM
@@ -46,7 +46,7 @@ public final class SharpAINemotronHOmniModel: Module, VLMModel {
         _ input: LMInput, cache: [any KVCache], state _: LMOutput.State?,
         prefill _: PrefillParameters
     ) throws -> PrepareResult {
-        guard input.image == nil else {
+        guard input.image == nil, input.video == nil, input.audio == nil else {
             throw SharpAINemotronHOmniError.visionTowerNotImplemented
         }
         return .tokens(input.text)

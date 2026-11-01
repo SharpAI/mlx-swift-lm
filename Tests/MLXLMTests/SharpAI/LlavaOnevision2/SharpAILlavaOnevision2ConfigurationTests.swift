@@ -178,4 +178,20 @@ final class SharpAILlavaOnevision2ConfigurationTests: XCTestCase {
 
         XCTAssertThrowsError(try configuration.validateModelConfiguration())
     }
+
+    func testRejectsUnsupportedVisionNormAndActivation() throws {
+        let norm = fixtureJSON.replacingOccurrences(
+            of: "\"layer_norm_type\": \"layer_norm\"", with: "\"layer_norm_type\": \"rms_norm\"")
+        XCTAssertThrowsError(try decode(norm).validateModelConfiguration())
+
+        let act = fixtureJSON.replacingOccurrences(
+            of: "\"hidden_act\": \"gelu\"", with: "\"hidden_act\": \"quick_gelu\"")
+        XCTAssertThrowsError(try decode(act).validateModelConfiguration())
+    }
+
+    func testRejectsNonPositiveVisionChannels() throws {
+        let json = fixtureJSON.replacingOccurrences(
+            of: "\"num_channels\": 3", with: "\"num_channels\": 0")
+        XCTAssertThrowsError(try decode(json).validateModelConfiguration())
+    }
 }

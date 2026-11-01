@@ -163,10 +163,12 @@ final class SharpAIMuseGlimmerAssistantAttention: Module {
         k = kNorm(k)
 
         // Queries take the last L positions. Keys take all C + L positions.
-        let qCos = ropeCos[contextLength ..< total]
-        let qSin = ropeSin[contextLength ..< total]
+        let qCos = ropeCos[contextLength ..< total].asType(q.dtype)
+        let qSin = ropeSin[contextLength ..< total].asType(q.dtype)
+        let kCos = ropeCos.asType(k.dtype)
+        let kSin = ropeSin.asType(k.dtype)
         q = q * qCos + museAssistantRotateHalf(q) * qSin
-        k = k * ropeCos + museAssistantRotateHalf(k) * ropeSin
+        k = k * kCos + museAssistantRotateHalf(k) * kSin
 
         if numHeads != numKVHeads {
             let repeats = numHeads / numKVHeads

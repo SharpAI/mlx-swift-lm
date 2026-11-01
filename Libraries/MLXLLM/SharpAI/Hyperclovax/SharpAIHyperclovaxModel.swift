@@ -209,9 +209,8 @@ public class SharpAIHyperclovaxModel: Module, LLMModel, KVCacheDimensionProvider
         } else {
             out = model.embedTokens.asLinear(out)
         }
-        // UNVERIFIED: divisor follows Granite. The 14B fixture value 0.125 reads more like a multiplier.
-        // Check against the HF modeling file before changing it.
-        return out / logitsScaling
+        // muP: logits are multiplied by logits_scaling (Granite divides).
+        return out * MLXArray(logitsScaling)
     }
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {

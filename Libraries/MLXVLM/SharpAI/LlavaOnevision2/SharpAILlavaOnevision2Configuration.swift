@@ -247,6 +247,19 @@ public struct SharpAILlavaOnevision2Configuration: Decodable, Sendable,
             throw ModelFactoryError.invalidConfiguration(
                 "llava_onevision2: vision use_head=true (pooling head) is not implemented")
         }
+        guard vision.numChannels > 0 else {
+            throw ModelFactoryError.invalidConfiguration(
+                "llava_onevision2: vision num_channels must be positive")
+        }
+        // The vision tower builds LayerNorm and the exact GELU only.
+        guard vision.layerNormType == "layer_norm" else {
+            throw ModelFactoryError.invalidConfiguration(
+                "llava_onevision2: vision layer_norm_type \(vision.layerNormType) is not supported")
+        }
+        guard vision.hiddenAct == "gelu" else {
+            throw ModelFactoryError.invalidConfiguration(
+                "llava_onevision2: vision hidden_act \(vision.hiddenAct) is not supported")
+        }
         guard vision.patchSize > 0, vision.imageSize % vision.patchSize == 0 else {
             throw ModelFactoryError.invalidConfiguration(
                 "llava_onevision2: vision image_size must be a multiple of patch_size")

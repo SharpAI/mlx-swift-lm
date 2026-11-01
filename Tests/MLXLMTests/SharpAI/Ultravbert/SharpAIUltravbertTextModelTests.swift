@@ -40,4 +40,18 @@ final class SharpAIUltravbertTextModelTests: XCTestCase {
             XCTAssertEqual(a, b, accuracy: 1e-5)
         }
     }
+
+    /// The additive mask must stay finite in float16, otherwise a fully masked row is NaN.
+    func testAdditiveMaskIsFiniteInFloat16() {
+        let allowed = MLXArray([true, false, false]).reshaped(1, 1, 1, 3)
+        let mask = SharpAIUltravbertTextModel.additiveMask(allowed).asType(.float16)
+        let values = mask.asType(Float.self).asArray(Float.self)
+
+        XCTAssertEqual(values.count, 3)
+        for v in values {
+            XCTAssertTrue(v.isFinite)
+        }
+        XCTAssertEqual(values[0], 0)
+        XCTAssertLessThan(values[1], -10000)
+    }
 }

@@ -68,4 +68,5 @@ public enum SharpAIQwen3VlNemotronEmbedError: Error, Equatable {
     case featureTokenMismatch(expected: Int, actual: Int)
     case missingImageGrid
     case invalidAttentionMask(shape: [Int])
+    case unsupportedBatchWithImages(batch: Int)
 }

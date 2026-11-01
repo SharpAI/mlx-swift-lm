@@ -3,6 +3,7 @@
 import Foundation
 import MLX
 import MLXLLM
+import MLXNN
 import MLXVLM
 import XCTest
 
@@ -136,5 +137,35 @@ final class SharpAIInterns2MobiusSanitizeTests: XCTestCase {
         XCTAssertNotNil(result["lm_head.weight"])
         XCTAssertTrue(result.keys.allSatisfy { !$0.hasPrefix("mtp.") && !$0.contains("visual") })
         XCTAssertNil(result["model.language_model.embed_tokens.weight"])
+    }
+
+    func testTiedEmbeddingsDropLMHeadAndHaveNoHeadModule() throws {
+        let json = """
+            {
+                "model_type": "interns2_mobius",
+                "text_config": {
+                    "hidden_size": 32, "num_hidden_layers": 4, "tie_word_embeddings": true,
+                    "layer_types": ["linear_attention", "linear_attention", "linear_attention", "full_attention"],
+                    "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 16,
+                    "linear_num_key_heads": 2, "linear_num_value_heads": 4,
+                    "linear_key_head_dim": 8, "linear_value_head_dim": 8,
+                    "num_experts": 4, "num_experts_per_tok": 2,
+                    "moe_intermediate_size": 8, "shared_expert_intermediate_size": 8,
+                    "num_blocks": 2, "vocab_size": 64
+                }
+            }
+            """
+        let config = try JSONDecoder.json5().decode(
+            SharpAIInterns2MobiusConfiguration.self, from: Data(json.utf8))
+        let model = SharpAIInterns2MobiusModel(config.textConfiguration)
+
+        let result = model.sanitize(weights: [
+            "model.language_model.embed_tokens.weight": vector(0),
+            "lm_head.weight": vector(4),
+        ])
+
+        XCTAssertNil(result["lm_head.weight"])
+        XCTAssertNotNil(result["model.embed_tokens.weight"])
+        XCTAssertFalse(model.parameters().flattened().contains { $0.0.hasPrefix("lm_head") })
     }
 }

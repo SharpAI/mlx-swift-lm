@@ -5,7 +5,8 @@
 // position p gets the embedding of token p plus audio frame p, when that frame exists. The
 // projected audio is kept in LMOutput.State, so later decoding steps can add the next frames.
 // Limits: LMInput.audio must already hold log-mel features (no feature extractor here), there is
-// no padding mask, and the prompt is decoded in one pass.
+// no padding mask, and prefill runs in chunks.
+// Only the last prompt position's logits are returned from prepare.
 // UNVERIFIED: the per-position alignment of prompt tokens and audio frames is not checked
 // against transformers' realtime generation loop.
 
@@ -65,6 +66,14 @@ public class SharpAIVoxtralRealtimeForConditionalGeneration:
         try SharpAIVoxtralRealtimeSanitizer.sanitize(weights, configuration: configuration)
     }
 
+    /// The decoder attends over a sliding window, so every layer gets a rotating cache.
+    public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try (0 ..< configuration.textConfiguration.hiddenLayers).map { _ in
+            try makeSlidingWindowKVCache(
+                parameters: parameters, window: configuration.textConfiguration.slidingWindow)
+        }
+    }
+
     public func prepare(
         _ input: LMInput, cache: [KVCache], state _: LMOutput.State?, prefill: PrefillParameters
     ) throws -> PrepareResult {
@@ -76,18 +85,30 @@ public class SharpAIVoxtralRealtimeForConditionalGeneration:
             features = features.expandedDimensions(axis: 0)
         }
         let audioEmbeddings = projector(audioTower(features))
+        guard audioEmbeddings.dim(1) > 0 else {
+            throw SharpAIVoxtralRealtimeError.missingAudioInput
+        }
 
         var tokens = input.text.tokens
         if tokens.ndim == 1 {
             tokens = tokens.expandedDimensions(axis: 0)
         }
         let length = tokens.dim(1)
-        let hidden = decode(tokens, audio: audioEmbeddings, cache: cache)
+        let processed = try prefill.forEachChunk(total: length) { range in
+            _ = decode(tokens[0..., range], audio: audioEmbeddings, cache: cache)
+            asyncEval(cache)
+        }
+        if processed > 0 {
+            eval(cache)
+        }
+        let hidden = decode(
+            tokens[0..., processed ..< length], audio: audioEmbeddings, cache: cache)
         prefill.progress?(length, length)
 
         var state = LMOutput.State()
         state[SharpAIVoxtralRealtimeStateKeys.audioEmbeddings] = audioEmbeddings
-        return .logits(LMOutput(logits: logits(hidden), state: state))
+        let last = hidden[0..., (hidden.dim(1) - 1)..., 0...]
+        return .logits(LMOutput(logits: logits(last), state: state))
     }
 
     public func callAsFunction(
@@ -116,17 +137,19 @@ public class SharpAIVoxtralRealtimeForConditionalGeneration:
     private func decode(_ tokens: MLXArray, audio: MLXArray?, cache: [KVCache]?) -> MLXArray {
         let decoder = languageModel.model
         var embeddings = decoder.embedTokens(tokens)
+        let dtype = embeddings.dtype
         if let audio {
             let offset = cache?.first?.offset ?? 0
             if let frames = SharpAIVoxtralRealtimeAlignment.frames(
                 audio, offset: offset, length: tokens.dim(1))
             {
-                embeddings = embeddings + frames
+                embeddings = (embeddings + frames).asType(dtype)
             }
         }
         let condition = SharpAIVoxtralRealtimeDelay.embedding(
             configuration.defaultNumDelayTokens,
-            dimension: configuration.textConfiguration.hiddenSize)
+            dimension: configuration.textConfiguration.hiddenSize
+        ).asType(dtype)
         return decoder(embeddings, condition: condition, cache: cache)
     }
 

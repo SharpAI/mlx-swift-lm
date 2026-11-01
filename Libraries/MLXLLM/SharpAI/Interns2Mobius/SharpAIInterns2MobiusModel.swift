@@ -442,20 +442,26 @@ public class SharpAIInterns2MobiusModel: Module, LLMModel, KVCacheDimensionProvi
     let configuration: SharpAIInterns2MobiusTextConfiguration
 
     @ModuleInfo(key: "model") var model: SharpAIInterns2MobiusBackbone
-    @ModuleInfo(key: "lm_head") var lmHead: Linear
+    @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
     public init(_ configuration: SharpAIInterns2MobiusTextConfiguration) {
         self.configuration = configuration
         self.vocabularySize = configuration.vocabularySize
         self.kvHeads = (0 ..< configuration.hiddenLayers).map { _ in configuration.kvHeads }
         _model.wrappedValue = SharpAIInterns2MobiusBackbone(configuration)
-        _lmHead.wrappedValue = Linear(
-            configuration.hiddenSize, configuration.vocabularySize, bias: false)
+        if !configuration.tieWordEmbeddings {
+            _lmHead.wrappedValue = Linear(
+                configuration.hiddenSize, configuration.vocabularySize, bias: false)
+        }
         super.init()
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
-        lmHead(model(inputs, cache: cache))
+        let out = model(inputs, cache: cache)
+        if let lmHead {
+            return lmHead(out)
+        }
+        return model.embedTokens.asLinear(out)
     }
 
     /// Linear layers get a MambaCache. Full-attention layers get the standard attention cache.
@@ -484,7 +490,8 @@ public class SharpAIInterns2MobiusModel: Module, LLMModel, KVCacheDimensionProvi
     }
 
     /// Maps HF checkpoint names to this module tree.
-    /// - `model.language_model.X` becomes `model.X`. `lm_head.weight` is unchanged.
+    /// - `model.language_model.X` becomes `model.X`. `lm_head.weight` is unchanged, or dropped
+    ///   when `tie_word_embeddings` is true (the embedding is the output projection).
     /// - `meta_mlp.<b>.experts.gate_up_proj` [E, 2I, H] is split into `switch_mlp.gate_proj.weight`
     ///   and `switch_mlp.up_proj.weight` (gate first, as HF `chunk(2)`). `experts.down_proj` becomes
     ///   `switch_mlp.down_proj.weight`. The router `meta_mlp.<b>.gate.weight` is unchanged.
@@ -493,6 +500,8 @@ public class SharpAIInterns2MobiusModel: Module, LLMModel, KVCacheDimensionProvi
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         let languagePrefix = "model.language_model."
         var out: [String: MLXArray] = [:]
+        let weights = filterLMHeadWeights(
+            from: weights, tiedWordEmbeddings: configuration.tieWordEmbeddings)
 
         for (key, value) in weights {
             if key.hasPrefix("mtp.") || key.hasPrefix("model.visual.")

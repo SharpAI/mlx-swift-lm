@@ -58,6 +58,18 @@ final class SharpAIStep5MtpSanitizeTests: XCTestCase {
         XCTAssertEqual(try mapped("layers.2.enorm.weight"), "model.layers.2.enorm.weight")
     }
 
+    /// UNVERIFIED layout: no source shows that real VL checkpoints use "model.language_model.layers.N.".
+    /// This only pins that the sanitizer normalises that prefix; it does not prove a checkpoint layout.
+    func testNormalisesLanguageModelLayersPrefixBeforeMTPBlockInsertion() throws {
+        XCTAssertEqual(
+            try mapped("model.language_model.layers.2.transformer.self_attn.q_proj.weight"),
+            "model.layers.2.mtp_block.self_attn.q_proj.weight")
+        XCTAssertEqual(
+            try mapped("model.language_model.layers.2.enorm.weight"),
+            "model.layers.2.enorm.weight")
+        XCTAssertNil(try mapped("model.language_model.layers.0.self_attn.q_proj.weight"))
+    }
+
     func testMapsEmbedTokensToModelEmbedTokens() throws {
         XCTAssertEqual(try mapped("model.embed_tokens.weight"), "model.embed_tokens.weight")
         XCTAssertEqual(try mapped("embed_tokens.weight"), "model.embed_tokens.weight")

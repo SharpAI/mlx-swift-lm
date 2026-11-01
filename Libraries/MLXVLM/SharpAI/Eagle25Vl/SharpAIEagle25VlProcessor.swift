@@ -49,7 +49,7 @@ public struct SharpAIEagle25VlProcessor: UserInputProcessor {
             throw ModelFactoryError.invalidConfiguration(
                 "eagle_2_5_vl: images need a user message to attach to")
         }
-        let existing = (messages[last]["content"] as? String) ?? ""
+        let existing = Self.userText(from: messages[last]["content"])
         messages[last]["content"] = placeholder + existing
 
         let tokens = try tokenizer.applyChatTemplate(
@@ -59,6 +59,25 @@ public struct SharpAIEagle25VlProcessor: UserInputProcessor {
         return LMInput(
             text: .init(tokens: MLXArray(tokens).expandedDimensions(axis: 0)),
             image: .init(pixels: concatenated(pixelBlocks, axis: 0)))
+    }
+
+    /// Plain text of a message's content: a String as is, or the text parts of a
+    /// multimodal content array joined by newlines.
+    static func userText(from content: Any?) -> String {
+        if let text = content as? String {
+            return text
+        }
+        var texts: [String] = []
+        if let parts = content as? [[String: any Sendable]] {
+            for part in parts where (part["type"] as? String) == "text" {
+                if let text = part["text"] as? String { texts.append(text) }
+            }
+        } else if let parts = content as? [[String: String]] {
+            for part in parts where part["type"] == "text" {
+                if let text = part["text"] { texts.append(text) }
+            }
+        }
+        return texts.joined(separator: "\n")
     }
 
     private func chatMessages(from input: UserInput) -> [[String: any Sendable]] {

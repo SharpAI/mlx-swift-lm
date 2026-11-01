@@ -26,6 +26,21 @@ final class SharpAIPaddleocrVlModelTests: XCTestCase {
         XCTAssertEqual(output.logits.shape, [1, 3, 128])
     }
 
+    func testVisionRotaryUsesRowThenColumnAngles() {
+        let rotary = sharpAIPaddleocrVlVisionRotary(height: 2, width: 3, headDim: 8)
+        XCTAssertEqual(rotary.cos.shape, [1, 1, 6, 8])
+        XCTAssertEqual(rotary.sin.shape, [1, 1, 6, 8])
+        // Patch 4 is row 1, column 1; with headDim 8 each axis has two frequencies (1, 0.01).
+        let angles = rotary.sin[0, 0, 4].asArray(Float.self)
+        let expected: [Float] = [sinf(1), sinf(0.01), sinf(1), sinf(0.01)]
+        for index in 0 ..< 4 {
+            XCTAssertEqual(angles[index], expected[index], accuracy: 1e-4)
+            XCTAssertEqual(angles[index + 4], expected[index], accuracy: 1e-4)
+        }
+        // Row 0, column 0 is the identity rotation.
+        XCTAssertEqual(rotary.sin[0, 0, 0].asArray(Float.self), [Float](repeating: 0, count: 8))
+    }
+
     func testTextPositionsAreSequentialOnEveryAxis() {
         let positions = SharpAIPaddleocrVl.textPositions(start: 4, length: 3)
 

@@ -112,7 +112,7 @@ struct SharpAIExaoneMoeConfiguration: Decodable, Sendable {
         intermediateSize = try c.decode(Int.self, forKey: .intermediateSize)
         attentionHeads = try c.decode(Int.self, forKey: .attentionHeads)
         kvHeads = try c.decodeIfPresent(Int.self, forKey: .kvHeads) ?? attentionHeads
-        headDim = try c.decodeIfPresent(Int.self, forKey: .headDim) ?? (hiddenSize / attentionHeads)
+        headDim = try c.decodeIfPresent(Int.self, forKey: .headDim) ?? (attentionHeads > 0 ? hiddenSize / attentionHeads : 0)
         rmsNormEps = try c.decodeIfPresent(Float.self, forKey: .rmsNormEps) ?? 1e-5
         maxPositionEmbeddings =
             try c.decodeIfPresent(Int.self, forKey: .maxPositionEmbeddings) ?? 8192
@@ -244,6 +244,11 @@ extension SharpAIExaoneMoeConfiguration: ModelConfigurationValidating {
             guard nGroup > 0, numExperts % nGroup == 0, topkGroup > 0, topkGroup <= nGroup else {
                 throw SharpAIExaoneMoeError.invalidConfiguration(
                     "n_group must divide num_experts and topk_group must be in 1...n_group")
+            }
+            // The grouped router takes the top 2 scores inside each group.
+            guard nGroup == 1 || numExperts / nGroup >= 2 else {
+                throw SharpAIExaoneMoeError.invalidConfiguration(
+                    "n_group > 1 requires at least 2 experts per group")
             }
         }
 

@@ -131,6 +131,34 @@ final class SharpAINemotronHOmniModelTests: XCTestCase {
         }
     }
 
+    func testVideoInputThrowsVisionTowerNotImplemented() throws {
+        let model = try makeModel()
+        let cache = try model.newCache(parameters: nil)
+        let input = LMInput(
+            text: .init(tokens: MLXArray([Int32(1), 2, 3]).reshaped([1, 3])),
+            video: .init(pixels: MLXArray.zeros([1, 3, 16, 16])))
+
+        XCTAssertThrowsError(
+            try model.prepare(input, cache: cache, state: nil, prefill: PrefillParameters())
+        ) { error in
+            XCTAssertEqual(error as? SharpAINemotronHOmniError, .visionTowerNotImplemented)
+        }
+    }
+
+    func testAudioInputThrowsVisionTowerNotImplemented() throws {
+        let model = try makeModel()
+        let cache = try model.newCache(parameters: nil)
+        let input = LMInput(
+            text: .init(tokens: MLXArray([Int32(1), 2, 3]).reshaped([1, 3])),
+            audio: .init(features: MLXArray.zeros([1, 8, 4])))
+
+        XCTAssertThrowsError(
+            try model.prepare(input, cache: cache, state: nil, prefill: PrefillParameters())
+        ) { error in
+            XCTAssertEqual(error as? SharpAINemotronHOmniError, .visionTowerNotImplemented)
+        }
+    }
+
     /// KNOWN GAP: prepare cannot merge image features into the text embeddings yet. The Omni
     /// vision_config is C-RADIOv4-H (version c-radio_v4-h, cls_token_per_teacher with 4 teachers,
     /// register_multiple 10, cpe_max_size 2048), per

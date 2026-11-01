@@ -142,9 +142,16 @@ final class SharpAIQianfanOcrConfigurationTests: XCTestCase {
         XCTAssertEqual(config.imageTokenId, 151_671)
         XCTAssertEqual(config.visionConfiguration.hiddenSize, 1024)
         XCTAssertEqual(config.textConfiguration.modelType, "qwen3")
-        // head_dim falls back to hidden_size / num_attention_heads when the key is absent.
-        XCTAssertEqual(config.textConfiguration.headDim, 2560 / 32)
+        // head_dim defaults to 128 when the key is absent, independent of hidden_size.
+        XCTAssertEqual(config.textConfiguration.headDim, 128)
         XCTAssertNoThrow(try config.validateModelConfiguration())
+    }
+
+    func testMissingHeadDimIsDecoupledFromHiddenSize() throws {
+        let config = try SharpAIQianfanOcrTestConfig.decode(
+            #"{"model_type": "qianfan_ocr", "text_config": {"hidden_size": 64, "num_attention_heads": 4}}"#
+        )
+        XCTAssertEqual(config.textConfiguration.headDim, 128)
     }
 
     func testRejectsWrongModelType() throws {

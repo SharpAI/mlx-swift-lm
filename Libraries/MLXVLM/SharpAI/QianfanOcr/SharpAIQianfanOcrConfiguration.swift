@@ -163,7 +163,7 @@ public struct SharpAIQianfanOcrTextConfiguration: Codable, Sendable {
         self.intermediateSize = intermediateSize
         self.attentionHeads = attentionHeads
         self.kvHeads = kvHeads ?? attentionHeads
-        self.headDim = headDim ?? (attentionHeads > 0 ? hiddenSize / attentionHeads : 0)
+        self.headDim = headDim ?? 128
         self.rmsNormEps = rmsNormEps
         self.vocabularySize = vocabularySize
         self.ropeTheta = ropeTheta
@@ -190,8 +190,7 @@ public struct SharpAIQianfanOcrTextConfiguration: Codable, Sendable {
                 ?? defaults.intermediateSize,
             attentionHeads: heads,
             kvHeads: try container.decodeIfPresent(Int.self, forKey: .kvHeads) ?? heads,
-            headDim: try container.decodeIfPresent(Int.self, forKey: .headDim)
-                ?? (heads > 0 ? hidden / heads : 0),
+            headDim: try container.decodeIfPresent(Int.self, forKey: .headDim),
             rmsNormEps: try container.decodeIfPresent(Float.self, forKey: .rmsNormEps)
                 ?? defaults.rmsNormEps,
             vocabularySize: try container.decodeIfPresent(Int.self, forKey: .vocabularySize)

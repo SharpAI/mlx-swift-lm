@@ -30,8 +30,9 @@ public class SharpAIMinicpmv47: Module, VLMModel {
     let useVitMerger: Bool
     let canvas: SharpAIMinicpmv47CanvasPositions
 
-    /// Added to the sequential positions of tokens after a canvas prefill (HF `rope_deltas`).
-    private var ropeDelta = 0
+    /// Carries the canvas delta (HF `rope_deltas`) between steps. It is added to the sequential
+    /// positions of tokens after a canvas prefill, and lives in the request state, not on the model.
+    static let ropeDeltaKey = LMOutput.Key<MLXArray>("minicpmv47.ropeDelta")
 
     public var vocabularySize: Int { textConfig.vocabularySize }
 
@@ -218,21 +219,29 @@ public class SharpAIMinicpmv47: Module, VLMModel {
         return cache[index].offset
     }
 
-    /// Sequential positions `start ..< start + length`, shifted by `ropeDelta`, repeated over the
+    /// Reads the canvas delta saved in `state`, or 0 when there is none.
+    static func ropeDelta(_ state: LMOutput.State?) -> Int {
+        guard let array = state?[ropeDeltaKey] else { return 0 }
+        return array.item(Int.self)
+    }
+
+    /// Sequential positions `start ..< start + length`, shifted by `delta`, repeated over the
     /// three M-RoPE channels.
-    private func linearPositions(start: Int, length: Int) -> MLXArray {
-        let values = (0 ..< length).map { Int32(start + $0 + ropeDelta) }
+    func linearPositions(start: Int, length: Int, delta: Int) -> MLXArray {
+        let values = (0 ..< length).map { Int32(start + $0 + delta) }
         let row = MLXArray(values).reshaped(1, 1, length)
         return concatenated([row, row, row], axis: 0)
     }
 
     /// Position ids `(3, 1, count)` for prompt tokens `range`. Canvas ids are used when the prompt
     /// has crops, otherwise sequential positions offset by the cache.
-    private func promptPositions(_ range: Range<Int>, base: Int, canvasIds: MLXArray?) -> MLXArray {
+    private func promptPositions(
+        _ range: Range<Int>, base: Int, canvasIds: MLXArray?, delta: Int
+    ) -> MLXArray {
         if let canvasIds {
             return canvasIds[0..., 0..., range]
         }
-        return linearPositions(start: base + range.lowerBound, length: range.count)
+        return linearPositions(start: base + range.lowerBound, length: range.count, delta: delta)
     }
 
     private func decode(
@@ -266,8 +275,9 @@ public class SharpAIMinicpmv47: Module, VLMModel {
         let base = anchorOffset(cache)
         var canvasIds: MLXArray?
         // HF computes canvas positions only on a fresh cache, and keeps the delta for later chunks.
+        // A warm cache resumes with the delta saved in `state`, never one left on the model.
+        var ropeDelta = base == 0 ? 0 : Self.ropeDelta(state)
         if base == 0 {
-            ropeDelta = 0
             if input.image != nil || input.video != nil {
                 let ids = tokens.flattened().asArray(Int.self)
                 let modalities = ids.map { id -> Int in
@@ -294,7 +304,8 @@ public class SharpAIMinicpmv47: Module, VLMModel {
                 cache: cache,
                 state: nil,
                 positionIds: promptPositions(
-                    range.lowerBound ..< range.upperBound, base: base, canvasIds: canvasIds))
+                    range.lowerBound ..< range.upperBound, base: base, canvasIds: canvasIds,
+                    delta: ropeDelta))
             eval(cache)
         }
 
@@ -303,9 +314,12 @@ public class SharpAIMinicpmv47: Module, VLMModel {
             embeddings: embeddings[0..., processed...],
             cache: cache,
             state: nil,
-            positionIds: promptPositions(processed ..< totalTokens, base: base, canvasIds: canvasIds))
+            positionIds: promptPositions(
+                processed ..< totalTokens, base: base, canvasIds: canvasIds, delta: ropeDelta))
         prefill.progress?(totalTokens, totalTokens)
-        return .logits(result)
+        var nextState = result.state ?? state ?? LMOutput.State()
+        nextState[Self.ropeDeltaKey] = MLXArray(Int32(ropeDelta))
+        return .logits(LMOutput(logits: result.logits, state: nextState))
     }
 
     public func callAsFunction(
@@ -320,7 +334,8 @@ public class SharpAIMinicpmv47: Module, VLMModel {
             embeddings: embeddings,
             cache: cache,
             state: state,
-            positionIds: linearPositions(start: base, length: embeddings.dim(1)))
+            positionIds: linearPositions(
+                start: base, length: embeddings.dim(1), delta: Self.ropeDelta(state)))
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {

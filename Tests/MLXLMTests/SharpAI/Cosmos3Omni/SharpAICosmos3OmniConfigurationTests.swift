@@ -152,6 +152,50 @@ final class SharpAICosmos3OmniConfigurationTests: XCTestCase {
         XCTAssertEqual(config.textConfiguration.vocabSize, 151_669)
     }
 
+    func testJSON5ConfigIsNormalisedLikeStrictJSON() throws {
+        let json5 = """
+            {
+              // comment
+              "model_type": "cosmos3_omni",
+              "tie_word_embeddings": false,
+              "text_config": {
+                "model_type": "qwen3_vl_text",
+                "hidden_size": 32,
+                "intermediate_size": 32,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "num_key_value_heads": 2,
+                "head_dim": 8,
+                "max_position_embeddings": 512,
+                "rope_parameters": {
+                  "mrope_interleaved": true,
+                  "mrope_section": [16, 8, 8],
+                  "rope_theta": 10000,
+                },
+                "vocab_size": 151669,
+              },
+              "vision_config": {
+                "model_type": "qwen3_vl_vision",
+                "depth": 2,
+                "hidden_size": 32,
+                "intermediate_size": 32,
+                "out_hidden_size": 32,
+                "num_heads": 4,
+                "patch_size": 16,
+                "spatial_merge_size": 1,
+                "temporal_patch_size": 2,
+                "num_position_embeddings": 16,
+              },
+            }
+            """
+        let config = try SharpAICosmos3OmniConfiguration.qwen3VLConfiguration(
+            from: Data(json5.utf8))
+
+        XCTAssertEqual(config.textConfiguration.ropeTheta, 10_000)
+        XCTAssertEqual(config.textConfiguration.ropeScaling?.mropeSection, [16, 8, 8])
+        XCTAssertFalse(config.textConfiguration.tieWordEmbeddings)
+    }
+
     func testQwen3VLAdapterRejectsMissingTextConfig() {
         XCTAssertThrowsError(
             try SharpAICosmos3OmniConfiguration.qwen3VLConfiguration(

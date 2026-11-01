@@ -20,11 +20,12 @@ public class SharpAIBagel: Module, VLMModel, KVCacheDimensionProvider {
     @ModuleInfo(key: "language_model") var languageModel: SharpAIBagelLanguageModel
     @ModuleInfo(key: "vit_model") var vitModel: SharpAIBagelViTModel
     @ModuleInfo var connector: SharpAIBagelConnector
+    @ModuleInfo(key: "vit_pos_embed") var vitPosEmbed: SharpAIBagelVitPosEmbed
 
     public let config: SharpAIBagelConfiguration
 
     /// Checkpoint prefixes this understanding-only model loads. Other keys are dropped.
-    static let loadedPrefixes = ["language_model.", "vit_model.", "connector."]
+    static let loadedPrefixes = ["language_model.", "vit_model.", "connector.", "vit_pos_embed."]
 
     public var vocabularySize: Int { config.textConfiguration.vocabularySize }
 
@@ -46,6 +47,8 @@ public class SharpAIBagel: Module, VLMModel, KVCacheDimensionProvider {
             vision, gridSize: config.vitMaxNumPatchPerSide)
         self._connector.wrappedValue = SharpAIBagelConnector(
             visionHidden: vision.hiddenSize, textHidden: text.hiddenSize)
+        self._vitPosEmbed.wrappedValue = SharpAIBagelVitPosEmbed(
+            gridSize: config.vitMaxNumPatchPerSide, hidden: text.hiddenSize)
     }
 
     /// Encodes one image in NCHW layout (1, C, H, W) into text-space features (1, N, textHidden).
@@ -65,7 +68,8 @@ public class SharpAIBagel: Module, VLMModel, KVCacheDimensionProvider {
         }
 
         let nhwc = pixels.transposed(0, 2, 3, 1)
-        return connector(vitModel(nhwc))
+        let projected = connector(vitModel(nhwc))
+        return projected + vitPosEmbed(rows: rows, cols: cols)
     }
 
     /// Writes `features` into the run of image placeholder tokens in `embeddings`.

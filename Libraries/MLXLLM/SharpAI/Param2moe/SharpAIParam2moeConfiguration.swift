@@ -201,6 +201,14 @@ struct SharpAIParam2moeConfiguration: Decodable, Sendable {
             guard topkGroup > 0, topkGroup <= nGroup else {
                 throw SharpAIParam2moeError.invalidConfiguration("topk_group must be in 1...n_group")
             }
+            if nGroup > 1 {
+                let groupSize = numExperts / nGroup
+                guard groupSize >= 2, numExpertsPerTok <= topkGroup * groupSize else {
+                    throw SharpAIParam2moeError.invalidConfiguration(
+                        "each expert group needs at least 2 experts, and num_experts_per_tok must be <= topk_group * (num_experts / n_group)"
+                    )
+                }
+            }
         }
     }
 }
