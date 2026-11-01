@@ -72,6 +72,22 @@ final class SharpAIOpencuaConfigurationTests: XCTestCase {
         _ = SharpAIOpencuaModel(flat)
     }
 
+    /// A JSON null rope_scaling is the same as an absent one.
+    func testNullRopeScalingGetsInjectedSection() throws {
+        var root =
+            try JSONSerialization.jsonObject(
+                with: Data(try SharpAIOpencuaTestFixtures.withoutRopeScaling().utf8))
+            as! [String: Any]
+        var text = root["text_config"] as! [String: Any]
+        text["rope_scaling"] = NSNull()
+        root["text_config"] = text
+        let data = try JSONSerialization.data(withJSONObject: root)
+        let config = try SharpAIOpencuaTestFixtures.decode(String(decoding: data, as: UTF8.self))
+
+        let flat = try config.qwen25VLConfiguration(from: data)
+        XCTAssertEqual(flat.textConfiguration.ropeScaling?["mrope_section"]?.asInts(), [2, 3, 3])
+    }
+
     func testRejectsConfigWithoutTextConfig() {
         let json = """
             {

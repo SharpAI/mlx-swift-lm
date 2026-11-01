@@ -101,7 +101,11 @@ public struct SharpAIBeamConfiguration: Codable, Sendable {
             if let entries = try? rope.decodeIfPresent(
                 [String: SharpAIBeamRopeEntry?].self, forKey: .ropeParameters)
             {
-                theta = entries.values.compactMap { $0?.theta }.first
+                // Only sliding layers apply RoPE, so that entry wins; other keys are read in
+                // sorted order so the result never depends on dictionary iteration order.
+                theta =
+                    entries["sliding_attention"]??.theta
+                    ?? entries.sorted { $0.key < $1.key }.compactMap { $0.value?.theta }.first
             } else if let flat = try? rope.decodeIfPresent(
                 SharpAIBeamRopeEntry.self, forKey: .ropeParameters)
             {

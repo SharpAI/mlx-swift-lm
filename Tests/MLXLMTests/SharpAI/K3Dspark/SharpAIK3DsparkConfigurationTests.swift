@@ -149,6 +149,20 @@ final class SharpAIK3DsparkConfigurationTests: XCTestCase {
         XCTAssertEqual(config.ropeScaling?["factor"]?.asFloat(), 4)
     }
 
+    func testRopeThetaReadFromRopeParameters() throws {
+        let json = try fixture(overriding: [
+            "rope_theta": nil,
+            "rope_parameters": [
+                "rope_type": "yarn", "factor": 4.0, "rope_theta": 1_000_000.0,
+            ],
+        ])
+        let config = try decode(json)
+
+        XCTAssertEqual(config.ropeTheta, 1_000_000, accuracy: 1)
+        XCTAssertNil(config.ropeScaling?["rope_theta"])
+        XCTAssertEqual(config.ropeScaling?["factor"]?.asFloat(), 4)
+    }
+
     func testRejectsOtherModelType() throws {
         let config = try decode(try fixture(overriding: ["model_type": "deepseek_v4"]))
 

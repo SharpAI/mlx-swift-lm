@@ -10,7 +10,7 @@
 import Foundation
 import MLXLMCommon
 
-public struct SharpAIK2HorizonConfiguration: Decodable, Sendable {
+public struct SharpAIK2HorizonConfiguration: Decodable, Sendable, ModelConfigurationValidating {
     public let modelType: String
     public let hiddenSize: Int
     public let hiddenLayers: Int
@@ -98,6 +98,30 @@ public struct SharpAIK2HorizonConfiguration: Decodable, Sendable {
             throw DecodingError.dataCorruptedError(
                 forKey: .rmsNormGroups, in: container,
                 debugDescription: "rms_norm_groups must be positive and divide hidden_size")
+        }
+    }
+
+    public func validateModelConfiguration() throws {
+        guard hiddenSize > 0, hiddenLayers > 0, intermediateSize > 0, vocabularySize > 0 else {
+            throw ModelFactoryError.invalidConfiguration(
+                "k2_horizon: hidden, intermediate, layer and vocab sizes must be positive")
+        }
+        guard attentionHeads > 0, kvHeads > 0, attentionHeads % kvHeads == 0 else {
+            throw ModelFactoryError.invalidConfiguration(
+                "k2_horizon: num_attention_heads (\(attentionHeads)) must be positive and a multiple of num_key_value_heads (\(kvHeads))"
+            )
+        }
+        if let headDimensions {
+            guard headDimensions > 0 else {
+                throw ModelFactoryError.invalidConfiguration(
+                    "k2_horizon: head_dim must be positive, got \(headDimensions)")
+            }
+        } else {
+            guard hiddenSize % attentionHeads == 0 else {
+                throw ModelFactoryError.invalidConfiguration(
+                    "k2_horizon: hidden_size (\(hiddenSize)) must be divisible by num_attention_heads (\(attentionHeads)) when head_dim is absent"
+                )
+            }
         }
     }
 

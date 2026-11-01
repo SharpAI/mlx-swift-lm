@@ -13,6 +13,7 @@ public enum SharpAIK2HorizonOverlay {
         "k2_horizon": { data in
             let configuration = try JSONDecoder.json5().decode(
                 SharpAIK2HorizonConfiguration.self, from: data)
+            try configuration.validateModelConfiguration()
             return SharpAIK2HorizonModel(configuration)
         }
     ]

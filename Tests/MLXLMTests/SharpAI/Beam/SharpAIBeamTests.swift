@@ -107,6 +107,37 @@ final class SharpAIBeamTests: XCTestCase {
         XCTAssertFalse(config.tieWordEmbeddings)
     }
 
+    func testLayerKeyedRopeParametersPreferSlidingTheta() throws {
+        let json = """
+            {
+                "model_type": "beam",
+                "num_hidden_layers": 2,
+                "rope_parameters": {
+                    "a_extra": {"rope_theta": 300.0},
+                    "full_attention": {"rope_theta": 500000.0},
+                    "sliding_attention": {"rope_theta": 12345.0},
+                    "z_extra": {"rope_theta": 900.0}
+                }
+            }
+            """
+        XCTAssertEqual(try decodeConfig(json).ropeTheta, 12345.0)
+    }
+
+    func testLayerKeyedRopeParametersFallBackToSortedFirstTheta() throws {
+        let json = """
+            {
+                "model_type": "beam",
+                "num_hidden_layers": 2,
+                "rope_parameters": {
+                    "z_extra": {"rope_theta": 900.0},
+                    "a_extra": {"rope_theta": 300.0},
+                    "full_attention": {"rope_theta": 500000.0}
+                }
+            }
+            """
+        XCTAssertEqual(try decodeConfig(json).ropeTheta, 300.0)
+    }
+
     func testInvalidLayerSchedulesFailValidation() throws {
         var config = try decodeConfig(tinyJSON)
         config.layerTypes = ["sliding_attention"]
@@ -235,5 +266,18 @@ final class SharpAIBeamTests: XCTestCase {
         let creator = try XCTUnwrap(SharpAIBeamOverlay.creators[SharpAIBeamOverlay.modelType])
         let model = try creator(Data(tinyJSON.utf8))
         XCTAssertTrue(model is SharpAIBeamForCausalLM)
+    }
+
+    func testOverlayCreatorModelRunsForwardPass() throws {
+        let creator = try XCTUnwrap(SharpAIBeamOverlay.creators[SharpAIBeamOverlay.modelType])
+        let created = try creator(Data(tinyJSON.utf8))
+        let model = try XCTUnwrap(created as? SharpAIBeamForCausalLM)
+
+        let tokens = 4
+        let inputs = MLXArray(Array(Int32(1) ... Int32(tokens))).reshaped(1, tokens)
+        let logits = model(inputs, cache: try model.newCache(parameters: nil))
+        eval(logits)
+
+        XCTAssertEqual(logits.shape, [1, tokens, 32])
     }
 }

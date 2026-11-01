@@ -78,7 +78,7 @@ public struct SharpAIOpencuaConfiguration: Decodable, Sendable {
         // output is unchanged. Image positions still follow Qwen25VL's 2D grid (see the KNOWN GAP
         // in SharpAIOpencuaForwardTests). The split is Qwen2.5-VL's [16, 24, 24] for head_dim 128,
         // scaled to head_dim.
-        if flat["rope_scaling"] == nil {
+        if flat["rope_scaling"] == nil || flat["rope_scaling"] is NSNull {
             let headDim = textConfiguration.hiddenSize / max(textConfiguration.attentionHeads, 1)
             let half = headDim / 2
             let first = half / 4

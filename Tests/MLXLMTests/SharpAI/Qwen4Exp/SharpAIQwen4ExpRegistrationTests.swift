@@ -41,6 +41,30 @@ final class SharpAIQwen4ExpRegistrationTests: XCTestCase {
         XCTAssertThrowsError(try tinyModel(json))
     }
 
+    /// Zero or inconsistent head and expert counts are rejected with an error instead of trapping
+    /// on a modulo or division by zero.
+    func testInvalidCountsThrowInsteadOfTrapping() {
+        let edits = [
+            ("\"linear_num_key_heads\": 2,", "\"linear_num_key_heads\": 0,"),
+            ("\"linear_num_value_heads\": 4,", "\"linear_num_value_heads\": 0,"),
+            ("\"num_key_value_heads\": 2,", "\"num_key_value_heads\": 0,"),
+            ("\"num_attention_heads\": 4,", "\"num_attention_heads\": 0,"),
+            ("\"num_experts_per_tok\": 2,", "\"num_experts_per_tok\": 5,"),
+            ("\"heads_per_ngram\": 2,", "\"heads_per_ngram\": 0,"),
+        ]
+        for (old, new) in edits {
+            let json = SharpAIQwen4ExpTinyFixtures.configJSON.replacingOccurrences(
+                of: old, with: new)
+            XCTAssertNotEqual(json, SharpAIQwen4ExpTinyFixtures.configJSON, new)
+            XCTAssertThrowsError(try tinyModel(json), new) { error in
+                guard case ModelFactoryError.invalidConfiguration = error else {
+                    XCTFail("unexpected error for \(new): \(error)")
+                    return
+                }
+            }
+        }
+    }
+
     func testTinyForwardProducesFiniteLogits() throws {
         let model = try tinyModel()
         let tokens = MLXArray([Int32(5), 9, 2, 7, 3, 11]).reshaped(1, 6)

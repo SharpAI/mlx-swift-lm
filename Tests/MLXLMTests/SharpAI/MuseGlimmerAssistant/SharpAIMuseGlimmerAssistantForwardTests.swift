@@ -7,6 +7,7 @@
 import Foundation
 import MLX
 import MLXLMCommon
+import MLXNN
 import XCTest
 
 @testable import MLXVLM
@@ -81,5 +82,19 @@ final class SharpAIMuseGlimmerAssistantForwardTests: XCTestCase {
 
         XCTAssertEqual(outputA.count, outputB.count)
         XCTAssertTrue(zip(outputA, outputB).contains { abs($0 - $1) > 0 })
+    }
+
+    func testBFloat16WeightsKeepOutputInBFloat16() throws {
+        let model = try tinyModel()
+        let flat = model.parameters().flattened().map { ($0.0, $0.1.asType(.bfloat16)) }
+        model.update(parameters: ModuleParameters.unflattened(flat))
+
+        let noise = MLXRandom.normal([1, 4, 16]).asType(.bfloat16)
+        let context = MLXRandom.normal([1, 6, 32]).asType(.bfloat16)
+
+        let output = model(noise, contextHiddenStates: context)
+        eval(output)
+
+        XCTAssertEqual(output.dtype, .bfloat16)
     }
 }

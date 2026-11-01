@@ -22,7 +22,13 @@ final class SharpAILlamaNemotronVlRerankConfigurationTests: XCTestCase {
                 "rms_norm_eps": 1e-5
             },
             "vision_config": {
-                "model_type": "siglip_vision_model"
+                "model_type": "siglip_vision_model",
+                "hidden_size": 16,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 2,
+                "intermediate_size": 32,
+                "patch_size": 16,
+                "image_size": 32
             }
         }
         """
@@ -75,5 +81,14 @@ final class SharpAILlamaNemotronVlRerankConfigurationTests: XCTestCase {
         XCTAssertThrowsError(
             try JSONDecoder.json5().decode(
                 SharpAILlamaNemotronVlRerankConfiguration.self, from: Data(missingJSON.utf8)))
+    }
+
+    func testMalformedVisionConfigFailsDecoding() {
+        let badJSON = nestedJSON.replacingOccurrences(
+            of: "\"num_hidden_layers\": 1,", with: "")
+
+        XCTAssertThrowsError(
+            try JSONDecoder.json5().decode(
+                SharpAILlamaNemotronVlRerankConfiguration.self, from: Data(badJSON.utf8)))
     }
 }

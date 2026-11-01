@@ -46,6 +46,24 @@ final class SharpAIVaultgemmaModelTests: XCTestCase {
         XCTAssertEqual(logits.shape, [1, 6, 100])
     }
 
+    func testForwardPassWithQuantizedFullAttentionCache() throws {
+        // Quantized KV caches need a head dim divisible by a supported group size (32, 64 or 128).
+        let json = SharpAIVaultgemmaTestFixture.tinyJSON()
+            .replacingOccurrences(of: "\"head_dim\": 8", with: "\"head_dim\": 32")
+            .replacingOccurrences(of: "\"query_pre_attn_scalar\": 8", with: "\"query_pre_attn_scalar\": 32")
+        let config = try JSONDecoder.json5().decode(
+            SharpAIVaultgemmaConfiguration.self, from: Data(json.utf8))
+        let model = SharpAIVaultgemmaModel(config)
+        var cache = try model.newCache(parameters: nil)
+        let simple = try XCTUnwrap(cache[1] as? KVCacheSimple)
+        cache[1] = try simple.toQuantized(groupSize: 32, bits: 8)
+
+        let inputs = MLXArray([0, 1, 2, 3, 4, 5] as [Int32]).reshaped(1, 6)
+        let logits = model(inputs, cache: cache)
+        eval(logits)
+        XCTAssertEqual(logits.shape, [1, 6, 100])
+    }
+
     func testAttentionShapesFollowHeadCounts() throws {
         let shapes = parameterShapes(try tinyModel())
 

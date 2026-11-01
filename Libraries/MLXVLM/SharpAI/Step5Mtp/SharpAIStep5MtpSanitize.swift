@@ -7,7 +7,9 @@
 // Fused projections: q/k/v stack into qkv_proj and gate/up stack into gate_up_proj, in shard order.
 // Expert weights are not stacked here. The ".bias" skip needs the built module's parameter names
 // and is not done here.
-// UNVERIFIED: whether VL checkpoints prefix MTP keys with "language_model.". Keys are not stripped.
+// UNVERIFIED: whether real VL checkpoints use the "model.language_model.layers.N." prefix for MTP
+// layers. specLayerIndex accepted it, so mappedKey normalises it to "model.layers.N." before the
+// mtp_block rewrite; no source shows the real layout.
 
 import Foundation
 import MLX
@@ -24,6 +26,10 @@ public enum SharpAIStep5MtpSanitizer {
             return nil
         }
         var name = rawKey.hasPrefix("layers.") ? "model." + rawKey : rawKey
+        let languageModelLayers = "model.language_model.layers."
+        if name.hasPrefix(languageModelLayers) {
+            name = "model.layers." + name.dropFirst(languageModelLayers.count)
+        }
         let layer = specLayerIndex(of: name, configuration: configuration)
         if !name.contains("embed_tokens") && layer == nil {
             return nil

@@ -36,7 +36,7 @@ final class SharpAIKanana15VForwardTests: XCTestCase {
         guard case .logits(let output) = result else {
             return XCTFail("expected logits from prepare")
         }
-        XCTAssertEqual(output.logits.shape, [1, 3, 32])
+        XCTAssertEqual(output.logits.shape, [1, 1, 32])
     }
 
     func testImageInputThrowsProjectorNotImplemented() throws {
@@ -68,6 +68,47 @@ final class SharpAIKanana15VForwardTests: XCTestCase {
         let output = vision(pixels, frames: [THW(1, 4, 4)])
 
         XCTAssertEqual(output.shape, [16, 8])
+    }
+
+    func testChunkedPrepareReturnsOnlyLastPositionLogits() throws {
+        let model = try makeModel()
+        let tokens = MLXArray((0 ..< 10).map { Int32($0 % 8) }).expandedDimensions(axis: 0)
+        let input = LMInput(text: .init(tokens: tokens))
+
+        let cache = try model.newCache(parameters: nil)
+        let result = try model.prepare(
+            input, cache: cache, state: nil, prefill: PrefillParameters(stepSize: 4))
+
+        guard case .logits(let output) = result else {
+            return XCTFail("expected logits from prepare")
+        }
+        XCTAssertEqual(output.logits.shape, [1, 1, 32])
+    }
+
+    func testVisionAttentionMaskIsBlockDiagonalPerFrame() throws {
+        let config = try SharpAIKanana15VTestFixtures.decode()
+        let vision = SharpAIKanana15VVisionModel(config.visionConfiguration)
+
+        // Slices of 4, 4 and 1 patches: the first image has t = 2.
+        let mask = vision.attentionMask([THW(2, 2, 2), THW(1, 1, 1)])
+        eval(mask)
+
+        XCTAssertEqual(mask.shape, [1, 9, 9])
+        XCTAssertTrue(mask[0, 0, 3].item(Bool.self))
+        XCTAssertFalse(mask[0, 3, 4].item(Bool.self))
+        XCTAssertFalse(mask[0, 8, 0].item(Bool.self))
+        XCTAssertTrue(mask[0, 8, 8].item(Bool.self))
+    }
+
+    func testVisionEncoderHandlesMultipleImages() throws {
+        let config = try SharpAIKanana15VTestFixtures.decode()
+        let vision = SharpAIKanana15VVisionModel(config.visionConfiguration)
+
+        // 4x4 grid (16 patches) followed by a 2x2 grid (4 patches).
+        let pixels = MLXArray.zeros([20, 24])
+        let output = vision(pixels, frames: [THW(1, 4, 4), THW(1, 2, 2)])
+
+        XCTAssertEqual(output.shape, [20, 8])
     }
 
     func testFastGeluMatchesQuickGeluFormula() {

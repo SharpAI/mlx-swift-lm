@@ -31,6 +31,17 @@ final class SharpAIPhi4SiglipConfigurationTests: XCTestCase {
         XCTAssertEqual(config.maxNumPatches, 3600)
         XCTAssertEqual(config.minNumPatches, 256)
         XCTAssertNil(config.imageTokenIndex)
+        XCTAssertEqual(config.resolvedImageTokenIndex, 100_256)
+    }
+
+    func testResolvedImageTokenIndexPrefersConfigKeyAndNeedsVocabulary() throws {
+        let tiny = try SharpAIPhi4SiglipTestFixtures.decode()
+        XCTAssertEqual(tiny.resolvedImageTokenIndex, 31)
+
+        let noKey = try SharpAIPhi4SiglipTestFixtures.decode(
+            SharpAIPhi4SiglipTestFixtures.tinyJSON
+                .replacingOccurrences(of: "\"image_token_index\": 31,", with: ""))
+        XCTAssertNil(noKey.resolvedImageTokenIndex)
     }
 
     func testFixtureConfigValidates() throws {

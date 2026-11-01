@@ -3,10 +3,11 @@
 import Foundation
 import MLX
 import MLXLMCommon
-import MLXVLM
+import MLXNN
+@testable import MLXVLM
 import XCTest
 
-// UNVERIFIED: key names, the 4-D patch-embedding shape, and the dropped `vit_pos_embed` are the
+// UNVERIFIED: key names and the 4-D patch-embedding shape are the
 // writer's assumptions, not checked against a Bagel checkpoint. These tests only confirm that
 // sanitize matches those assumptions. They do not prove load compatibility.
 final class SharpAIBagelSanitizeTests: XCTestCase {
@@ -53,7 +54,6 @@ final class SharpAIBagelSanitizeTests: XCTestCase {
             "llm2vae.weight": MLXArray.zeros([4, 16]),
             "time_embedder.mlp.0.weight": MLXArray.zeros([16, 16]),
             "latent_pos_embed.pos_embed": MLXArray.zeros([4, 16]),
-            "vit_pos_embed.pos_embed": MLXArray.zeros([4, 8]),
             "vit_model.vision_model.embeddings.position_ids": MLXArray.zeros([1, 4]),
             "language_model.model.layers.0.self_attn.rotary_emb.inv_freq": MLXArray.zeros([4]),
             "some_unknown.weight": MLXArray.zeros([2]),
@@ -62,6 +62,35 @@ final class SharpAIBagelSanitizeTests: XCTestCase {
         let sanitized = model.sanitize(weights: weights)
 
         XCTAssertTrue(sanitized.isEmpty, "unexpected keys: \(Array(sanitized.keys))")
+    }
+
+    func testKeepsVitPosEmbed() throws {
+        let model = try makeModel()
+        let weights: [String: MLXArray] = [
+            "vit_pos_embed.pos_embed": MLXArray.zeros([4, 16])
+        ]
+
+        let sanitized = model.sanitize(weights: weights)
+
+        XCTAssertEqual(sanitized["vit_pos_embed.pos_embed"]?.shape, [4, 16])
+    }
+
+    func testVitPosEmbedIsAddedAfterConnector() throws {
+        let model = try makeModel()
+        let pixels = MLXArray.zeros([1, 3, 28, 28])
+        let table = MLXArray(0 ..< 64).reshaped(4, 16).asType(.float32)
+        model.vitPosEmbed.update(parameters: ModuleParameters.unflattened(["pos_embed": table]))
+        let after = try model.imageFeatures(pixels)
+        // The table must be added to the connector output, not fed through the connector.
+        let nhwc = pixels.transposed(0, 2, 3, 1)
+        let expected = model.connector(model.vitModel(nhwc)) + table.reshaped(1, 4, 16)
+
+        let actual = after.asArray(Float.self)
+        let want = expected.asArray(Float.self)
+        XCTAssertEqual(actual.count, want.count)
+        for (a, b) in zip(actual, want) {
+            XCTAssertEqual(a, b, accuracy: 1e-3)
+        }
     }
 
     func testTransposesPyTorchPatchEmbeddingToMLXLayout() throws {

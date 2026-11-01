@@ -24,7 +24,7 @@ public enum SharpAIPhi4SiglipError: LocalizedError {
         case .unsupportedRopeScaling:
             return "phi4-siglip: rope_scaling is not implemented"
         case .imageTokenIndexMissing:
-            return "phi4-siglip: images need image_token_index in config.json (UNVERIFIED key)"
+            return "phi4-siglip: images need image_token_index in config.json"
         case .imagePlaceholderMismatch(let expected, let actual):
             return "phi4-siglip: expected \(expected) image placeholders, found \(actual)"
         case .invalidImageFrame:
@@ -108,8 +108,13 @@ public struct SharpAIPhi4SiglipConfiguration: Decodable, Sendable, ModelConfigur
     public let maxNumPatches: Int
     public let minNumPatches: Int
 
-    /// Token id that image features replace. Not in the fixture (UNVERIFIED key).
+    /// Token id that image features replace, when the config carries one. The released
+    /// checkpoint config has no such key; use `resolvedImageTokenIndex`.
     public let imageTokenIndex: Int?
+
+    /// Phi-4 tokenizer id of `<|dummy_0|>`, which vLLM's phi4siglip port uses as the image
+    /// placeholder id.
+    static let defaultImageTokenIndex = 100_256
 
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type"
@@ -161,6 +166,13 @@ public struct SharpAIPhi4SiglipConfiguration: Decodable, Sendable, ModelConfigur
         maxNumPatches = try c.decodeIfPresent(Int.self, forKey: .maxNumPatches) ?? 3600
         minNumPatches = try c.decodeIfPresent(Int.self, forKey: .minNumPatches) ?? 256
         imageTokenIndex = try c.decodeIfPresent(Int.self, forKey: .imageTokenIndex)
+    }
+
+    /// Placeholder id for image rows: the config key when present, otherwise the Phi-4
+    /// `<|dummy_0|>` id when the vocabulary contains it.
+    public var resolvedImageTokenIndex: Int? {
+        if let imageTokenIndex { return imageTokenIndex }
+        return vocabularySize > Self.defaultImageTokenIndex ? Self.defaultImageTokenIndex : nil
     }
 
     public var headDim: Int { hiddenSize / attentionHeads }

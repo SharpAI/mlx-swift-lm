@@ -85,4 +85,32 @@ final class SharpAIQwen3VlNemotronEmbedForwardTests: XCTestCase {
 
         XCTAssertThrowsError(try model.embed(inputIds: ids, pixelValues: pixels))
     }
+
+    func testPixelValuesWithBatchGreaterThanOneThrows() throws {
+        let model = try tinyModel()
+        let row: [Int32] = [1, 11, 9, 9, 9, 9, 12, 2]
+        let ids = MLXArray(row + row).reshaped([2, 8])
+        let pixels = MLXRandom.normal([16, 12])
+
+        XCTAssertThrowsError(
+            try model.embed(inputIds: ids, pixelValues: pixels, imageGridTHW: [THW(1, 4, 4)])
+        ) { error in
+            XCTAssertEqual(
+                error as? SharpAIQwen3VlNemotronEmbedError,
+                .unsupportedBatchWithImages(batch: 2))
+        }
+    }
+
+    func testFloat16PaddedBatchStaysFinite() throws {
+        let model = try tinyModel()
+        model.update(parameters: model.parameters().mapValues { $0.asType(.float16) })
+        let ids = MLXArray([Int32(0), 4, 5, 1, 2, 3]).reshaped([2, 3])
+        let mask = MLXArray([Int32(1), 1, 1, 0, 1, 1]).reshaped([2, 3])
+
+        let out = try model.embed(inputIds: ids, attentionMask: mask)
+        let values = out.asType(.float32).asArray(Float.self)
+
+        XCTAssertTrue(values.allSatisfy { $0.isFinite })
+        XCTAssertEqual(Array(values[48 ..< 64]), [Float](repeating: 0, count: 16))
+    }
 }

@@ -7,9 +7,9 @@
 // Kernels: the KDA recurrence is SharpAIOverlayGatedDeltaKDA (MLXLMCommon). The q/k L2 norm (eps 1e-6), the
 // K^-0.5 query scale, the sigmoid beta and the gated RMS norm follow fla (chunk_kda, l2norm, fused_norm_gate).
 //
-// Scope: the text decoder only. Routed experts are evaluated densely (every expert sees every token, weighted by
-// the top-k routing matrix); there is no gather dispatch yet. The vision tower and the MXFP4-packed expert tensors
-// of the released checkpoint are not mapped yet (see SharpAIKimiK3Sanitizer).
+// Scope: the text decoder only. Routed experts run through a stacked SwitchGLU (gather dispatch over the top-k
+// experts); the sanitizer stacks the per-expert w1/w2/w3 tensors. The vision tower and the MXFP4-packed expert
+// tensors of the released checkpoint are not mapped yet (see SharpAIKimiK3Sanitizer).
 
 import Foundation
 import MLX
@@ -21,7 +21,7 @@ import MLXNN
 
 /// `SituAndMul` from modeling_kimi_linear.py: beta * tanh(gate / beta) * sigmoid(gate) * up, where `up` is first
 /// passed through linear_beta * tanh(up / linear_beta) when linear_beta is set. Plain SiLU gating for `silu`.
-struct SharpAIKimiK3Activation {
+struct SharpAIKimiK3Activation: Sendable {
     let usesSitu: Bool
     let beta: Float
     let linearBeta: Float?
@@ -335,26 +335,6 @@ final class SharpAIKimiK3MLP: Module {
     }
 }
 
-/// One routed expert (KimiBlockSparseMLP): w2(act(w1(x), w3(x))). w1 is the gate, w3 the up projection.
-final class SharpAIKimiK3Expert: Module {
-    @ModuleInfo(key: "w1") var w1: Linear
-    @ModuleInfo(key: "w3") var w3: Linear
-    @ModuleInfo(key: "w2") var w2: Linear
-    let activation: SharpAIKimiK3Activation
-
-    init(hidden: Int, intermediate: Int, activation: SharpAIKimiK3Activation) {
-        _w1.wrappedValue = Linear(hidden, intermediate, bias: false)
-        _w3.wrappedValue = Linear(hidden, intermediate, bias: false)
-        _w2.wrappedValue = Linear(intermediate, hidden, bias: false)
-        self.activation = activation
-        super.init()
-    }
-
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
-        w2(activation(gate: w1(x), up: w3(x)))
-    }
-}
-
 /// KimiMoEGate: sigmoid (or softmax) scores; experts are chosen on scores plus e_score_correction_bias; the
 /// weights are the unbiased scores of the chosen experts, renormalized when moe_renormalize, then scaled.
 final class SharpAIKimiK3Router: Module {
@@ -397,7 +377,7 @@ final class SharpAIKimiK3SparseMoE: Module {
     let hasLatent: Bool
 
     @ModuleInfo(key: "gate") var gate: SharpAIKimiK3Router
-    @ModuleInfo(key: "experts") var experts: [SharpAIKimiK3Expert]
+    @ModuleInfo(key: "switch_mlp") var switchMLP: SwitchGLU
     @ModuleInfo(key: "shared_experts") var sharedExperts: SharpAIKimiK3MLP?
     @ModuleInfo(key: "routed_expert_down_proj") var routedExpertDownProj: Linear?
     @ModuleInfo(key: "routed_expert_up_proj") var routedExpertUpProj: Linear?
@@ -414,9 +394,10 @@ final class SharpAIKimiK3SparseMoE: Module {
         let latentWidth = config.routedExpertHiddenSize ?? hidden
 
         _gate.wrappedValue = SharpAIKimiK3Router(config, numExperts: count, topK: topK)
-        _experts.wrappedValue = (0 ..< count).map { _ in
-            SharpAIKimiK3Expert(hidden: latentWidth, intermediate: intermediate, activation: activation)
-        }
+        _switchMLP.wrappedValue = SwitchGLU(
+            inputDims: latentWidth, hiddenDims: intermediate, numExperts: count,
+            activation: MLXNN.silu,
+            activationProduct: { gate, up in activation(gate: gate, up: up) })
         _sharedExperts.wrappedValue =
             config.numSharedExperts > 0
             ? SharpAIKimiK3MLP(
@@ -440,17 +421,10 @@ final class SharpAIKimiK3SparseMoE: Module {
             latent = routedExpertDownProj(latent)
         }
 
-        // Dense combination: per-token weight of every expert, zero where the expert is not chosen.
-        let expertIds = MLXArray((0 ..< numExperts).map { Int32($0) })
-        let chosen = MLX.equal(indices.expandedDimensions(axis: -1), expertIds)  // [B, S, K, E]
-        let routing = MLX.where(
-            chosen, weights.expandedDimensions(axis: -1), MLXArray(Float(0)))
-        let perExpert = MLX.sum(routing, axis: -2).asType(latent.dtype)  // [B, S, E]
-        var y = MLXArray.zeros(like: latent)
-        for expertIndex in 0 ..< numExperts {
-            let weight = perExpert[.ellipsis, expertIndex ..< (expertIndex + 1)]
-            y = y + experts[expertIndex](latent) * weight
-        }
+        // Gather dispatch: only the top-k experts of each token run; combine with the routing weights.
+        let expertOut = switchMLP(latent, indices)  // [B, S, K, latent]
+        var y = MLX.sum(
+            expertOut * weights.asType(expertOut.dtype).expandedDimensions(axis: -1), axis: -2)
 
         if let routedExpertNorm {
             y = routedExpertNorm(y)

@@ -46,11 +46,9 @@ final class SharpAIKanana15VAttention: Module {
     }
 
     func callAsFunction(
-        _ x: MLXArray, frames: [THW], rotaryPositionEmbedding: MLXArray
+        _ x: MLXArray, attentionMask: MLXArray, rotaryPositionEmbedding: MLXArray
     ) -> MLXArray {
         let sequenceLength = x.dim(0)
-        let batch = frames[0].t
-        let length = sequenceLength / batch
 
         let packed = qkv(x)
         let parts = split(packed, parts: 3, axis: -1)
@@ -65,12 +63,12 @@ final class SharpAIKanana15VAttention: Module {
         q = SharpAIKanana15VRotary.apply(q, freqs: rotaryPositionEmbedding)
         k = SharpAIKanana15VRotary.apply(k, freqs: rotaryPositionEmbedding)
 
-        q = q.reshaped(batch, length, numHeads, -1).transposed(0, 2, 1, 3)
-        k = k.reshaped(batch, length, numHeads, -1).transposed(0, 2, 1, 3)
-        v = v.reshaped(batch, length, numHeads, -1).transposed(0, 2, 1, 3)
+        q = q.reshaped(1, sequenceLength, numHeads, -1).transposed(0, 2, 1, 3)
+        k = k.reshaped(1, sequenceLength, numHeads, -1).transposed(0, 2, 1, 3)
+        v = v.reshaped(1, sequenceLength, numHeads, -1).transposed(0, 2, 1, 3)
 
         let output = MLXFast.scaledDotProductAttention(
-            queries: q, keys: k, values: v, scale: scale, mask: .none
+            queries: q, keys: k, values: v, scale: scale, mask: .array(attentionMask)
         )
         .transposed(0, 2, 1, 3)
         .reshaped(sequenceLength, -1)
@@ -115,12 +113,12 @@ final class SharpAIKanana15VBlock: Module {
     }
 
     func callAsFunction(
-        _ hiddenStates: MLXArray, frames: [THW], rotaryPositionEmbedding: MLXArray
+        _ hiddenStates: MLXArray, attentionMask: MLXArray, rotaryPositionEmbedding: MLXArray
     ) -> MLXArray {
         var h =
             hiddenStates
             + attention(
-                norm1(hiddenStates), frames: frames,
+                norm1(hiddenStates), attentionMask: attentionMask,
                 rotaryPositionEmbedding: rotaryPositionEmbedding)
         h = h + mlp(norm2(h))
         return h
@@ -194,13 +192,30 @@ final class SharpAIKanana15VVisionModel: Module {
         return full.reshaped(indices.dim(0), -1)
     }
 
+    /// Block-diagonal mask `[1, patches, patches]`: a patch attends only within its own temporal
+    /// slice, so each slice of `h * w` patches is one segment (`cu_seqlens` in the reference).
+    func attentionMask(_ frames: [THW]) -> MLXArray {
+        var segmentIds = [Int32]()
+        var segment: Int32 = 0
+        for frame in frames {
+            for _ in 0 ..< frame.t {
+                segmentIds.append(contentsOf: [Int32](repeating: segment, count: frame.h * frame.w))
+                segment += 1
+            }
+        }
+        let ids = MLXArray(segmentIds)
+        return (ids.expandedDimensions(axis: 1) .== ids.expandedDimensions(axis: 0))
+            .expandedDimensions(axis: 0)
+    }
+
     /// `pixels` is `[patches, inChannels * temporal * patch * patch]`, one row per patch.
     func callAsFunction(_ pixels: MLXArray, frames: [THW]) -> MLXArray {
         var hiddenStates = patchEmbed(pixels)
         let rotary = rotaryEmbedding(frames)
+        let mask = attentionMask(frames)
 
         for block in blocks {
-            hiddenStates = block(hiddenStates, frames: frames, rotaryPositionEmbedding: rotary)
+            hiddenStates = block(hiddenStates, attentionMask: mask, rotaryPositionEmbedding: rotary)
         }
 
         return hiddenStates

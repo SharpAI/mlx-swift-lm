@@ -52,6 +52,10 @@ public final class SharpAIQwen3VlNemotronEmbedModel: Module {
         var visualGrids: [THW]? = nil
 
         if let pixelValues {
+            // DeepStack injection and the image scatter use flat positions, which only hold for one row.
+            guard inputIds.dim(0) == 1 else {
+                throw SharpAIQwen3VlNemotronEmbedError.unsupportedBatchWithImages(batch: inputIds.dim(0))
+            }
             guard let grids = imageGridTHW, !grids.isEmpty else {
                 throw SharpAIQwen3VlNemotronEmbedError.missingImageGrid
             }
@@ -111,9 +115,12 @@ public final class SharpAIQwen3VlNemotronEmbedModel: Module {
         } else {
             tokens = lastHidden
         }
-        let norms = sqrt((tokens * tokens).sum(axis: -1, keepDims: true))
+        // Normalize in float32: squared sums overflow float16, and the clamp below underflows to 0 there.
+        let tokens32 = tokens.asType(.float32)
+        let norms = sqrt((tokens32 * tokens32).sum(axis: -1, keepDims: true))
         // Same clamp as torch.nn.functional.normalize (eps = 1e-12), so zero rows stay zero.
-        return tokens / maximum(norms, MLXArray(Float(1e-12)).asType(tokens.dtype))
+        let normalized = tokens32 / maximum(norms, MLXArray(Float(1e-12)))
+        return normalized.asType(lastHidden.dtype)
     }
 
     /// The Qwen3-VL text stack in `Qwen3VLLanguage.Model` applies `norm` after its last layer. The

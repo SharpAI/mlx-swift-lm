@@ -249,7 +249,7 @@ public class SharpAIOpenpanguVlModel: Module, VLMModel {
     public var vocabularySize: Int { config.vocabularySize }
 
     public var loraLayers: [Module] {
-        [model]
+        model.layers
     }
 
     public init(_ config: SharpAIOpenpanguVlConfiguration) throws {

@@ -74,4 +74,33 @@ final class SharpAIInklingModelConfigurationTests: XCTestCase {
         XCTAssertEqual(config.text.intermediateSize, 48)
         XCTAssertEqual(config.text.moeIntermediateSize, 8)
     }
+
+    private func assertDecodeFails(_ json: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertThrowsError(
+            try JSONDecoder.json5().decode(
+                SharpAIInklingModelConfiguration.self, from: Data(json.utf8)),
+            file: file, line: line)
+    }
+
+    func testShortMlpLayerTypesThrows() {
+        assertDecodeFails(
+            """
+            {"num_hidden_layers": 4, "mlp_layer_types": ["dense", "moe"]}
+            """)
+    }
+
+    func testZeroKVHeadsThrows() {
+        assertDecodeFails("""
+            {"num_key_value_heads": 0}
+            """)
+        assertDecodeFails("""
+            {"swa_num_key_value_heads": 0}
+            """)
+    }
+
+    func testZeroConvKernelThrows() {
+        assertDecodeFails("""
+            {"sconv_kernel_size": 0}
+            """)
+    }
 }

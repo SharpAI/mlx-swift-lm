@@ -9,7 +9,7 @@ import XCTest
 
 final class SharpAIOpenpanguVlModelTests: XCTestCase {
 
-    private func makeModel(tied: Bool) throws -> SharpAIOpenpanguVlModel {
+    private func makeModel(tied: Bool, layers: Int = 1) throws -> SharpAIOpenpanguVlModel {
         let json = """
             {
                 "model_type": "openpangu_vl",
@@ -17,7 +17,7 @@ final class SharpAIOpenpanguVlModelTests: XCTestCase {
                 "intermediate_size": 64,
                 "num_attention_heads": 4,
                 "num_key_value_heads": 2,
-                "num_hidden_layers": 1,
+                "num_hidden_layers": \(layers),
                 "rms_norm_eps": 1e-05,
                 "rope_theta": 10000.0,
                 "max_position_embeddings": 128,
@@ -58,5 +58,11 @@ final class SharpAIOpenpanguVlModelTests: XCTestCase {
         let keys = parameterKeys(try makeModel(tied: false))
 
         XCTAssertTrue(keys.contains("lm_head.weight"))
+    }
+
+    func testLoraLayersAreTheDecoderLayers() throws {
+        let model = try makeModel(tied: true, layers: 3)
+
+        XCTAssertEqual(model.loraLayers.count, 3)
     }
 }

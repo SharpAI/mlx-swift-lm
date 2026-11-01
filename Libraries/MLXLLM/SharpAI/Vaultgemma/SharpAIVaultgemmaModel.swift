@@ -57,7 +57,18 @@ class SharpAIVaultgemmaAttention: Module {
         queries = applyRotaryPosition(rope, to: queries, offset: offset)
         keys = applyRotaryPosition(rope, to: keys, offset: offset)
 
-        if let cache {
+        if let quantizedCache = cache as? QuantizedKVCacheProtocol {
+            // Softcapped scores need the full matrices, so dequantize the cached keys and values.
+            let (qKeys, qValues) = quantizedCache.updateQuantized(keys: keys, values: values)
+            keys = dequantized(
+                qKeys.0, scales: qKeys.1, biases: qKeys.2,
+                groupSize: quantizedCache.groupSize, bits: quantizedCache.bits,
+                mode: quantizedCache.mode, dtype: queries.dtype)
+            values = dequantized(
+                qValues.0, scales: qValues.1, biases: qValues.2,
+                groupSize: quantizedCache.groupSize, bits: quantizedCache.bits,
+                mode: quantizedCache.mode, dtype: queries.dtype)
+        } else if let cache {
             (keys, values) = cache.update(keys: keys, values: values)
         }
 

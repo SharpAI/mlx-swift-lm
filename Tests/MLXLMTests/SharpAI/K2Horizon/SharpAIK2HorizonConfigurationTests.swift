@@ -129,4 +129,35 @@ final class SharpAIK2HorizonConfigurationTests: XCTestCase {
         XCTAssertEqual(llama.ropeScaling?["factor"]?.asFloat(), 4)
         XCTAssertEqual(llama.resolvedHeadDimensions, 4)
     }
+
+    func testValidationRejectsZeroAttentionHeads() throws {
+        let json = SharpAIK2HorizonTestFixtures.json().replacingOccurrences(
+            of: "\"num_attention_heads\": 2", with: "\"num_attention_heads\": 0")
+        let config = try JSONDecoder.json5().decode(
+            SharpAIK2HorizonConfiguration.self, from: Data(json.utf8))
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
+    func testValidationRejectsIndivisibleHiddenSizeWithoutHeadDim() throws {
+        let json = SharpAIK2HorizonTestFixtures.json().replacingOccurrences(
+            of: "\"num_attention_heads\": 2", with: "\"num_attention_heads\": 3"
+        ).replacingOccurrences(
+            of: "\"num_key_value_heads\": 2", with: "\"num_key_value_heads\": 3")
+        let config = try JSONDecoder.json5().decode(
+            SharpAIK2HorizonConfiguration.self, from: Data(json.utf8))
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
+    func testValidationRejectsKvHeadsNotDividingHeads() throws {
+        let json = SharpAIK2HorizonTestFixtures.json().replacingOccurrences(
+            of: "\"num_key_value_heads\": 2", with: "\"num_key_value_heads\": 3")
+        let config = try JSONDecoder.json5().decode(
+            SharpAIK2HorizonConfiguration.self, from: Data(json.utf8))
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
+    func testValidationAcceptsBaseFixture() throws {
+        let config = try SharpAIK2HorizonTestFixtures.configuration()
+        XCTAssertNoThrow(try config.validateModelConfiguration())
+    }
 }

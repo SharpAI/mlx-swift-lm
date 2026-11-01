@@ -2,7 +2,7 @@
 // upstream mlx-swift-lm.
 //
 // The SigLIP blocks follow the private ones in Paligemma.swift. Bagel's own ViT wiring
-// (packed NaViT sequences, `vit_pos_embed`) is not modeled. Single image, NCHW input.
+// (packed NaViT sequences) is not modeled; `vit_pos_embed` is applied after the connector. Single image, NCHW input.
 // UNVERIFIED: checkpoint key names for `vit_model` and `connector`, and whether Bagel applies
 // `post_layernorm` before the connector.
 
@@ -110,8 +110,9 @@ final class SharpAIBagelVisionEncoder: Module {
 
 final class SharpAIBagelVisionEmbeddings: Module {
     @ModuleInfo(key: "patch_embedding") var patchEmbedding: Conv2d
-    // UNVERIFIED: a learned `position_embedding` table is an assumption. Bagel may instead add a
-    // 2D sin-cos `vit_pos_embed` after the connector. A real checkpoint may fail a strict load here.
+    // UNVERIFIED: a learned `position_embedding` table inside the ViT is an assumption (the
+    // original builds it only when the vision config's `rope` flag is off, and the released
+    // vit_config.json does not state that flag). A real checkpoint may fail a strict load here.
     @ModuleInfo(key: "position_embedding") var positionEmbedding: Embedding
 
     /// Patches per side in the position table. Position id of patch (row, col) is
@@ -192,5 +193,31 @@ final class SharpAIBagelConnector: Module {
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         fc2(geluApproximate(fc1(x)))
+    }
+}
+
+/// Frozen 2-D position table added to the connector output, stored in the checkpoint as
+/// `vit_pos_embed.pos_embed` with shape (gridSize * gridSize, textHidden). The id of patch
+/// (row, col) is `row * gridSize + col`.
+final class SharpAIBagelVitPosEmbed: Module {
+    @ParameterInfo(key: "pos_embed") var posEmbed: MLXArray
+
+    let gridSize: Int
+
+    init(gridSize: Int, hidden: Int) {
+        self.gridSize = gridSize
+        _posEmbed.wrappedValue = MLXArray.zeros([gridSize * gridSize, hidden])
+    }
+
+    /// Returns (1, rows * cols, hidden) in row-major patch order.
+    func callAsFunction(rows: Int, cols: Int) -> MLXArray {
+        var ids = [Int32]()
+        ids.reserveCapacity(rows * cols)
+        for row in 0 ..< rows {
+            for col in 0 ..< cols {
+                ids.append(Int32(row * gridSize + col))
+            }
+        }
+        return expandedDimensions(posEmbed[MLXArray(ids)], axis: 0)
     }
 }

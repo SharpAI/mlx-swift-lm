@@ -40,9 +40,16 @@ public class SharpAIKanana15VModel: Module, VLMModel, KVCacheDimensionProvider {
             throw SharpAIKanana15VError.projectorNotImplemented
         }
 
-        let tokens = input.text.tokens
-        let logits = languageModel(tokens, cache: cache)
+        var tokens = input.text.tokens
+        if tokens.ndim == 1 { tokens = tokens.expandedDimensions(axis: 0) }
         let total = tokens.dim(-1)
+
+        let processed = try prefill.forEachChunk(total: total) { range in
+            _ = languageModel(tokens[0..., range], cache: cache)
+            asyncEval(cache)
+        }
+
+        let logits = languageModel(tokens[0..., processed...], cache: cache)
         prefill.progress?(total, total)
         return .logits(LMOutput(logits: logits))
     }

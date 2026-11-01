@@ -146,4 +146,22 @@ final class SharpAIExaoneMoeConfigurationTests: XCTestCase {
 
         XCTAssertThrowsError(try config.validateModelConfiguration())
     }
+
+    func testZeroAttentionHeadsWithoutHeadDimThrowsInsteadOfTrapping() throws {
+        let json = mixedJSON
+            .replacingOccurrences(of: "\"num_attention_heads\": 2,", with: "\"num_attention_heads\": 0,")
+            .replacingOccurrences(of: "\"head_dim\": 8,", with: "")
+        let config = try decode(json)
+
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
+    func testRejectsSingleExpertGroups() throws {
+        let json = mixedJSON.replacingOccurrences(
+            of: "\"n_group\": 2,", with: "\"n_group\": 4,"
+        ).replacingOccurrences(of: "\"topk_group\": 1,", with: "\"topk_group\": 2,")
+        let config = try decode(json)
+
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
 }

@@ -45,7 +45,7 @@ final class SharpAIVoxtralRealtimeModelTests: XCTestCase {
         guard case .logits(let output) = result else {
             return XCTFail("expected logits from prepare")
         }
-        XCTAssertEqual(output.logits.shape, [1, 3, 32])
+        XCTAssertEqual(output.logits.shape, [1, 1, 32])
         XCTAssertNotNil(output.state)
     }
 
@@ -74,5 +74,46 @@ final class SharpAIVoxtralRealtimeModelTests: XCTestCase {
 
         let logits = model(tokens, cache: cache)
         XCTAssertEqual(logits.shape, [1, 3, 32])
+    }
+
+    func testNewCacheIsRotatingPerLayer() throws {
+        let model = try tinyModel()
+        let cache = try model.newCache(parameters: nil)
+        XCTAssertEqual(cache.count, 2)
+        XCTAssertTrue(cache.allSatisfy { $0 is RotatingKVCache })
+    }
+
+    func testPrepareRejectsAudioShorterThanOneGroup() throws {
+        let model = try tinyModel()
+        let tokens = MLXArray([5, 7, 9] as [Int32]).expandedDimensions(axis: 0)
+        let cache = try model.newCache(parameters: nil)
+        let short = LMInput.ProcessedAudio(features: MLXRandom.normal([1, 4, 4]))
+        XCTAssertThrowsError(
+            try model.prepare(
+                LMInput(text: .init(tokens: tokens), audio: short), cache: cache, state: nil,
+                prefill: PrefillParameters()))
+    }
+
+    func testChunkedPrepareAdvancesCacheAndReturnsLastLogits() throws {
+        let model = try tinyModel()
+        let tokens = MLXArray([5, 7, 9, 11, 13] as [Int32]).expandedDimensions(axis: 0)
+        let cache = try model.newCache(parameters: nil)
+        let result = try model.prepare(
+            LMInput(text: .init(tokens: tokens), audio: tinyAudio()), cache: cache, state: nil,
+            prefill: PrefillParameters(stepSize: 2))
+        guard case .logits(let output) = result else {
+            return XCTFail("expected logits from prepare")
+        }
+        XCTAssertEqual(output.logits.shape, [1, 1, 32])
+        XCTAssertEqual(cache.first?.offset, 5)
+    }
+
+    func testDecodeKeepsActivationDtype() throws {
+        let model = try tinyModel()
+        model.update(
+            parameters: model.parameters().mapValues { $0.asType(.float16) })
+        let tokens = MLXArray([5, 7, 9] as [Int32]).expandedDimensions(axis: 0)
+        let logits = model(tokens, cache: try model.newCache(parameters: nil))
+        XCTAssertEqual(logits.dtype, .float16)
     }
 }

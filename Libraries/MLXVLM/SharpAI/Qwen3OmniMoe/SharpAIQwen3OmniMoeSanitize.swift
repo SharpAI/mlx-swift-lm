@@ -54,12 +54,15 @@ public enum SharpAIQwen3OmniMoeSanitize {
             return nil
         }
 
-        // UNVERIFIED: the Omni checkpoint's PatchMerger sub-keys are assumed to be the Qwen3-VL
-        // names (norm, linear_fc1, linear_fc2). This is not confirmed against an Omni checkpoint.
-        // The recalled alternative is ln_q and mlp.0/mlp.2. Only the prefix rename is applied here.
+        // The Omni patch merger holds `ln_q` and an `mlp` list (Linear, GELU, Linear), so its
+        // checkpoint keys are `ln_q`, `mlp.0` and `mlp.2`. Qwen3VLVision.PatchMerger names them
+        // `norm`, `linear_fc1` and `linear_fc2`.
         if name.hasPrefix("visual.merger_list.") {
             return "vision_tower.deepstack_merger_list."
-                + String(name.dropFirst("visual.merger_list.".count))
+                + mergerSubKeys(String(name.dropFirst("visual.merger_list.".count)))
+        }
+        if name.hasPrefix("visual.merger.") {
+            return "vision_tower.merger." + mergerSubKeys(String(name.dropFirst("visual.merger.".count)))
         }
         if name.hasPrefix("visual.") {
             return "vision_tower." + String(name.dropFirst("visual.".count))
@@ -71,6 +74,14 @@ public enum SharpAIQwen3OmniMoeSanitize {
             return "language_model." + name
         }
         return name
+    }
+
+    /// Renames Omni merger sub-keys to the Qwen3-VL names. Keys already in the Qwen3-VL form are
+    /// left unchanged.
+    private static func mergerSubKeys(_ rest: String) -> String {
+        rest.replacingOccurrences(of: "ln_q.", with: "norm.")
+            .replacingOccurrences(of: "mlp.0.", with: "linear_fc1.")
+            .replacingOccurrences(of: "mlp.2.", with: "linear_fc2.")
     }
 
     /// Joins `layers.N.mlp.experts.E.{gate,up,down}_proj.weight` for every expert E into

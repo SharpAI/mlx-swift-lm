@@ -97,6 +97,50 @@ final class SharpAIJais2ConfigurationTests: XCTestCase {
         XCTAssertNoThrow(try config.validateModelConfiguration())
     }
 
+    func testKeepsRopeScalingFromRopeParameters() throws {
+        let config = try decode(
+            """
+            {
+                "vocab_size": 64,
+                "hidden_size": 16,
+                "intermediate_size": 32,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 4,
+                "max_position_embeddings": 128,
+                "rope_parameters": {
+                    "rope_type": "llama3",
+                    "rope_theta": 250000.0,
+                    "factor": 8.0,
+                    "low_freq_factor": 1.0,
+                    "high_freq_factor": 4.0,
+                    "original_max_position_embeddings": 64
+                }
+            }
+            """)
+
+        XCTAssertEqual(config.ropeTheta, 250_000, accuracy: 1)
+        XCTAssertEqual(config.ropeScaling?["rope_type"], .string("llama3"))
+        XCTAssertEqual(config.ropeScaling?["factor"]?.asFloat(), 8.0)
+        XCTAssertTrue(SharpAIJais2Attention(config).rope is Llama3RoPE)
+    }
+
+    func testDefaultRopeTypeLeavesScalingNil() throws {
+        let config = try decode(
+            """
+            {
+                "vocab_size": 64,
+                "hidden_size": 16,
+                "intermediate_size": 32,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 4,
+                "rope_parameters": { "rope_type": "default", "rope_theta": 250000.0 }
+            }
+            """)
+
+        XCTAssertNil(config.ropeScaling)
+        XCTAssertFalse(SharpAIJais2Attention(config).rope is Llama3RoPE)
+    }
+
     func testMissingRequiredFieldThrows() {
         XCTAssertThrowsError(
             try decode(

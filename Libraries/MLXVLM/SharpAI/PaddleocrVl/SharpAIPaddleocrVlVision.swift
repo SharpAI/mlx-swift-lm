@@ -1,20 +1,51 @@
 // SharpAI fork overlay: PaddleOCR-VL vision tower and projector. Not part of upstream mlx-swift-lm.
 //
 // SigLIP-style encoder with absolute position embeddings, resized bilinearly to each image grid.
-// Images run one at a time, so attention needs no packing mask. The projector merges 2x2 patch
+// Images run one at a time, so attention needs no packing mask. Attention rotates q and k with a
+// 2D (row, column) rotary embedding, as in the mlx-vlm port. The projector merges 2x2 patch
 // tokens and maps them to the text width.
 // Pixel input: (patches, P, P, 3), channels last, in row-major patch order for each image.
 // The fixture lists temporal_patch_size 2, but this file uses a 2D patch conv for still images.
-// UNVERIFIED: the 2D conv, no vision rope, and the projector's pre-norm placement and GELU
-// variant. Check them against HF output.
+// UNVERIFIED: the 2D conv and the projector's pre-norm placement and GELU variant. Check them
+// against HF output.
 
 import Foundation
 import MLX
 import MLXLMCommon
 import MLXNN
 
-/// UNVERIFIED: no 2D rotary embedding is applied to q and k. The reference tower may apply one,
-/// and the fixture sets use_3d_rope. Check against HF output; OCR output may differ until then.
+/// 2D vision rotary embedding tables. Each axis (row, column) gets headDim / 4 frequencies with
+/// base 10000, so the pair covers headDim / 2; cos and sin are tiled to headDim (half-split
+/// rotation). Returns cos and sin shaped (1, 1, height * width, headDim), patches in row-major order.
+func sharpAIPaddleocrVlVisionRotary(height: Int, width: Int, headDim: Int) -> (
+    cos: MLXArray, sin: MLXArray
+) {
+    let axisDim = headDim / 2
+    let count = axisDim / 2
+    let invFreq = (0 ..< count).map { index in
+        Float(1) / pow(Float(10000), Float(2 * index) / Float(axisDim))
+    }
+    var angles = [Float]()
+    angles.reserveCapacity(height * width * 2 * count)
+    for row in 0 ..< height {
+        for column in 0 ..< width {
+            for freq in invFreq { angles.append(Float(row) * freq) }
+            for freq in invFreq { angles.append(Float(column) * freq) }
+        }
+    }
+    let freqs = MLXArray(angles, [height * width, 2 * count])
+    let tiled = concatenated([freqs, freqs], axis: -1)
+        .reshaped(1, 1, height * width, 2 * axisDim)
+    return (cos(tiled), sin(tiled))
+}
+
+func sharpAIPaddleocrVlRotateHalf(_ x: MLXArray) -> MLXArray {
+    let half = x.dim(-1) / 2
+    let first = x[.ellipsis, 0 ..< half]
+    let second = x[.ellipsis, half...]
+    return concatenated([-second, first], axis: -1)
+}
+
 final class SharpAIPaddleocrVlVisionAttention: Module {
     let numHeads: Int
     let headDim: Int
@@ -36,13 +67,18 @@ final class SharpAIPaddleocrVlVisionAttention: Module {
         super.init()
     }
 
-    /// Bidirectional attention over (batch, length, hidden).
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
+    /// Bidirectional attention over (batch, length, hidden). `cos` and `sin` are the tables from
+    /// `sharpAIPaddleocrVlVisionRotary`.
+    func callAsFunction(_ x: MLXArray, cos: MLXArray, sin: MLXArray) -> MLXArray {
         let batch = x.dim(0)
         let length = x.dim(1)
         let hidden = numHeads * headDim
-        let q = qProj(x).reshaped(batch, length, numHeads, headDim).transposed(0, 2, 1, 3)
-        let k = kProj(x).reshaped(batch, length, numHeads, headDim).transposed(0, 2, 1, 3)
+        var q = qProj(x).reshaped(batch, length, numHeads, headDim).transposed(0, 2, 1, 3)
+        var k = kProj(x).reshaped(batch, length, numHeads, headDim).transposed(0, 2, 1, 3)
+        let qCos = cos.asType(q.dtype)
+        let qSin = sin.asType(q.dtype)
+        q = q * qCos + sharpAIPaddleocrVlRotateHalf(q) * qSin
+        k = k * qCos + sharpAIPaddleocrVlRotateHalf(k) * qSin
         let v = vProj(x).reshaped(batch, length, numHeads, headDim).transposed(0, 2, 1, 3)
         let attended = MLXFast.scaledDotProductAttention(
             queries: q, keys: k, values: v, scale: scale, mask: .none
@@ -86,8 +122,8 @@ final class SharpAIPaddleocrVlVisionEncoderLayer: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let h = x + selfAttn(layerNorm1(x))
+    func callAsFunction(_ x: MLXArray, cos: MLXArray, sin: MLXArray) -> MLXArray {
+        let h = x + selfAttn(layerNorm1(x), cos: cos, sin: sin)
         return h + mlp(layerNorm2(h))
     }
 }
@@ -187,8 +223,10 @@ final class SharpAIPaddleocrVlVisionTower: Module {
     /// One image: `pixels` is (height * width, P, P, C). Returns (height * width, hidden).
     func callAsFunction(_ pixels: MLXArray, height: Int, width: Int) -> MLXArray {
         var hidden = embeddings(pixels, height: height, width: width).expandedDimensions(axis: 0)
+        let headDim = encoder.layers.first?.selfAttn.headDim ?? 0
+        let rotary = sharpAIPaddleocrVlVisionRotary(height: height, width: width, headDim: headDim)
         for layer in encoder.layers {
-            hidden = layer(hidden)
+            hidden = layer(hidden, cos: rotary.cos, sin: rotary.sin)
         }
         return postLayernorm(hidden)[0]
     }

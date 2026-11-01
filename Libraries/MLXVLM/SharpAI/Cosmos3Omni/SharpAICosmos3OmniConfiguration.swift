@@ -73,10 +73,12 @@ public struct SharpAICosmos3OmniConfiguration: Decodable, Sendable,
     /// The tiny reference config (URL in the file header) writes RoPE as
     /// `text_config.rope_parameters` (`rope_theta`, `mrope_interleaved`, `mrope_section`) and sets
     /// `tie_word_embeddings` at the top level. Existing `rope_theta`, `rope_scaling` and
-    /// `tie_word_embeddings` keys in `text_config` are kept. Input that is not strict JSON (for
-    /// example JSON5 comments) is returned unchanged and decoded as written.
+    /// `tie_word_embeddings` keys in `text_config` are kept. JSON5 input (comments, trailing commas)
+    /// is parsed with the same rules as the JSON5 decoder, so it is normalised too. Input that
+    /// cannot be parsed at all is returned unchanged.
     static func normalizedUnderstandingJSON(_ data: Data) throws -> Data {
-        guard var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard var root = try? JSONSerialization.jsonObject(with: data, options: [.json5Allowed])
+                as? [String: Any],
             var text = root["text_config"] as? [String: Any]
         else {
             return data

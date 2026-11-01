@@ -160,6 +160,32 @@ final class SharpAIInklingMmModelConfigurationTests: XCTestCase {
         XCTAssertThrowsError(try config.validateModelConfiguration())
     }
 
+    func testUnsupportedHiddenActFailsValidation() throws {
+        var text = textFixture()
+        text["hidden_act"] = "gelu"
+        let config = try decode(document(text: text))
+
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
+    func testSharedExpertSinkFalseFailsValidation() throws {
+        var text = textFixture()
+        text["shared_expert_sink"] = false
+        let config = try decode(document(text: text))
+
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
+    func testPatchSizeOneFailsValidation() throws {
+        var vision = visionFixture()
+        vision["patch_size"] = 1
+        var object = document()
+        object["vision_config"] = vision
+        let config = try decode(object)
+
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
     // Checkpoint shapes from the thinkingmachines/Inkling safetensors headers. The planner must
     // reproduce them: vision linear_0 is [128, 75] and linear_3 is [6144, 9600].
     func testVisionPlannerMatchesCheckpointShapes() {

@@ -168,12 +168,27 @@ public struct SharpAIInklingTextConfiguration: Decodable, Sendable {
         }
 
         if let types = try c.decodeIfPresent([String].self, forKey: .mlpLayerTypes) {
+            guard types.count == layers else {
+                throw DecodingError.dataCorrupted(
+                    .init(
+                        codingPath: decoder.codingPath,
+                        debugDescription:
+                            "mlp_layer_types has \(types.count) entries, expected \(layers)"))
+            }
             denseLayers = types.map { $0 == "dense" }
         } else {
             let denseIndex = try c.decodeIfPresent(Int.self, forKey: .denseMLPIndex) ?? 0
             denseLayers = (0 ..< layers).map { $0 < denseIndex }
         }
 
+        guard kvHeads > 0, swaKVHeads > 0, sconvKernelSize >= 1 else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription:
+                        "num_key_value_heads, swa_num_key_value_heads and sconv_kernel_size must be positive"
+                ))
+        }
         guard attentionHeads % kvHeads == 0, swaAttentionHeads % swaKVHeads == 0 else {
             throw DecodingError.dataCorrupted(
                 .init(

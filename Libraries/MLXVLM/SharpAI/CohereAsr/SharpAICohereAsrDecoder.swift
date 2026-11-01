@@ -182,7 +182,9 @@ final class SharpAICohereAsrDecoder: Module {
         // Positions continue from the cache, so a step sees the same index as a full pass.
         let offset = cache?.first?.offset ?? 0
         let length = tokens.dim(1)
-        let positions = MLXArray((0 ..< length).map { Int32($0 + offset) })
+        // Clamp so a step past the position table reuses the last row instead of reading out of range.
+        let lastPosition = posEmb.weight.dim(0) - 1
+        let positions = MLXArray((0 ..< length).map { Int32(min($0 + offset, lastPosition)) })
 
         var h = embeddingLayerNorm(embedTokens(tokens) + posEmb(positions))
         let mask = createAttentionMask(h: h, cache: cache?.first)

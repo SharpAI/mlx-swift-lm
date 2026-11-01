@@ -59,7 +59,7 @@ final class SharpAIJais2Attention: Module {
 
         self.rope = initializeRope(
             dims: headDim, base: config.ropeTheta, traditional: false,
-            scalingConfig: nil, maxPositionEmbeddings: config.maxPositionEmbeddings)
+            scalingConfig: config.ropeScaling, maxPositionEmbeddings: config.maxPositionEmbeddings)
     }
 
     func callAsFunction(

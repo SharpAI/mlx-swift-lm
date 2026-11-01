@@ -278,9 +278,20 @@ public struct SharpAIInklingMmModelConfiguration: Decodable, Sendable, ModelConf
             throw ModelFactoryError.invalidConfiguration(
                 "inkling_mm_model: vision_encoder_type \(vision.encoderType) is not supported (only hmlp)")
         }
-        guard vision.encoderLayers >= 1, vision.patchSize > 0, vision.temporalPatchSize > 0 else {
+        guard text.hiddenAct == "silu" else {
             throw ModelFactoryError.invalidConfiguration(
-                "inkling_mm_model: vision encoder needs at least one layer and positive patch sizes")
+                "inkling_mm_model: hidden_act \(text.hiddenAct) is not supported (only silu)")
+        }
+        guard text.sharedExpertSink else {
+            throw ModelFactoryError.invalidConfiguration(
+                "inkling_mm_model: shared_expert_sink false is not supported")
+        }
+        guard vision.encoderLayers >= 1, vision.patchSize > 1, vision.temporalPatchSize > 0,
+            vision.numChannels > 0
+        else {
+            throw ModelFactoryError.invalidConfiguration(
+                "inkling_mm_model: vision encoder needs at least one layer, patch_size above 1, "
+                    + "a positive temporal patch size and positive n_channels")
         }
     }
 }

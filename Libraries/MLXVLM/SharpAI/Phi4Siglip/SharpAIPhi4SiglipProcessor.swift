@@ -36,8 +36,7 @@ public struct SharpAIPhi4SiglipProcessor: UserInputProcessor {
             return LMInput(tokens: MLXArray(tokens).expandedDimensions(axis: 0))
         }
 
-        // UNVERIFIED: the real checkpoint has no image_token_index, so image requests throw here.
-        guard let imageTokenIndex = configuration.imageTokenIndex else {
+        guard let imageTokenIndex = configuration.resolvedImageTokenIndex else {
             throw SharpAIPhi4SiglipError.imageTokenIndexMissing
         }
 

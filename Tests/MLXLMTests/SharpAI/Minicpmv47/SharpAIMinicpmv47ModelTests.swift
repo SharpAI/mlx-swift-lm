@@ -143,6 +143,26 @@ final class SharpAIMinicpmv47ModelTests: XCTestCase {
         XCTAssertEqual(result.delta, -3)
     }
 
+    /// The canvas delta travels in the request state. A fresh state has none, so one request's delta
+    /// cannot shift another request's positions.
+    func testRopeDeltaComesFromStateNotModel() throws {
+        let config = try JSONDecoder.json5().decode(
+            SharpAIMinicpmv47Configuration.self, from: Data(SharpAIMinicpmv47Fixtures.tinyJSON.utf8))
+        let model = try SharpAIMinicpmv47(config)
+
+        XCTAssertEqual(SharpAIMinicpmv47.ropeDelta(nil), 0)
+        XCTAssertEqual(SharpAIMinicpmv47.ropeDelta(LMOutput.State()), 0)
+
+        var state = LMOutput.State()
+        state[SharpAIMinicpmv47.ropeDeltaKey] = MLXArray(Int32(-3))
+        XCTAssertEqual(SharpAIMinicpmv47.ropeDelta(state), -3)
+
+        let shifted = model.linearPositions(start: 10, length: 2, delta: SharpAIMinicpmv47.ropeDelta(state))
+        XCTAssertEqual(shifted[0, 0].asArray(Int32.self), [7, 8])
+        let plain = model.linearPositions(start: 10, length: 2, delta: SharpAIMinicpmv47.ropeDelta(nil))
+        XCTAssertEqual(plain[2, 0].asArray(Int32.self), [10, 11])
+    }
+
     func testCanvasGridCountMismatchThrows() {
         let canvas = SharpAIMinicpmv47CanvasPositions(
             imageStartId: 122, imageEndId: 123, sliceStartId: 124, sliceEndId: 125,

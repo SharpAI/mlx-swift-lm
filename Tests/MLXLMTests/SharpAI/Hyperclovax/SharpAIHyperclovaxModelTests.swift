@@ -10,7 +10,8 @@ import XCTest
 
 final class SharpAIHyperclovaxModelTests: XCTestCase {
 
-    private func tinyConfiguration(postNorm: Bool = true, tied: Bool = false)
+    private func tinyConfiguration(postNorm: Bool = true, tied: Bool = false,
+        logitsScaling: Double = 2.0)
         throws -> SharpAIHyperclovaxConfiguration
     {
         let json: [String: Any] = [
@@ -27,7 +28,7 @@ final class SharpAIHyperclovaxModelTests: XCTestCase {
             "attention_multiplier": 0.25,
             "embedding_multiplier": 2.0,
             "residual_multiplier": 0.5,
-            "logits_scaling": 2.0,
+            "logits_scaling": logitsScaling,
             "use_post_norm": postNorm,
         ]
         let data = try JSONSerialization.data(withJSONObject: json)
@@ -79,6 +80,21 @@ final class SharpAIHyperclovaxModelTests: XCTestCase {
         eval(logits)
 
         XCTAssertEqual(logits.shape, [1, 3, 64])
+    }
+
+    func testLogitsAreMultipliedByLogitsScaling() throws {
+        let scaled = SharpAIHyperclovaxModel(try tinyConfiguration(logitsScaling: 0.125))
+        let reference = SharpAIHyperclovaxModel(try tinyConfiguration(logitsScaling: 1.0))
+        reference.update(parameters: scaled.parameters())
+        let inputs = MLXArray([1, 2, 3] as [Int32]).reshaped(1, 3)
+
+        let scaledLogits = scaled(inputs, cache: nil)
+        let referenceLogits = reference(inputs, cache: nil)
+        eval(scaledLogits, referenceLogits)
+
+        XCTAssertTrue(
+            allClose(scaledLogits, referenceLogits * MLXArray(Float(0.125)), atol: 1e-5)
+                .item(Bool.self))
     }
 
     func testCreatorBuildsModelFromConfigData() throws {

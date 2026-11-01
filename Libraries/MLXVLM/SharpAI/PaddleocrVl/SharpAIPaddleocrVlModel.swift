@@ -220,6 +220,10 @@ public class SharpAIPaddleocrVl: Module, VLMModel, KVCacheDimensionProvider {
     static func remapKey(_ key: String, textLayerCount: Int) -> String? {
         if key.hasPrefix("mtp.") { return nil }
         if key.contains("rotary_emb.inv_freq") || key.hasSuffix("position_ids") { return nil }
+        // Unused by this tower: the packed position table and any SigLIP pooling head.
+        if key.contains("packing_position_embedding") || key.contains("vision_model.head") {
+            return nil
+        }
 
         // More specific prefixes must come first.
         let rules: [(from: String, to: String)] = [

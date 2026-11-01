@@ -63,6 +63,22 @@ final class SharpAICohereAsrSanitizeTests: XCTestCase {
         XCTAssertNil(out["model.encoder.subsampling.layers.6.weight"])
     }
 
+    func testMLXLayoutCheckpointIsNotTransposedAgain() throws {
+        let config = try tinyConfiguration()
+        let weights: [String: MLXArray] = [
+            "model.encoder.subsampling.layers.0.weight": MLXArray.zeros([8, 3, 3, 1]),
+            "model.encoder.subsampling.layers.3.weight": MLXArray.zeros([8, 1, 1, 8]),
+            "model.encoder.layers.0.conv.depthwise_conv.weight": MLXArray.zeros([16, 3, 1]),
+        ]
+
+        let out = try SharpAICohereAsrSanitizer.sanitize(weights, configuration: config)
+
+        XCTAssertEqual(out["model.encoder.subsampling.layers.0.weight"]?.shape, [8, 3, 3, 1])
+        XCTAssertEqual(out["model.encoder.subsampling.layers.2.weight"]?.shape, [8, 1, 1, 8])
+        XCTAssertEqual(
+            out["model.encoder.layers.0.conv.depthwise_conv.weight"]?.shape, [16, 3, 1])
+    }
+
     func testConv1dWeightsAreTransposedAndBufferKeysDropped() throws {
         let config = try tinyConfiguration()
         let weights: [String: MLXArray] = [

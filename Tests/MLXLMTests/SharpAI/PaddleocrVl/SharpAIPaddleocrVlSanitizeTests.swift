@@ -27,6 +27,16 @@ final class SharpAIPaddleocrVlSanitizeTests: XCTestCase {
             "language_model.lm_head.weight")
     }
 
+    func testDropsPackingPositionEmbeddingAndHead() {
+        XCTAssertNil(
+            SharpAIPaddleocrVl.remapKey(
+                "visual.vision_model.embeddings.packing_position_embedding.weight",
+                textLayerCount: 2))
+        XCTAssertNil(
+            SharpAIPaddleocrVl.remapKey(
+                "visual.vision_model.head.probe", textLayerCount: 2))
+    }
+
     func testDropsMTPPositionAndExtraLayerKeys() {
         XCTAssertNil(SharpAIPaddleocrVl.remapKey("mtp.layers.0.weight", textLayerCount: 2))
         XCTAssertNil(SharpAIPaddleocrVl.remapKey("model.rotary_emb.inv_freq", textLayerCount: 2))

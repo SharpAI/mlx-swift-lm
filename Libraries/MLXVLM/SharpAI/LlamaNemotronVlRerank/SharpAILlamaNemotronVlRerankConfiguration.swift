@@ -2,8 +2,8 @@
 //
 // Checked against nvidia/llama-nemotron-rerank-vl-1b-v2 (config.json and modeling_llama_nemotron_vl.py).
 // The text stack is read from `llm_config` or `text_config` when present, otherwise from the top level.
-// The vision dimensions are optional at decode time, so a config without them still decodes and
-// validates. Building the model needs them.
+// vision_config is optional: when the key is absent the config still decodes and validates. When it
+// is present it must be complete, otherwise decoding throws. Building the model needs it.
 
 import Foundation
 import MLXLMCommon
@@ -75,8 +75,12 @@ public struct SharpAILlamaNemotronVlRerankConfiguration: Decodable, Sendable,
                 from: decoder)
         }
 
-        visionConfiguration = try? container.decodeIfPresent(
-            SharpAILlamaNemotronVlConfiguration.VisionConfiguration.self, forKey: .visionConfig)
+        if hasVisionConfig {
+            visionConfiguration = try container.decode(
+                SharpAILlamaNemotronVlConfiguration.VisionConfiguration.self, forKey: .visionConfig)
+        } else {
+            visionConfiguration = nil
+        }
         downsampleRatio = try container.decodeIfPresent(Float.self, forKey: .downsampleRatio) ?? 0.5
         pooling = try container.decodeIfPresent(String.self, forKey: .pooling) ?? "avg"
         temperature = try container.decodeIfPresent(Float.self, forKey: .temperature) ?? 1.0
