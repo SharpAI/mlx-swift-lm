@@ -20,9 +20,10 @@ MLX Swift LM is a Swift package to build tools and applications with large langu
 **The 127 new implementations are the main difference.** They live in `Libraries/MLXLLM/SharpAI/` (56) and
 `Libraries/MLXVLM/SharpAI/` (71): model classes, configuration, weight sanitizing and creators, each with
 unit tests. The LLM ones are being wired into `LLMModelFactory` now (37 in the first batch), the VLM ones
-follow once their processors land. If upstream registers the same `model_type`, upstream wins. These models
-are new and have not been checked against every original checkpoint yet, so reports from real use are
-welcome.
+follow once their processors land. If upstream registers the same `model_type`, upstream wins. They are tested
+air-gapped: each wired model loads a deterministic synthetic checkpoint (config.json plus safetensors,
+generated locally, nothing downloaded) through the real factory path and runs a forward pass. Reports from
+real use are welcome.
 
 The +5 LLM types usable today are `deepseek_v3_2`, `gemma4_assistant`, `glm_moe_dsa`, `jamba_3b` and
 `deepseek_v4` (DeepSeek-V4, registered through a fork hook that wins over upstream). The fork also adds 2 and
