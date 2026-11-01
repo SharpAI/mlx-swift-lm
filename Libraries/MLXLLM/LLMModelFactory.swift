@@ -152,7 +152,11 @@ public enum LLMTypeRegistry {
         "hunyuan_v1_dense": create(HunyuanConfiguration.self, HunyuanModel.init),
         "nemotron_labs_diffusion": create(
             NemotronLabsDiffusionConfiguration.self, NemotronLabsDiffusionModel.init),
-    ].merging(SharpAIDeepseekV4Overlay.creators) { _, ours in ours })  // SharpAI: ours wins (SL-41)
+    ]
+    // SharpAI: SL-50 overlays, UPSTREAM WINS -- a key the literal above registers keeps its creator.
+    .merging(SharpAIModelOverlays.llm, uniquingKeysWith: SharpAIModelOverlays.upstreamWins)
+    // SharpAI: ours wins (SL-41). Keep this merge last so no other merge can override deepseek_v4.
+    .merging(SharpAIDeepseekV4Overlay.creators) { _, ours in ours })
 }
 
 /// Registry of models and any overrides that go with them, e.g. prompt augmentation.

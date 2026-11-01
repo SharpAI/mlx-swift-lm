@@ -30,8 +30,23 @@ TYPE_REGISTRY = {"llm": "LLMTypeRegistry", "vlm": "VLMTypeRegistry", "embedder":
 OVERLAY_FILES = {"llm": ["Libraries/MLXLLM/SharpAI/SharpAIDeepseekV4Registration.swift"]}
 
 
+# SL-50: model_types wired through the SharpAIModelOverlays aggregate (upstream wins), listed one per
+# line in `llmWiredKeys`. Only those are registered at runtime; the per-model overlay files hold more.
+WIRED_AGGREGATE = {"llm": ("Libraries/MLXLLM/SharpAI/SharpAIModelOverlays.swift", "llmWiredKeys")}
+
+
+def wired_keys(kind):
+    if kind not in WIRED_AGGREGATE:
+        return set()
+    rel, name = WIRED_AGGREGATE[kind]
+    src = open(os.path.join(root, rel), encoding="utf8").read()
+    m = re.search(r"%s[^=]*=\s*\[" % re.escape(name), src)
+    body = src[m.end():src.index("\n    ]", m.end())]
+    return set(re.findall(r'^\s{8}"([A-Za-z0-9_.\-]+)"\s*,', body, re.M))
+
+
 def overlay_keys(kind):
-    out = set()
+    out = wired_keys(kind)
     for rel in OVERLAY_FILES.get(kind, []):
         src = open(os.path.join(root, rel), encoding="utf8").read()
         m = re.search(r"static var creators[^{]*\{", src)

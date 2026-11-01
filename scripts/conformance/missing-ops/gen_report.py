@@ -93,8 +93,35 @@ OVERLAYS = {
 }
 
 
-def overlay_entries(root, kind):
+# SL-50: the SharpAIModelOverlays aggregate lists the wired model_types one per line; each is declared by
+# one per-model registration file, whose first `XConfiguration.self` is the type it decodes.
+WIRED_AGGREGATE = {"llm": ("Libraries/MLXLLM/SharpAI/SharpAIModelOverlays.swift", "llmWiredKeys",
+                           "Libraries/MLXLLM/SharpAI")}
+
+
+def wired_entries(root, kind):
+    if kind not in WIRED_AGGREGATE:
+        return {}
+    rel, name, folder = WIRED_AGGREGATE[kind]
+    src = open(os.path.join(root, rel), encoding="utf8").read()
+    m = re.search(r"%s[^=]*=\s*\[" % re.escape(name), src)
+    wired = set(re.findall(r'^\s{8}"([A-Za-z0-9_.\-]+)"\s*,', src[m.end():src.index("\n    ]", m.end())], re.M))
     out = {}
+    for path in sorted(glob.glob(os.path.join(root, folder, "*", "SharpAI*Registration.swift"))):
+        text = open(path, encoding="utf8").read()
+        cfg = None
+        for n in re.findall(r"\b([A-Z][A-Za-z0-9_]*Configuration)\.self", text):
+            if n != "ArchitectureConfiguration":
+                cfg = n
+                break
+        for k in re.findall(r'^\s+"([A-Za-z0-9_.\-]+)"\s*:\s*[{c\w]', text, re.M):
+            if k in wired:
+                out[k] = cfg
+    return out
+
+
+def overlay_entries(root, kind):
+    out = wired_entries(root, kind)
     for rel in OVERLAYS.get(kind, []):
         src = open(os.path.join(root, rel), encoding="utf8").read()
         m = re.search(r"static var creators[^{]*\{", src)

@@ -47,6 +47,24 @@ this is a decision, not a build break:
 | `SharpAIDeepseekV4*` types, `SharpAIDeepseekV4Overlay` | an upstream `deepseek_v4` key in `LLMTypeRegistry`, a `DeepseekV4*` type, or `Libraries/MLXLLM/Models/DeepseekV4*.swift` | **Keep ours.** Nothing to delete. The merge closure keeps our creator on the key; the upstream model is simply unused. Review the upstream implementation for fixes worth porting, and record the decision in this row. The sentinel should flag the appearance (SL-42 implements that check; until then the `registry-diff.py` LANDED/`deepseek_v4` line and a manual `git grep -i deepseekv4` on the upstream tree are the signal). | verified@128f49f (no V4 in upstream/main Libraries) |
 | The merge hook line at the end of the `LLMTypeRegistry.shared` literal in `Libraries/MLXLLM/LLMModelFactory.swift` | upstream reshaping the literal or `ModelTypeRegistry.init(creators:)` | Re-apply the hook on the new shape; `SharpAIV4OverlayTests` fails if it is lost (`deepseek_v4` stops resolving to `SharpAIDeepseekV4Model`). | in force |
 
+## LLM overlay aggregate (SL-50): upstream wins
+
+Policy (owner, SL-50): the 37 SL-47 LLM overlays are registered through `SharpAIModelOverlays.llm`
+(`Libraries/MLXLLM/SharpAI/SharpAIModelOverlays.swift`), merged into the `LLMTypeRegistry.shared` literal with
+`SharpAIModelOverlays.upstreamWins`: **a key the upstream literal already registers keeps the upstream creator**; ours
+only fills keys upstream lacks. The aggregate merge sits before the SL-41 V4 merge (V4 stays ours-wins and last).
+`llmWiredKeys` is the one list of wired keys; `gen_expectations.py` and `missing-ops/gen_report.py` read it, so a key
+is "registered" in the conformance output only if it is in that list. VLM overlays are not wired (SL-51).
+
+| Our symbol | Upstream symbol to look for | Action on LANDED | Status |
+|---|---|---|---|
+| `SharpAIModelOverlays.llm` / `llmWiredKeys` entry for `<key>` | the same `"<key>"` key in the upstream `LLMTypeRegistry.shared` literal (`git grep -n '"<key>"' Libraries/MLXLLM/LLMModelFactory.swift` on the upstream tree), or an upstream `Libraries/MLXLLM/Models/<Name>.swift` | Upstream now wins on that key with no code change. Compare the two implementations (config keys, `sanitize`, cache), then either keep our overlay as dead weight, or delete the overlay directory, its `add(...)` line, its `llmWiredKeys` entry and its air-gap case, then regenerate `ConformanceExpectations.swift` and `REPORT.*`. Record the decision in this row. | in force; no key checked against upstream yet (`unverified`) |
+| The `.merging(SharpAIModelOverlays.llm, uniquingKeysWith: SharpAIModelOverlays.upstreamWins)` line in `LLMModelFactory.swift` | upstream reshaping the literal or `ModelTypeRegistry.init(creators:)` | Re-apply the hook before the V4 merge; `SharpAIModelOverlaysTests.factoryWiring` fails if it is lost or reordered. | in force |
+
+Known blind spot (open): `registry-diff.py` compares which registries list a model_type, and an upstream-added key
+we also wire leaves that set unchanged, so the sentinel prints no LANDED for it. Until the diff reads the upstream
+literal's keys, run the `git grep` in the first row for every key in `llmWiredKeys` after each sync.
+
 ## Registrations that are direct `registerModelType` calls today (allow-listed)
 
 Counts are pinned by `OverlayRegistrationTests.allowList` and the paths by `shadow-allowlist.txt`.
