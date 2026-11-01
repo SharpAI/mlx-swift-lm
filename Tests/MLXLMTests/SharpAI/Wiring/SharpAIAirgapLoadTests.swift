@@ -60,9 +60,6 @@ enum SharpAIAirgap {
         .init(key: "PanguEmbedded", json: #"""
 {"model_type":"PanguEmbedded","hidden_size":32,"num_hidden_layers":2,"intermediate_size":64,"num_attention_heads":4,"num_key_value_heads":2,"rms_norm_eps":1e-05,"vocab_size":100,"bias":true}
 """#),
-        .init(key: "bailing_hybrid", json: #"""
-{"model_type": "bailing_hybrid", "hidden_size": 32, "intermediate_size": 48, "moe_intermediate_size": 16, "num_hidden_layers": 4, "num_attention_heads": 4, "num_key_value_heads": 4, "num_experts": 8, "num_experts_per_tok": 2, "num_shared_experts": 1, "n_group": 4, "topk_group": 2, "first_k_dense_replace": 1, "layer_group_size": 2, "group_norm_size": 2, "vocab_size": 64, "rms_norm_eps": 1e-06, "rope_theta": 10000.0, "max_position_embeddings": 128, "routed_scaling_factor": 2.5, "head_dim": 8, "kv_lora_rank": 8, "qk_rope_head_dim": 4, "qk_nope_head_dim": 4, "v_head_dim": 8, "q_lora_rank": 12, "partial_rotary_factor": 0.5, "tie_word_embeddings": false}
-"""#),
         .init(key: "cohere2_moe", json: #"""
 {"model_type":"cohere2_moe","hidden_size":64,"num_hidden_layers":2,"intermediate_size":128,"num_attention_heads":8,"num_key_value_heads":2,"vocab_size":512}
 """#),

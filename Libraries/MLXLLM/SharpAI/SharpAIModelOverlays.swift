@@ -32,7 +32,6 @@ public enum SharpAIModelOverlays {
         "PanguEmbedded",
         "alice_ai",
         "axk1",
-        "bailing_hybrid",
         "bailing_moe_v3",
         "cohere2_moe",
         "deepseek_v32",
@@ -76,7 +75,6 @@ public enum SharpAIModelOverlays {
         }
             add(SharpAIAliceAiOverlay.creators)
             add(SharpAIAxk1Overlay.creators)
-            add(SharpAIBailingHybridOverlay.creators)
             add(SharpAIBailingMoeV3Overlay.creators)
             add(SharpAICohere2MoeOverlay.creators)
             add(SharpAIDeepseekV32Overlay.creators)
