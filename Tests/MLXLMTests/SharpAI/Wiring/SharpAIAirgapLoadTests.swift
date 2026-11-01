@@ -45,17 +45,6 @@ enum SharpAIAirgap {
         (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?["vocab_size"] as? Int ?? 32
     }
 
-    /// The tensors as a checkpoint stores them. Most overlays' `sanitize` leaves already-converted names alone, so the
-    /// model's own parameters round-trip as they are. alice_ai is the exception: its `sanitize` adds 1 to 1-D norm weights
-    /// (zero-centred checkpoint -> plain RMSNorm), so the checkpoint must hold weight - 1 for the load to give the reference back.
-    static func checkpointTensor(key: String, name: String, _ array: MLXArray) -> MLXArray {
-        guard key == "alice_ai", array.ndim == 1 else { return array }
-        let norms = [".input_layernorm.weight", ".post_attention_layernorm.weight", "model.norm.weight",
-                     ".q_norm.weight", ".k_norm.weight"]
-        guard norms.contains(where: { name.hasSuffix($0) }) else { return array }
-        return array - MLXArray(1, dtype: array.dtype)
-    }
-
     static let cases: [Case] = [
         .init(key: "PanguEmbedded", json: #"""
 {"model_type":"PanguEmbedded","hidden_size":32,"num_hidden_layers":2,"intermediate_size":64,"num_attention_heads":4,"num_key_value_heads":2,"rms_norm_eps":1e-05,"vocab_size":100,"bias":true}
@@ -201,10 +190,7 @@ struct SharpAIAirgapLoadTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         try data.write(to: dir.appendingPathComponent("config.json"))
-        let stored = Dictionary(uniqueKeysWithValues: arrays.map {
-            ($0.key, SharpAIAirgap.checkpointTensor(key: c.key, name: $0.key, $0.value))
-        })
-        try save(arrays: stored, url: dir.appendingPathComponent("model.safetensors"))
+        try save(arrays: arrays, url: dir.appendingPathComponent("model.safetensors"))
 
         let loaded = try await LLMTypeRegistry.shared.createModel(configuration: data, modelType: c.key)
         try await loadWeights(modelDirectory: dir, model: loaded)
