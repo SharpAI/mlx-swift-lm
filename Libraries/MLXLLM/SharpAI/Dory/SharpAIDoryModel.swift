@@ -155,8 +155,12 @@ final class SharpAIDoryMLP: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         // g = gate * (suv_gate * sqrt(hidden)), u = up * (suv_up * sqrt(hidden)),
         // m = justnorm(silu(g) * u), out = down(m).
-        let g = gateProj(x).asType(.float32) * (suvGate.asType(.float32) * suvFactor)
-        let u = upProj(x).asType(.float32) * (suvUp.asType(.float32) * suvFactor)
+        // Explicit MLXArray scalar: `MLXArray * Float` does not type-check against the mlx-swift pinned by the SwiftLM umbrella.
+        let factor = MLXArray(suvFactor)
+        let gateScale: MLXArray = suvGate.asType(.float32) * factor
+        let upScale: MLXArray = suvUp.asType(.float32) * factor
+        let g: MLXArray = gateProj(x).asType(.float32) * gateScale
+        let u: MLXArray = upProj(x).asType(.float32) * upScale
         let m = doryJustNorm((silu(g) * u).asType(x.dtype))
         return downProj(m)
     }

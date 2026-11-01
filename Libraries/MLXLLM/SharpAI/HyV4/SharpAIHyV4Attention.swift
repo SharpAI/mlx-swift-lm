@@ -92,7 +92,10 @@ class SharpAIHyV4Indexer: Module {
         // index_score[b, s, t] = sum_h w[b, s, h] * relu(q[b, h, s] . k[b, t])
         let logits = relu(
             matmul(q.asType(.float32), keys.asType(.float32).transposed(0, 1, 3, 2)))
-        let headWeights = (weightsProj(x).asType(.float32) * (headScale * scoreScale))
+        // Explicit MLXArray scalar, as in SharpAIDoryModel: the umbrella's mlx-swift cannot type-check the mixed Float expression.
+        let weightScale = MLXArray(headScale * scoreScale)
+        let scaledWeights: MLXArray = weightsProj(x).asType(.float32) * weightScale
+        let headWeights = scaledWeights
             .transposed(0, 2, 1)
             .expandedDimensions(axis: -1)  // [B, H, L, 1]
         let scores = (logits * headWeights).sum(axis: 1)  // [B, L, T]
