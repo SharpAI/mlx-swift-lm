@@ -267,4 +267,17 @@ final class SharpAIBeamTests: XCTestCase {
         let model = try creator(Data(tinyJSON.utf8))
         XCTAssertTrue(model is SharpAIBeamForCausalLM)
     }
+
+    func testOverlayCreatorModelRunsForwardPass() throws {
+        let creator = try XCTUnwrap(SharpAIBeamOverlay.creators[SharpAIBeamOverlay.modelType])
+        let created = try creator(Data(tinyJSON.utf8))
+        let model = try XCTUnwrap(created as? SharpAIBeamForCausalLM)
+
+        let tokens = 4
+        let inputs = MLXArray(Array(Int32(1) ... Int32(tokens))).reshaped(1, tokens)
+        let logits = model(inputs, cache: try model.newCache(parameters: nil))
+        eval(logits)
+
+        XCTAssertEqual(logits.shape, [1, tokens, 32])
+    }
 }

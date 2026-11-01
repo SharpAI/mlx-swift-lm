@@ -84,6 +84,24 @@ final class SharpAIBailingHybridRegistrationTests: XCTestCase {
         XCTAssertTrue(model is SharpAIBailingHybridModel)
     }
 
+    func testCreatorModelRunsForwardPass() throws {
+        MLXRandom.seed(5)
+        guard let creator = SharpAIBailingHybridOverlay.creators["bailing_hybrid"] else {
+            XCTFail("bailing_hybrid creator missing")
+            return
+        }
+
+        let built = try creator(Data(tinyJSON.utf8))
+        guard let model = built as? SharpAIBailingHybridModel else {
+            XCTFail("creator did not return SharpAIBailingHybridModel")
+            return
+        }
+        let tokens = MLXArray([Int32(1), 5, 9]).reshaped(1, 3)
+        let logits = model(tokens, cache: nil)
+        XCTAssertEqual(logits.shape, [1, 3, 64])
+        XCTAssertTrue(all(isFinite(logits)).item(Bool.self))
+    }
+
     func testInvalidConfigFailsBeforeConstruction() throws {
         guard let creator = SharpAIBailingHybridOverlay.creators["bailing_hybrid"] else {
             XCTFail("bailing_hybrid creator missing")
