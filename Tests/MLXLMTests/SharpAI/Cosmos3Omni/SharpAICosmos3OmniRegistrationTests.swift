@@ -42,7 +42,7 @@ final class SharpAICosmos3OmniRegistrationTests: XCTestCase {
         XCTAssertNotNil(SharpAICosmos3OmniOverlay.creators["cosmos3_omni"])
     }
 
-    /// The 8B-class fixture builds the understanding model (lazy weights, nothing is evaluated).
+    /// The 8B-class fixture builds the wrapper model (lazy weights, nothing is evaluated).
     func testValidConfigBuildsUnderstandingModel() throws {
         guard let creator = SharpAICosmos3OmniOverlay.creators["cosmos3_omni"] else {
             XCTFail("cosmos3_omni creator missing")
@@ -50,8 +50,8 @@ final class SharpAICosmos3OmniRegistrationTests: XCTestCase {
         }
 
         let model = try creator(Data(validJSON.utf8))
-        guard let qwen = model as? Qwen3VL else {
-            XCTFail("expected Qwen3VL, got \(type(of: model))")
+        guard let qwen = model as? SharpAICosmos3OmniModel else {
+            XCTFail("expected SharpAICosmos3OmniModel, got \(type(of: model))")
             return
         }
         XCTAssertEqual(qwen.vocabularySize, 151_936)
@@ -214,8 +214,8 @@ final class SharpAICosmos3OmniRegistrationTests: XCTestCase {
         }
 
         let model = try creator(Data(tinyJSON.utf8))
-        guard let qwen = model as? Qwen3VL else {
-            XCTFail("expected Qwen3VL, got \(type(of: model))")
+        guard let qwen = model as? SharpAICosmos3OmniModel else {
+            XCTFail("expected SharpAICosmos3OmniModel, got \(type(of: model))")
             return
         }
 
@@ -249,5 +249,57 @@ final class SharpAICosmos3OmniRegistrationTests: XCTestCase {
         for (key, value) in mapped {
             XCTAssertEqual(value.shape, parameters[key]?.shape, key)
         }
+    }
+
+    /// The tiny reference config fails the generation tower checks (mrope_section) but the heads must
+    /// still get the right sizes: hidden 32, patch_latent_dim 192, and no audio / action heads.
+    func testTinyReferenceConfigBuildsHeadsWithCorrectShapes() throws {
+        guard let creator = SharpAICosmos3OmniOverlay.creators["cosmos3_omni"] else {
+            XCTFail("cosmos3_omni creator missing")
+            return
+        }
+        let model = try creator(Data(tinyJSON.utf8))
+        guard let cosmos = model as? SharpAICosmos3OmniModel else {
+            XCTFail("expected SharpAICosmos3OmniModel")
+            return
+        }
+        let shapes = Dictionary(
+            uniqueKeysWithValues: cosmos.parameters().flattened().map { ($0.0, $0.1.shape) })
+        XCTAssertEqual(shapes["gen_heads.proj_in.weight"], [32, 192])
+        XCTAssertEqual(shapes["gen_heads.proj_out.weight"], [192, 32])
+        XCTAssertEqual(shapes["gen_heads.time_embedder.linear_1.weight"], [32, 256])
+        XCTAssertFalse(shapes.keys.contains { $0.hasPrefix("gen_heads.audio_") })
+        XCTAssertFalse(shapes.keys.contains { $0.hasPrefix("gen_heads.action_") })
+    }
+
+    /// `sound_gen` / `action_gen` in the config create exactly the matching head parameters.
+    func testGenerationFlagsSelectHeadParameters() throws {
+        guard let creator = SharpAICosmos3OmniOverlay.creators["cosmos3_omni"] else {
+            XCTFail("cosmos3_omni creator missing")
+            return
+        }
+        func headKeys(_ extra: String) throws -> Set<String> {
+            var json = tinyJSON
+            let marker = "\"model_type\": \"cosmos3_omni\","
+            XCTAssertTrue(json.contains(marker))
+            // Flags live in `model.config` of the root config, as in nvidia/Cosmos3-Nano.
+            json = json.replacingOccurrences(
+                of: marker, with: marker + #" "model": {"config": {"# + extra + #"}},"#)
+            let model = try creator(Data(json.utf8))
+            guard let cosmos = model as? SharpAICosmos3OmniModel else {
+                XCTFail("expected SharpAICosmos3OmniModel")
+                return []
+            }
+            return Set(cosmos.parameters().flattened().map { $0.0 }.filter { $0.hasPrefix("gen_heads.") })
+        }
+        XCTAssertEqual(try headKeys(#""latent_channel": 48"#).count, 8)
+        let all = try headKeys(
+            #""sound_gen": true, "sound_dim": 4, "action_gen": true, "max_action_dim": 5"#)
+        XCTAssertEqual(all.count, 18)
+        let soundOnly = try headKeys(#""sound_gen": true, "sound_dim": 4"#)
+        XCTAssertEqual(soundOnly.count, 13)
+        XCTAssertFalse(soundOnly.contains { $0.hasPrefix("gen_heads.action_") })
+        // An enabled head with no size fails at creation.
+        XCTAssertThrowsError(try headKeys(#""sound_gen": true"#))
     }
 }
