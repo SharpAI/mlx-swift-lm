@@ -8,7 +8,7 @@
 //   swigluoai (GPT-OSS)    -> GPTOSS.swift SwiGLUSwitchGLU (compiledSwiglu inside)
 //   V4 dense expert        -> SharpAIDeepseekV4Expert(swiguLimit:)
 //   V4 routed experts      -> SharpAIDeepseekV4MoE.switchMLP (SwitchGLU with the activationProduct closure)
-//   Step silu-then-clamp   -> no Swift path exists (pinned as a gap)
+//   Step silu-then-clamp   -> SharpAIStep3p5MLP (wired by SL-50; float16 is a pinned gap, see stepStyleMatchesGolden)
 // The projections are 0/1 selection matrices, so the only arithmetic in the output is the activation
 // (a single non-zero product per dot product is exact in every dtype).
 //
@@ -199,6 +199,17 @@ enum SwigluGolden {
         floats(gptossRaw(c, layout: layout)[.ellipsis, ..<c.d])
     }
 
+    /// SL-50: the SharpAI Step-3.5 dense MLP. A positive `limit` caps silu(gate) from above and clips up to
+    /// [-limit, limit], the vLLM `SwigluStepAndMul` rule. The 0/1 projections isolate the activation.
+    static func viaStep(_ c: Case, layout: String) -> [Float] {
+        let dt = dtype(c.dtype), s = selections(layout: layout, d: c.d, dt: dt)
+        let m = SharpAIStep3p5MLP(hiddenSize: 2 * c.d, intermediateSize: c.d, limit: Float(c.limit))
+        m.update(parameters: ModuleParameters.unflattened([
+            "gate_proj.weight": s.gate, "up_proj.weight": s.up, "down_proj.weight": s.down,
+        ]))
+        return floats(m(input(c, dt: dt))[.ellipsis, ..<c.d])
+    }
+
     /// GPT-OSS SwiGLUSwitchGLU output [1, rows, 2d] with its own dtype (not cast), so dtype promotion is observable.
     static func gptossRaw(_ c: Case, layout: String) -> MLXArray {
         let dt = dtype(c.dtype), s = selections(layout: layout, d: c.d, dt: dt)
@@ -243,7 +254,7 @@ struct ConformanceSwigluGoldenTests {
         "silu_and_mul.json": ["compiledSiluProduct", "SwitchGLU(default)", "SharpAIDeepseekV4Expert(limit 0)"],
         "swigluoai_and_mul.json": ["GPTOSS SwiGLUSwitchGLU"],
         "v4_clamped.json": ["SharpAIDeepseekV4Expert(limit)", "SharpAIDeepseekV4MoE.switchMLP"],
-        "swiglustep_and_mul.json": ["gap: no Swift Step path"],
+        "swiglustep_and_mul.json": ["SharpAIStep3p5MLP"],
     ]
 
     typealias Result = (failures: [String], compared: Int, nonzero: Int, bad: [S.Bad])
@@ -538,6 +549,7 @@ struct ConformanceSwigluGoldenTests {
             ("silu_and_mul.json", Self.notFloat16, nil, { c, l in S.viaCompiledSiluProduct(c, layout: l) }),
             ("swigluoai_and_mul.json", { _ in true }, "float32", { c, l in S.viaGPTOSS(c, layout: l) }),
             ("v4_clamped.json", Self.notFloat16, nil, { c, l in S.viaV4Dense(c, layout: l, limit: Float(c.limit)) }),
+            ("swiglustep_and_mul.json", Self.notFloat16, nil, { c, l in S.viaStep(c, layout: l) }),
         ]
         for (file, only, tolD, run) in runs {
             let col: KeyPath<S.Case, [Double]?>? = nil   // v4_clamped `golden` is already the max-only (vLLM) column; float16 V4 is a pinned gap
@@ -559,13 +571,16 @@ struct ConformanceSwigluGoldenTests {
         }
     }
 
-    @Test("Step silu-then-clamp has no shipping Swift path (gap)")
-    func stepStyleHasNoPath() async throws {
-        let f = try S.load("swiglustep_and_mul.json")   // fixture is loaded and hash-checked; there is nothing to feed it to
+    @Test("Step silu-then-clamp matches swiglustep_and_mul.json through the SharpAI Step-3.5 MLP")
+    func stepStyleMatchesGolden() async throws {
+        let f = try S.load("swiglustep_and_mul.json")
         #expect(f.cases.count == 30)
-        let registered = await LLMTypeRegistry.shared.contains("step3p5")
-        ConformanceGap.knownIssue("no Swift implementation of the Step-3.5 clamped SwiGLU: clamp(silu(gate), max: limit) * clamp(up, -limit, limit); model_type step3p5 is not registered") {
-            ConformanceGap.expect(registered, "step3p5 must be registered with a Step activation tested against swiglustep_and_mul.json")
-        }
+        // step3p5 is wired through the SL-50 aggregate (upstream wins); before that it was a known gap.
+        #expect(await LLMTypeRegistry.shared.contains("step3p5"), "step3p5 must be registered")
+        // float16 is a pinned gap, as for silu/V4: the MLP rounds silu(gate)*up in half precision, the golden in float32,
+        // so results near zero (|silu(-12)*up| ~ 1e-4) differ by more than the tolerance. float32 and bfloat16 are compared.
+        let r = try Self.check("swiglustep_and_mul.json", label: "Step3p5", only: Self.notFloat16) { c, l in S.viaStep(c, layout: l) }
+        #expect(r.failures.isEmpty, "\(r.failures.joined(separator: "\n"))")
+        #expect(r.nonzero > 0)
     }
 }

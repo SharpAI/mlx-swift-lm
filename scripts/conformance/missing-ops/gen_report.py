@@ -93,7 +93,39 @@ OVERLAYS = {
 }
 
 
+# SL-50: the SharpAIModelOverlays aggregate lists the wired model_types one per line; each is declared by
+# one per-model registration file, whose first `XConfiguration.self` is the type it decodes.
+WIRED_AGGREGATE = {"llm": ("Libraries/MLXLLM/SharpAI/SharpAIModelOverlays.swift", "llmWiredKeys",
+                           "Libraries/MLXLLM/SharpAI")}
+
+
+def wired_entries(root, kind):
+    if kind not in WIRED_AGGREGATE:
+        return {}
+    rel, name, folder = WIRED_AGGREGATE[kind]
+    src = open(os.path.join(root, rel), encoding="utf8").read()
+    m = re.search(r"%s[^=]*=\s*\[" % re.escape(name), src)
+    wired = set(re.findall(r'^\s{8}"([A-Za-z0-9_.\-]+)"\s*,', src[m.end():src.index("\n    ]", m.end())], re.M))
+    out = {}
+    for path in sorted(glob.glob(os.path.join(root, folder, "*", "SharpAI*Registration.swift"))):
+        text = open(path, encoding="utf8").read()
+        cfg = None
+        for n in re.findall(r"\b([A-Z][A-Za-z0-9_]*Configuration)\.self", text):
+            if n != "ArchitectureConfiguration":
+                cfg = n
+                break
+        keys = re.findall(r'^\s+"([A-Za-z0-9_.\-]+)"\s*:\s*[{c\w]', text, re.M)
+        # A registration may key its dictionary by `modelType: {` with `static let modelType = "x"` (Beam).
+        if re.search(r"^\s+modelType\s*:\s*\{", text, re.M):
+            keys += re.findall(r'static let modelType\s*=\s*"([A-Za-z0-9_.\-]+)"', text)
+        for k in keys:
+            if k in wired:
+                out[k] = cfg
+    return out
+
+
 def overlay_entries(root, kind):
+    """Ours-wins overlays only (the SL-41 DeepseekV4 hook). The SL-50 aggregate is upstream-wins: see registry_entries."""
     out = {}
     for rel in OVERLAYS.get(kind, []):
         src = open(os.path.join(root, rel), encoding="utf8").read()
@@ -135,7 +167,10 @@ def registry_entries(root, path, enum_name, kind=None):
                 if fn:
                     name = first_config(src[fn.end():match_brace(src, fn.end() - 1)])
         out[h.group(1)] = name
-    out.update(overlay_entries(root, kind))  # overlay wins on a clash, same as the runtime merge
+    # SL-50 aggregate: upstream wins on a clash, same as the runtime merge (`upstreamWins`), so only fill gaps.
+    for k, v in wired_entries(root, kind).items():
+        out.setdefault(k, v)
+    out.update(overlay_entries(root, kind))  # SL-41 V4 hook: ours wins on a clash, same as the runtime merge
     return out
 
 
