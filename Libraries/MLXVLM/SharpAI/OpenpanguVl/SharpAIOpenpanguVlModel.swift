@@ -242,7 +242,7 @@ class OpenPanguTextBackbone: Module {
 
 public class SharpAIOpenpanguVlModel: Module, VLMModel {
     @ModuleInfo var model: OpenPanguTextBackbone
-    @ModuleInfo(key: "lm_head") var lmHead: Linear
+    @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
     public let config: SharpAIOpenpanguVlConfiguration
 
@@ -266,7 +266,9 @@ public class SharpAIOpenpanguVlModel: Module, VLMModel {
             headDim: config.headDim, theta: config.ropeTheta, sections: sections,
             interleaved: config.mropeInterleaved)
         _model.wrappedValue = OpenPanguTextBackbone(config, rope: rope)
-        _lmHead.wrappedValue = Linear(config.hiddenSize, config.vocabularySize, bias: false)
+        if !config.tieWordEmbeddings {
+            _lmHead.wrappedValue = Linear(config.hiddenSize, config.vocabularySize, bias: false)
+        }
         super.init()
     }
 
@@ -296,10 +298,10 @@ public class SharpAIOpenpanguVlModel: Module, VLMModel {
         let positionIds = MLXArray(values).reshaped(3, batch, length)
 
         let hidden = model(ids, positionIds: positionIds, cache: cache)
-        if config.tieWordEmbeddings {
-            return model.embedTokens.asLinear(hidden)
+        if let lmHead {
+            return lmHead(hidden)
         }
-        return lmHead(hidden)
+        return model.embedTokens.asLinear(hidden)
     }
 
     public func prepare(

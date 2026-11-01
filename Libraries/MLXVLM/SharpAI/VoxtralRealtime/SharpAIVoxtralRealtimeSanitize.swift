@@ -45,9 +45,15 @@ public enum SharpAIVoxtralRealtimeSanitizer {
         return key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : key
     }
 
-    /// PyTorch Conv1d weights are (out, in, k). MLX wants (out, k, in).
+    /// The encoder convs use kernel size 3.
+    static let convKernelSize = 3
+
+    /// PyTorch Conv1d weights are (out, in, k). MLX wants (out, k, in). A weight already in MLX
+    /// layout (kernel on axis 1) is left alone, so sanitizing twice is harmless.
     static func transposeConvWeight(_ key: String, _ value: MLXArray) -> MLXArray {
-        guard key.hasPrefix("audio_tower.conv"), key.hasSuffix(".weight"), value.ndim == 3 else {
+        guard key.hasPrefix("audio_tower.conv"), key.hasSuffix(".weight"), value.ndim == 3,
+            value.dim(2) == convKernelSize, value.dim(1) != convKernelSize
+        else {
             return value
         }
         return value.transposed(0, 2, 1)

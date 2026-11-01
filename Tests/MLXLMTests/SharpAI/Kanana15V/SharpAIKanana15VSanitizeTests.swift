@@ -65,4 +65,17 @@ final class SharpAIKanana15VSanitizeTests: XCTestCase {
 
         XCTAssertNil(result["language_model.lm_head.weight"])
     }
+
+    func testDropsKeysOutsideVisionAndLanguageModules() throws {
+        var weights = checkpointWeights()
+        weights["projector.readout.0.weight"] = MLXArray.zeros([16, 8])
+        weights["abstractor.net.0.conv1.weight"] = MLXArray.zeros([8, 8, 1, 1])
+        let config = try SharpAIKanana15VTestFixtures.decode()
+        let result = try SharpAIKanana15VSanitizer.sanitize(weights, configuration: config)
+
+        XCTAssertNil(result["projector.readout.0.weight"])
+        XCTAssertNil(result["abstractor.net.0.conv1.weight"])
+        XCTAssertNotNil(result["vision_model.blocks.0.attn.qkv.weight"])
+        XCTAssertNotNil(result["language_model.model.embed_tokens.weight"])
+    }
 }

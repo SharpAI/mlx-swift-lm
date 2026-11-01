@@ -208,9 +208,11 @@ struct SharpAIStep5Configuration: Decodable, Sendable, ModelConfigurationValidat
         normExpertWeight = try c.decodeIfPresent(Bool.self, forKey: .normExpertWeight) ?? true
         moeRouterScalingFactor =
             try c.decodeIfPresent(Float.self, forKey: .moeRouterScalingFactor) ?? 3.0
-        swigluLimits = try c.decodeIfPresent([Float].self, forKey: .swigluLimits) ?? []
-        swigluLimitsShared =
-            try c.decodeIfPresent([Float].self, forKey: .swigluLimitsShared) ?? []
+        swigluLimits = Array(
+            (try c.decodeIfPresent([Float].self, forKey: .swigluLimits) ?? []).prefix(hiddenLayers))
+        swigluLimitsShared = Array(
+            (try c.decodeIfPresent([Float].self, forKey: .swigluLimitsShared) ?? [])
+                .prefix(hiddenLayers))
 
         let sparse = try c.decodeIfPresent(SparseDescriptor.self, forKey: .sparseConfig)
         sparseEnabled = sparse.map { $0.enabled ?? true } ?? false

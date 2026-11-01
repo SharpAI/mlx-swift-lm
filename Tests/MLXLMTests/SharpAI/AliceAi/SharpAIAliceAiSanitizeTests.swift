@@ -64,4 +64,17 @@ final class SharpAIAliceAiSanitizeTests: XCTestCase {
         let out = model.sanitize(weights: weights)
         XCTAssertEqual(out["model.layers.0.linear_attn.conv1d.weight"]?.shape, [24, 4, 1])
     }
+
+    func testSanitizeIsIdempotentForNormShift() throws {
+        let model = try makeModel()
+        var weights: [String: MLXArray] = ["model.norm.weight": MLXArray.zeros([16])]
+        for name in ["q", "k", "v"] {
+            weights["model.layers.0.linear_attn.\(name)_conv1d.weight"] = MLXArray.zeros([8, 1, 4])
+        }
+        let once = model.sanitize(weights: weights)
+        let twice = model.sanitize(weights: once)
+        XCTAssertEqual(
+            twice["model.norm.weight"]?.asArray(Float.self),
+            Array(repeating: Float(1), count: 16))
+    }
 }

@@ -114,4 +114,30 @@ final class SharpAIHyV4ConfigurationTests: XCTestCase {
             SharpAIHyV4Configuration.self, from: Data(json.utf8))
         XCTAssertThrowsError(try config.validateModelConfiguration())
     }
+
+    func testValidationRejectsMlpLayerTypesLengthMismatch() throws {
+        let json = Self.makeJSON().replacingOccurrences(
+            of: "\"mlp_layer_types\": [\"dense\", \"sparse\", \"sparse\"]",
+            with: "\"mlp_layer_types\": [\"dense\"]")
+        let config = try JSONDecoder.json5().decode(
+            SharpAIHyV4Configuration.self, from: Data(json.utf8))
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
+    func testValidationRejectsSharedFirstIndexerType() throws {
+        let json = Self.makeJSON().replacingOccurrences(
+            of: "\"indexer_types\": [\"full\", \"shared\", \"shared\"]",
+            with: "\"indexer_types\": [\"shared\", \"shared\", \"shared\"]")
+        let config = try JSONDecoder.json5().decode(
+            SharpAIHyV4Configuration.self, from: Data(json.utf8))
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
+    func testValidationRejectsZeroHyperConnectionMultiplier() throws {
+        let json = Self.makeJSON().replacingOccurrences(
+            of: "\"hc_mult\": 4", with: "\"hc_mult\": 0")
+        let config = try JSONDecoder.json5().decode(
+            SharpAIHyV4Configuration.self, from: Data(json.utf8))
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
 }

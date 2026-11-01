@@ -263,12 +263,14 @@ final class SharpAIUnlimitedOcrSAMPatchEmbed: Module {
     }
 }
 
-/// Neck, indexed as in the checkpoint: 0 = 1x1 conv, 1 = LayerNorm2d, 2 = 3x3 conv, 3 = LayerNorm2d.
+/// Neck: 0 = 1x1 conv, 1 = LayerNorm2d, 2 = 3x3 conv, 3 = LayerNorm2d in the checkpoint. The module
+/// keys are not numeric because a numeric path component unflattens to an array and cannot update a
+/// keyed module; SharpAIUnlimitedOcrSanitizer renames checkpoint keys `neck.N` to these.
 final class SharpAIUnlimitedOcrSAMNeck: Module {
-    @ModuleInfo(key: "0") var conv0: Conv2d
-    @ModuleInfo(key: "1") var norm1: LayerNorm
-    @ModuleInfo(key: "2") var conv2: Conv2d
-    @ModuleInfo(key: "3") var norm3: LayerNorm
+    @ModuleInfo(key: "c0") var conv0: Conv2d
+    @ModuleInfo(key: "n1") var norm1: LayerNorm
+    @ModuleInfo(key: "c2") var conv2: Conv2d
+    @ModuleInfo(key: "n3") var norm3: LayerNorm
 
     init(inputDim: Int, outChannels: Int) {
         let out = outChannels

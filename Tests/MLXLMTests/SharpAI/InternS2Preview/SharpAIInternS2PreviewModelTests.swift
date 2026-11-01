@@ -76,6 +76,24 @@ final class SharpAIInternS2PreviewModelTests: XCTestCase {
         XCTAssertNotNil(sanitized["language_model.model.embed_tokens.weight"])
     }
 
+    // The load path goes through prepareCheckpoint, which renames `model.*` before sanitize.
+    func testPrepareCheckpointDropsTimeSeries() throws {
+        let model = try makeTinyModel()
+        let dummy = MLXArray.zeros([1, 1])
+        let checkpoint = ModelCheckpoint(weights: [
+            "model.time_series.encoder.weight": dummy,
+            "time_series.head.weight": dummy,
+            "model.embed_tokens.weight": dummy,
+        ])
+
+        let prepared = try model.prepareCheckpoint(checkpoint)
+
+        for key in prepared.weights.keys {
+            XCTAssertFalse(key.contains("time_series"), "time_series key leaked: \(key)")
+        }
+        XCTAssertNotNil(prepared.weights["language_model.model.embed_tokens.weight"])
+    }
+
     func testMetadataSanitizeAlsoDropsTimeSeries() throws {
         let model = try makeTinyModel()
         let dummy = MLXArray.zeros([1, 1])

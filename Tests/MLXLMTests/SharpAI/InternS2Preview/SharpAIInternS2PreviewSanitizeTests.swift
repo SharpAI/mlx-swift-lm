@@ -13,6 +13,7 @@ final class SharpAIInternS2PreviewSanitizeTests: XCTestCase {
         let weights: [String: MLXArray] = [
             "model.time_series.encoder.layers.0.weight": dummy,
             "time_series.projector.weight": dummy,
+            "language_model.model.time_series.encoder.weight": dummy,
             "model.language_model.layers.0.mlp.gate.weight": dummy,
             "model.visual.blocks.0.attn.qkv.weight": dummy,
         ]

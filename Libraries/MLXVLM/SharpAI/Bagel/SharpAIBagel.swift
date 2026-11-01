@@ -89,6 +89,12 @@ public class SharpAIBagel: Module, VLMModel, KVCacheDimensionProvider {
                 "bagel: image tokens must be contiguous and match the \(count) image features")
         }
 
+        let placeholderCount = ids.reduce(0) { $1 == imageToken ? $0 + 1 : $0 }
+        guard placeholderCount == count else {
+            throw VLMError.processing(
+                "bagel: prompt has \(placeholderCount) image tokens but the image gives \(count) features")
+        }
+
         let seqLen = embeddings.dim(1)
         let placed = padded(features, widths: [0, .init((start, seqLen - start - count)), 0])
         let imageMask = expandedDimensions(inputIds .== imageToken, axis: -1)

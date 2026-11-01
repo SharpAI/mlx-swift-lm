@@ -224,15 +224,12 @@ public class SharpAIKolibri1ModelInner: Module {
     func callAsFunction(_ x: MLXArray, cache: [KVCache]?) -> MLXArray {
         var h = embedTokens(x)
 
-        let fullMask = createAttentionMask(h: h, cache: cache?.first)
-        let slidingMask = createAttentionMask(
-            h: h, cache: cache?.first, windowSize: config.slidingWindow)
-
         for (i, layer) in layers.enumerated() {
-            h = layer(
-                h,
-                mask: layer.isSliding ? slidingMask : fullMask,
-                cache: cache?[i])
+            // Each layer builds its mask from its own cache. Sliding layers use their window.
+            let layerCache = cache?[i]
+            let mask = createAttentionMask(
+                h: h, cache: layerCache, windowSize: layer.isSliding ? config.slidingWindow : nil)
+            h = layer(h, mask: mask, cache: layerCache)
         }
 
         return norm(h)
@@ -264,6 +261,15 @@ public class SharpAIKolibri1Model: Module, LLMModel, KVCacheDimensionProvider, L
             return lmHead(out)
         }
         return model.embedTokens.asLinear(out)
+    }
+
+    public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try model.layers.map { (layer) throws -> KVCache in
+            if layer.isSliding {
+                return try makeSlidingWindowKVCache(parameters: parameters, window: args.slidingWindow)
+            }
+            return try makeAttentionKVCache(parameters: parameters)
+        }
     }
 
     /// Maps HF checkpoint keys to module keys. See `SharpAIKolibri1Sanitizer`.

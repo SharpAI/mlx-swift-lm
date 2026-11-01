@@ -61,6 +61,107 @@ final class SharpAIColqwen3ForwardTests: XCTestCase {
         XCTAssertTrue(out.asArray(Float.self).allSatisfy { $0.isFinite })
     }
 
+    /// Deepstack features must land on each row's own image tokens, so a batch of two
+    /// documents embeds the same as the two documents embedded alone.
+    func testBatchedDeepstackMatchesSingleRows() throws {
+        let json = SharpAIColqwen3TestFixtures.tinyConfigJSON.replacingOccurrences(
+            of: "\"deepstack_visual_indexes\": []", with: "\"deepstack_visual_indexes\": [0]")
+        let config = try JSONDecoder().decode(
+            SharpAIColqwen3Configuration.self, from: Data(json.utf8))
+        let model = SharpAIColqwen3Model(config)
+
+        let rowA: [Int32] = [1, 11, 9, 9, 9, 9, 12, 2]
+        let rowB: [Int32] = [3, 11, 9, 9, 9, 9, 12, 4]
+        let pixelsA = MLXRandom.normal([16, 12])
+        let pixelsB = MLXRandom.normal([16, 12])
+        let grid = THW(1, 4, 4)
+
+        let batched = try model.embed(
+            inputIds: MLXArray(rowA + rowB).reshaped([2, 8]),
+            pixelValues: concatenated([pixelsA, pixelsB], axis: 0),
+            imageGridTHW: [grid, grid])
+        let singleA = try model.embed(
+            inputIds: MLXArray(rowA).reshaped([1, 8]), pixelValues: pixelsA,
+            imageGridTHW: [grid])
+        let singleB = try model.embed(
+            inputIds: MLXArray(rowB).reshaped([1, 8]), pixelValues: pixelsB,
+            imageGridTHW: [grid])
+        eval(batched, singleA, singleB)
+
+        XCTAssertEqual(batched.shape, [2, 8, 8])
+        let expected = concatenated([singleA, singleB], axis: 0)
+        let diff = abs(batched - expected).max().item(Float.self)
+        XCTAssertLessThan(diff, 1e-3)
+    }
+
+    private func deepstackModel() throws -> SharpAIColqwen3Model {
+        let json = SharpAIColqwen3TestFixtures.tinyConfigJSON.replacingOccurrences(
+            of: "\"deepstack_visual_indexes\": []", with: "\"deepstack_visual_indexes\": [0]")
+        let config = try JSONDecoder().decode(
+            SharpAIColqwen3Configuration.self, from: Data(json.utf8))
+        return SharpAIColqwen3Model(config)
+    }
+
+    /// A text-only row batched with an image row must keep plain arange positions, and the
+    /// image row must keep its own grid.
+    func testBatchedTextOnlyRowMatchesSingleRows() throws {
+        let model = try deepstackModel()
+        let rowA: [Int32] = [1, 11, 9, 9, 9, 9, 12, 2]
+        let rowB: [Int32] = [3, 4, 5, 6, 7, 8, 5, 4]
+        let pixelsA = MLXRandom.normal([16, 12])
+        let grid = THW(1, 4, 4)
+        let mask = MLXArray([Int32](repeating: 1, count: 16)).reshaped([2, 8])
+
+        let batched = try model.embed(
+            inputIds: MLXArray(rowA + rowB).reshaped([2, 8]),
+            pixelValues: pixelsA,
+            imageGridTHW: [grid],
+            attentionMask: mask)
+        let singleA = try model.embed(
+            inputIds: MLXArray(rowA).reshaped([1, 8]), pixelValues: pixelsA,
+            imageGridTHW: [grid])
+        let singleB = try model.embed(inputIds: MLXArray(rowB).reshaped([1, 8]))
+        eval(batched, singleA, singleB)
+
+        let expected = concatenated([singleA, singleB], axis: 0)
+        let diff = abs(batched - expected).max().item(Float.self)
+        XCTAssertLessThan(diff, 1e-3)
+    }
+
+    /// Rows with different image sizes (4 and 2 visual tokens) need right padding; the second
+    /// row must use its own grid, not the first one, and only valid positions are compared.
+    func testBatchedDifferentGridsMatchSingleRows() throws {
+        let model = try deepstackModel()
+        let rowA: [Int32] = [1, 11, 9, 9, 9, 9, 12, 2]
+        let rowC: [Int32] = [3, 11, 9, 9, 12, 4]
+        let paddedC: [Int32] = rowC + [0, 0]
+        let pixelsA = MLXRandom.normal([16, 12])
+        let pixelsC = MLXRandom.normal([8, 12])
+        let gridA = THW(1, 4, 4)
+        let gridC = THW(1, 2, 4)
+        let mask = MLXArray(
+            [Int32](repeating: 1, count: 8) + [Int32](repeating: 1, count: 6) + [0, 0]
+        ).reshaped([2, 8])
+
+        let batched = try model.embed(
+            inputIds: MLXArray(rowA + paddedC).reshaped([2, 8]),
+            pixelValues: concatenated([pixelsA, pixelsC], axis: 0),
+            imageGridTHW: [gridA, gridC],
+            attentionMask: mask)
+        let singleA = try model.embed(
+            inputIds: MLXArray(rowA).reshaped([1, 8]), pixelValues: pixelsA,
+            imageGridTHW: [gridA])
+        let singleC = try model.embed(
+            inputIds: MLXArray(rowC).reshaped([1, 6]), pixelValues: pixelsC,
+            imageGridTHW: [gridC])
+        eval(batched, singleA, singleC)
+
+        let diffA = abs(batched[0 ..< 1, 0..., 0...] - singleA).max().item(Float.self)
+        let diffC = abs(batched[1 ..< 2, 0 ..< 6, 0...] - singleC).max().item(Float.self)
+        XCTAssertLessThan(diffA, 1e-3)
+        XCTAssertLessThan(diffC, 1e-3)
+    }
+
     func testPixelValuesWithoutGridThrows() throws {
         let model = try tinyModel()
         let ids = MLXArray([Int32(1), 11, 9, 9, 9, 9, 12, 2]).reshaped([1, 8])

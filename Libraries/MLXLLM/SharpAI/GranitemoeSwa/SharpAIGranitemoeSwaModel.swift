@@ -107,10 +107,13 @@ class SharpAIGranitemoeSwaAttention: Module {
                 scale: scale, mask: mask, sinks: sinks)
         }
 
-        precondition(
-            !(cache is QuantizedKVCacheProtocol),
-            "granitemoe_swa attention sinks do not support quantized KV caches")
-        let (cachedKeys, cachedValues) = cache.update(keys: keys, values: values)
+        var (cachedKeys, cachedValues) = (keys, values)
+        if let quantizedCache = cache as? QuantizedKVCacheProtocol {
+            (cachedKeys, cachedValues) = sharpAIDequantizedKVUpdate(
+                quantizedCache, keys: keys, values: values, dtype: queries.dtype)
+        } else {
+            (cachedKeys, cachedValues) = cache.update(keys: keys, values: values)
+        }
         return MLXFast.scaledDotProductAttention(
             queries: queries, keys: cachedKeys, values: cachedValues,
             scale: scale, mask: mask, sinks: sinks)

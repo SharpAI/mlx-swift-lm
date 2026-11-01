@@ -175,6 +175,9 @@ final class SharpAINemotronhNanoOmniReasoningV3Tests: XCTestCase {
             "language_model.backbone.embeddings.weight": MLXArray.ones([100, 64]),
             "vision_model.radio_model.model.blocks.0.mlp.fc2.weight": MLXArray.ones([2, 2]),
             "vision_model.radio_model.model.patch_generator.video_embedder.weight": MLXArray.ones([2, 2]),
+            "vision_model.radio_model.input_conditioner.norm_mean": MLXArray.ones([3, 1, 1]),
+            "vision_model.radio_model.input_conditioner.norm_std": MLXArray.ones([3, 1, 1]),
+            "vision_model.radio_model.summary_idxs": MLXArray.ones([2]),
             "mlp1.3.weight": MLXArray.ones([2, 2]),
             "sound_encoder.encoder.subsampling.layers.2.weight": MLXArray.ones([2, 2]),
             "vision_tower.weight": MLXArray.ones([2, 2]),
@@ -191,6 +194,21 @@ final class SharpAINemotronhNanoOmniReasoningV3Tests: XCTestCase {
                 "vision_model.radio_model.model.blocks.0.mlp.fc2.weight",
                 "mlp1.3.weight",
             ])
+    }
+
+    func testPrepareRejectsImageInput() throws {
+        let model = SharpAINemotronhNanoOmniReasoningV3Model(try decodeConfig(tinyConfigJSON))
+        let input = LMInput(
+            text: .init(tokens: MLXArray([1, 2, 3])[.newAxis, .ellipsis]),
+            image: LMInput.ProcessedImage(pixels: MLXArray.zeros([1, 3, 64, 64])))
+        let cache = try model.newCache(parameters: nil)
+
+        XCTAssertThrowsError(
+            try model.prepare(input, cache: cache, state: nil, prefill: PrefillParameters())
+        ) { error in
+            XCTAssertEqual(
+                error as? SharpAINemotronhNanoOmniReasoningV3Error, .multimodalInputNotSupported)
+        }
     }
 
     func testSanitizeKeepsSoundProjectionWhenBuilt() throws {

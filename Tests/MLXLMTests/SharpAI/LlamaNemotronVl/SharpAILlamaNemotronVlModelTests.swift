@@ -62,6 +62,15 @@ final class SharpAILlamaNemotronVlModelTests: XCTestCase {
         XCTAssertEqual(v2.asArray(Float.self), v1.transposed(0, 2, 1, 3).asArray(Float.self))
     }
 
+    func testVisionParametersUseNestedCheckpointPaths() throws {
+        let model = SharpAILlamaNemotronVl(try tinyConfiguration())
+        let keys = Set(model.parameters().flattened().map { $0.0 })
+        XCTAssertTrue(
+            keys.contains("vision_model.vision_model.embeddings.position_embedding.weight"))
+        XCTAssertTrue(keys.contains("vision_model.vision_model.post_layernorm.weight"))
+        XCTAssertFalse(keys.contains { $0.hasPrefix("vision_model.embeddings.") })
+    }
+
     func testTextOnlyEmbedHasHiddenStateShape() throws {
         let model = SharpAILlamaNemotronVl(try tinyConfiguration())
         let ids = MLXArray([1, 2, 3, 4, 5] as [Int32]).reshaped(1, 5)

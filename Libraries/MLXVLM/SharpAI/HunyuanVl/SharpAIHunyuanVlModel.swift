@@ -31,8 +31,8 @@ enum SharpAIHunyuanVlRotary {
     }
 
     /// Cos and sin tables `[B, L, d]` for per-axis positions `[A, B, L]`, recomposed as in HF:
-    /// the half-width table is doubled, then chunk `i` (width `2 * section[i]`) is taken from axis
-    /// `i % A`.
+    /// the half-width table is doubled, then split with `section * 2` and chunk `i` is taken from
+    /// axis `i % A`, so both rotate-half partners share an axis.
     static func cosSin(
         positions: MLXArray, inverseFrequencies: [Float], section: [Int]
     ) -> (cos: MLXArray, sin: MLXArray) {
@@ -48,10 +48,10 @@ enum SharpAIHunyuanVlRotary {
     static func recompose(_ table: MLXArray, section: [Int]) -> MLXArray {
         var parts: [MLXArray] = []
         var start = 0
-        for (i, width) in section.enumerated() where width > 0 {
+        for (i, width) in (section + section).enumerated() where width > 0 {
             let axis = table[i % section.count]  // [B, L, d]
-            parts.append(axis[.ellipsis, start ..< start + 2 * width])
-            start += 2 * width
+            parts.append(axis[.ellipsis, start ..< start + width])
+            start += width
         }
         return concatenated(parts, axis: -1)
     }

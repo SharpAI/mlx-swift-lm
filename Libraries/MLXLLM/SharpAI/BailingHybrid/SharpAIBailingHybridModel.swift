@@ -4,7 +4,7 @@
 // (every layer_group_size-th, and the tail) use MLA with a KV cache. The other layers use the
 // lightning recurrence with an ArraysCache that holds the float32 state. Checkpoint key names are kept
 // as-is (model.word_embeddings, model.layers.N.attention.*), so the module tree matches the HF names.
-// Expert stacking and kv_b_proj splitting from Model.sanitize are not done yet (see the overlay sanitizer).
+// Expert stacking and kv_b_proj splitting from Model.sanitize live in the overlay sanitizer.
 
 import Foundation
 import MLX

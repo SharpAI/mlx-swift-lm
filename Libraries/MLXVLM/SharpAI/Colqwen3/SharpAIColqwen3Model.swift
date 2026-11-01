@@ -80,26 +80,14 @@ public final class SharpAIColqwen3Model: Module {
             }
         }
 
-        let (positionIds, _) = Qwen3VLLanguage.getRopeIndex(
-            inputIds: inputIds,
-            imageGridTHW: visualGrids,
-            videoGridTHW: nil,
-            spatialMergeSize: config.backbone.visionConfiguration.spatialMergeSize,
-            imageTokenId: config.backbone.imageTokenIndex,
-            videoTokenId: config.backbone.videoTokenIndex,
-            visionStartTokenId: config.backbone.visionStartTokenId,
-            attentionMask: attentionMask)
+        let positionIds = ropePositionIds(
+            inputIds: inputIds, grids: visualGrids, attentionMask: attentionMask)
 
         let mask = try attentionMask.map { try causalPaddingMask($0, length: inputIds.dim(1)) }
 
-        let lastHidden = languageModel.model(
-            nil,
-            cache: nil,
-            inputEmbeddings: hidden,
-            mask: mask,
-            positionIds: positionIds,
-            visualIndices: visualIndices,
-            deepstackEmbeds: deepstackEmbeds)
+        let lastHidden = runBackbone(
+            hidden: hidden, mask: mask, positionIds: positionIds,
+            visualIndices: visualIndices, deepstackEmbeds: deepstackEmbeds)
 
         let projected = embeddingProjLayer(lastHidden.asType(embeddingProjLayer.weight.dtype))
         let norms = sqrt((projected * projected).sum(axis: -1, keepDims: true))
@@ -110,6 +98,98 @@ public final class SharpAIColqwen3Model: Module {
             normalized = normalized * valid
         }
         return normalized
+    }
+
+    /// M-RoPE positions `[3, batch, seq]`. `getRopeIndex` restarts its image cursor at 0 for
+    /// every row and leaves rows without vision tokens at all-ones, so a batch with images is
+    /// computed one row at a time, each row receiving only its own grids (nil for a text row).
+    private func ropePositionIds(
+        inputIds: MLXArray, grids: [THW]?, attentionMask: MLXArray?
+    ) -> MLXArray {
+        let backbone = config.backbone
+        let mergeSize = backbone.visionConfiguration.spatialMergeSize
+        let batch = inputIds.dim(0)
+
+        guard batch > 1, let grids else {
+            return Qwen3VLLanguage.getRopeIndex(
+                inputIds: inputIds,
+                imageGridTHW: grids,
+                videoGridTHW: nil,
+                spatialMergeSize: mergeSize,
+                imageTokenId: backbone.imageTokenIndex,
+                videoTokenId: backbone.videoTokenIndex,
+                visionStartTokenId: backbone.visionStartTokenId,
+                attentionMask: attentionMask
+            ).0
+        }
+
+        let length = inputIds.dim(1)
+        let flatIds = inputIds.asType(.int32).asArray(Int32.self)
+        let imageToken = Int32(backbone.imageTokenIndex)
+        var cursor = 0
+        var rowPositions: [MLXArray] = []
+        for row in 0 ..< batch {
+            let imageTokens = flatIds[row * length ..< (row + 1) * length]
+                .filter { $0 == imageToken }.count
+            var rowGrids: [THW] = []
+            var covered = 0
+            while covered < imageTokens, cursor < grids.count {
+                rowGrids.append(grids[cursor])
+                covered += grids[cursor].product / (mergeSize * mergeSize)
+                cursor += 1
+            }
+            let (positions, _) = Qwen3VLLanguage.getRopeIndex(
+                inputIds: inputIds[row ..< row + 1, 0...],
+                imageGridTHW: rowGrids.isEmpty ? nil : rowGrids,
+                videoGridTHW: nil,
+                spatialMergeSize: mergeSize,
+                imageTokenId: backbone.imageTokenIndex,
+                videoTokenId: backbone.videoTokenIndex,
+                visionStartTokenId: backbone.visionStartTokenId,
+                attentionMask: attentionMask.map { $0[row ..< row + 1, 0...] })
+            rowPositions.append(positions)
+        }
+        return concatenated(rowPositions, axis: 1)
+    }
+
+    /// Runs the language backbone. Deepstack injection indexes the sequence axis, while
+    /// `visualIndices` are flat positions over `[batch * seq]`, so a batch with images is run
+    /// one row at a time with row-local indices and that row's slice of the deepstack features.
+    private func runBackbone(
+        hidden: MLXArray, mask: MLXArray?, positionIds: MLXArray,
+        visualIndices: [Int]?, deepstackEmbeds: [MLXArray]?
+    ) -> MLXArray {
+        let batch = hidden.dim(0)
+        let length = hidden.dim(1)
+        guard batch > 1, let visualIndices, !visualIndices.isEmpty, let deepstackEmbeds else {
+            return languageModel.model(
+                nil,
+                cache: nil,
+                inputEmbeddings: hidden,
+                mask: mask,
+                positionIds: positionIds,
+                visualIndices: visualIndices,
+                deepstackEmbeds: deepstackEmbeds)
+        }
+
+        var rows: [MLXArray] = []
+        var offset = 0
+        for row in 0 ..< batch {
+            let local = visualIndices.filter { $0 / length == row }.map { $0 - row * length }
+            let count = local.count
+            let rowDeepstack = deepstackEmbeds.map { $0[offset ..< offset + count, 0...] }
+            offset += count
+            rows.append(
+                languageModel.model(
+                    nil,
+                    cache: nil,
+                    inputEmbeddings: hidden[row ..< row + 1, 0..., 0...],
+                    mask: mask.map { $0[row ..< row + 1, 0..., 0..., 0...] },
+                    positionIds: positionIds[0..., row ..< row + 1, 0...],
+                    visualIndices: local,
+                    deepstackEmbeds: rowDeepstack))
+        }
+        return concatenated(rows, axis: 0)
     }
 
     private func scatterImageFeatures(

@@ -635,7 +635,7 @@ final class SharpAIKimiK3TextModel: Module {
 // MARK: - Model
 
 /// Text-only kimi_k3 model. Checkpoint keys are `language_model.model.*` and `language_model.lm_head.*`.
-/// The vision tower and mm_projector are not ported; their keys pass through sanitize and are unused here.
+/// The vision tower and mm_projector are not ported; sanitize drops their keys.
 public class SharpAIKimiK3Model: Module, LLMModel, LoRAModel {
     public let vocabularySize: Int
     let configuration: SharpAIKimiK3TextConfiguration

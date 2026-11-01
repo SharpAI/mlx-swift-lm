@@ -3,7 +3,8 @@
 // Drops rotary inv_freq and position_id keys, drops lm_head when embeddings are tied, and moves the
 // Conv3d patch-embed weight from PyTorch [out, in, T, H, W] to MLX [out, T, H, W, in].
 // UNVERIFIED: no real checkpoint was read, so the key prefixes are assumed.
-// Projector keys are not remapped. A checkpoint that has them fails the noUnusedKeys check on load.
+// The model has only `vision_model` and `language_model` modules, so every key under another
+// top-level prefix (the projector weights among them) is dropped rather than failing the load.
 
 import Foundation
 import MLX
@@ -12,10 +13,16 @@ public enum SharpAIKanana15VSanitizer {
 
     static let patchEmbedSuffix = "patch_embed.proj.weight"
 
+    /// Top-level modules the model defines. Keys under any other prefix have no parameter to load into.
+    static let modelPrefixes = ["vision_model.", "language_model."]
+
     /// Returns nil for keys the model never reads.
     static func remappedName(
         _ key: String, configuration: SharpAIKanana15VConfiguration
     ) -> String? {
+        if !modelPrefixes.contains(where: { key.hasPrefix($0) }) {
+            return nil
+        }
         if key.hasSuffix(".position_ids") || key.contains("rotary_emb.inv_freq") {
             return nil
         }

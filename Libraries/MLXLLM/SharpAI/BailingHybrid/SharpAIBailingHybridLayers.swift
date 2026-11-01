@@ -315,7 +315,7 @@ final class SharpAIBailingHybridLightningAttention: Module {
     let headDim: Int
     let scale: Float
     let rope: RoPELayer
-    let slope: MLXArray
+    let _slope: MLXArray
 
     @ModuleInfo(key: "query_key_value") var queryKeyValue: Linear
     @ModuleInfo(key: "dense") var dense: Linear
@@ -351,7 +351,7 @@ final class SharpAIBailingHybridLightningAttention: Module {
             dims: Int(Float(dim) * c.partialRotaryFactor), base: c.ropeTheta,
             traditional: false, scalingConfig: nil,
             maxPositionEmbeddings: c.maxPositionEmbeddings)
-        slope = SharpAIBailingHybridLightningAttention.decaySlopes(
+        _slope = SharpAIBailingHybridLightningAttention.decaySlopes(
             heads: heads, layerIdx: layerIdx, numLayers: c.hiddenLayers)
 
         super.init()
@@ -398,7 +398,7 @@ final class SharpAIBailingHybridLightningAttention: Module {
         keys = applyRotaryPosition(rope, to: keys, offset: .scalar(offset))
 
         let (output, newState) = SharpAIBailingHybridRecurrence.recurrentGLA(
-            q: queries, k: keys, v: values, g: slope, scale: scale,
+            q: queries, k: keys, v: values, g: _slope, scale: scale,
             state: cache?[0], mask: nil)
         cache?[0] = newState
 
@@ -418,7 +418,7 @@ final class SharpAIBailingHybridGate: Module {
     let scoreFunction: String
 
     @ModuleInfo(key: "gate_proj") var gateProj: Linear
-    @ParameterInfo(key: "expert_bias") var expertBias: MLXArray
+    @ParameterInfo(key: "expert_bias") var expertBias: MLXArray?
 
     init(_ c: SharpAIBailingHybridConfiguration) {
         topK = c.numExpertsPerTok ?? 1
@@ -430,8 +430,9 @@ final class SharpAIBailingHybridGate: Module {
 
         let experts = c.numExperts ?? 1
         _gateProj.wrappedValue = Linear(c.hiddenSize, experts, bias: false)
-        // Zeros when moe_router_enable_expert_bias is off, which leaves the scores unchanged.
-        _expertBias.wrappedValue = MLXArray.zeros([experts], dtype: .float32)
+        // No expert_bias parameter exists when moe_router_enable_expert_bias is off.
+        _expertBias.wrappedValue =
+            c.moeRouterEnableExpertBias ? MLXArray.zeros([experts], dtype: .float32) : nil
         super.init()
     }
 
@@ -445,7 +446,7 @@ final class SharpAIBailingHybridGate: Module {
             scoreFunction == "sigmoid" ? sigmoid(gates) : softmax(gates, axis: -1)
 
         // The bias steers selection only. The weights come from the unbiased scores.
-        var scores = origScores + expertBias
+        var scores = expertBias.map { origScores + $0 } ?? origScores
 
         let nDrop = nGroup - topkGroup
         if nDrop > 0 {

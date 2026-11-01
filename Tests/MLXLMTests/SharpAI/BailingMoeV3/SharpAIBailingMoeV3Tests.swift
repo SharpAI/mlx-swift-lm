@@ -117,6 +117,21 @@ final class SharpAIBailingMoeV3Tests: XCTestCase {
         XCTAssertNotNil(sanitized["model.word_embeddings.weight"])
     }
 
+    func testSanitizeFlattensKDADecayParameters() throws {
+        let model = SharpAIBailingMoeV3Model(try makeConfig())
+        let weights: [String: MLXArray] = [
+            "model.layers.0.attention.A_log": MLXArray.zeros([1, 1, 4, 1]),
+            "model.layers.0.attention.dt_bias": MLXArray.zeros([1, 32]),
+            "model.layers.1.attention.A_log": MLXArray.zeros([4]),
+        ]
+
+        let sanitized = model.sanitize(weights: weights)
+
+        XCTAssertEqual(sanitized["model.layers.0.attention.A_log"]?.shape, [4])
+        XCTAssertEqual(sanitized["model.layers.0.attention.dt_bias"]?.shape, [32])
+        XCTAssertEqual(sanitized["model.layers.1.attention.A_log"]?.shape, [4])
+    }
+
     // MARK: mRoPE
 
     func testMRoPEMatchesInterleavedRoPEForTextPositions() throws {

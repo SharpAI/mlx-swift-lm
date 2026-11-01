@@ -21,6 +21,14 @@ public final class SharpAIInternS2PreviewModel: Qwen35 {
         return try super.sanitize(weights: fused)
     }
 
+    // The real load path calls prepareCheckpoint, whose prepareTarget step renames `model.*` to
+    // `language_model.model.*` before sanitize runs, so the drop has to happen before it.
+    public override func prepareCheckpoint(_ checkpoint: ModelCheckpoint) throws -> ModelCheckpoint {
+        var checkpoint = checkpoint
+        checkpoint.weights = SharpAIInternS2PreviewSanitizer.dropTimeSeries(checkpoint.weights)
+        return try super.prepareCheckpoint(checkpoint)
+    }
+
     // Drops time-series keys before Qwen35 remaps bare `model.*` keys, so they never reach the
     // language model. Converted MLX checkpoints take the metadata path and skip fusion, as in Qwen35.
     public override func sanitize(

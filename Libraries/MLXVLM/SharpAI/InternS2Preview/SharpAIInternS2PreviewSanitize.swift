@@ -9,7 +9,10 @@ import MLX
 public enum SharpAIInternS2PreviewSanitizer {
 
     /// Checkpoint prefixes for the time-series tower. The text model has no such module.
-    public static let excludedPrefixes = ["model.time_series.", "time_series."]
+    /// The `language_model.model.` form is what Qwen35's prepareTarget makes of `model.time_series.`.
+    public static let excludedPrefixes = [
+        "model.time_series.", "time_series.", "language_model.model.time_series.",
+    ]
 
     public static func dropTimeSeries(_ weights: [String: MLXArray]) -> [String: MLXArray] {
         weights.filter { entry in

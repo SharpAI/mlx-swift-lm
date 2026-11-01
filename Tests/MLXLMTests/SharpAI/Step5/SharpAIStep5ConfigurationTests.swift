@@ -170,4 +170,24 @@ final class SharpAIStep5ConfigurationTests: XCTestCase {
             }
         }
     }
+
+    /// Per-layer swiglu limit lists may carry trailing MTP entries beyond num_hidden_layers.
+    func testTruncatesSwigluLimitsToHiddenLayers() throws {
+        let config = try decode(
+            """
+            {
+                "vocab_size": 64,
+                "hidden_size": 16,
+                "intermediate_size": 32,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "swiglu_limits": [7.0, 6.0, 5.0],
+                "swiglu_limits_shared": [4.0, 3.0, 2.0]
+            }
+            """)
+
+        XCTAssertEqual(config.swigluLimits, [7.0, 6.0])
+        XCTAssertEqual(config.swigluLimitsShared, [4.0, 3.0])
+        XCTAssertNoThrow(try config.validateModelConfiguration())
+    }
 }

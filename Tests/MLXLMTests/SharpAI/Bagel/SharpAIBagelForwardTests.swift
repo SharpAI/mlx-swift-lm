@@ -43,6 +43,17 @@ final class SharpAIBagelForwardTests: XCTestCase {
         XCTAssertThrowsError(try model.imageFeatures(pixels))
     }
 
+    func testPrepareRejectsExtraImagePlaceholders() throws {
+        let model = try makeModel()
+        // The 2x2 grid gives 4 features; the prompt carries 5 placeholders (token 31).
+        let tokens = MLXArray([Int32(1), 31, 31, 31, 31, 31, 2]).reshaped(1, 7)
+        let image = LMInput.ProcessedImage(pixels: MLXArray.zeros([1, 3, 28, 28]))
+        let input = LMInput(text: .init(tokens: tokens), image: image)
+        let cache = try model.newCache(parameters: nil)
+
+        XCTAssertThrowsError(try model.prepare(input, cache: cache, state: nil, prefill: PrefillParameters()))
+    }
+
     func testRegistryCreatesBagelModel() throws {
         let creator = try XCTUnwrap(SharpAIBagelOverlay.creators["bagel"])
         let model = try creator(Data(SharpAIBagelTestFixtures.tinyJSON.utf8))

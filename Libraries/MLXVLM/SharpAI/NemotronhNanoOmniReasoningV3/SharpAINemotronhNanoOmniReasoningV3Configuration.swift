@@ -194,6 +194,7 @@ public enum SharpAINemotronhNanoOmniReasoningV3Error: LocalizedError, Equatable 
     case unsupportedVisionModel(String)
     case visionTowerUnavailable
     case oddPatchGrid(Int, Int)
+    case multimodalInputNotSupported
 
     public var errorDescription: String? {
         switch self {
@@ -205,6 +206,9 @@ public enum SharpAINemotronhNanoOmniReasoningV3Error: LocalizedError, Equatable 
             return "This NemotronH Nano Omni model was built without a vision tower"
         case .oddPatchGrid(let height, let width):
             return "Pixel shuffle needs an even patch grid, got \(height)x\(width)"
+        case .multimodalInputNotSupported:
+            return
+                "NemotronH Nano Omni image, video and audio input is not merged into the prompt yet"
         }
     }
 }

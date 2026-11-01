@@ -10,11 +10,13 @@
 // - KDA short-conv weights: q, k and v conv1d weights are merged into one depthwise conv over the concatenated
 //   channels (the same channel order the forward pass splits). Torch layout [C, 1, K] becomes MLX [C, K, 1].
 //
+// - Vision keys: `vision_tower.*` and `mm_projector.*` are dropped, because the vision tower is not ported and
+//   the text-only module tree has nothing to receive them.
+//
 // Not done (KNOWN GAP, see the remaining list in the port notes):
 // - The released experts are MXFP4 packed: `experts.E.w{1,2,3}.weight_packed` (uint8) with
 //   `weight_scale` (uint8 E8M0, group 32). They pass through unchanged and will not load into the fp layers.
 //   The expert tensors also need the mxfp4 mapping in SharpAIOverlay.mapMXFP4Experts before quantized layers exist.
-// - Vision keys pass through unused: the vision tower is not ported.
 
 import Foundation
 import MLX
@@ -22,7 +24,9 @@ import MLX
 public enum SharpAIKimiK3Sanitizer {
 
     public static func sanitize(_ weights: [String: MLXArray]) -> [String: MLXArray] {
-        var out = weights
+        var out = weights.filter { key, _ in
+            !key.hasPrefix("vision_tower.") && !key.hasPrefix("mm_projector.")
+        }
         for key in Array(out.keys) where key.hasSuffix(".self_attn.q_conv1d.weight") {
             let base = String(key.dropLast("q_conv1d.weight".count))
             let splitKeys = ["q", "k", "v"].map { "\(base)\($0)_conv1d.weight" }

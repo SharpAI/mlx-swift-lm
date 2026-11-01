@@ -27,6 +27,14 @@ final class SharpAIQwen3OmniMoeModelTests: XCTestCase {
         .init(features: MLXRandom.normal([3, 8, 8]))
     }
 
+    func testAudioAttentionProjectionsAllCarryBias() {
+        let attention = SharpAIQwen3OmniMoeAudioAttention(hiddenSize: 8, heads: 2)
+        let keys = Set(attention.parameters().flattened().map { $0.0 })
+        for projection in ["q_proj", "k_proj", "v_proj", "out_proj"] {
+            XCTAssertTrue(keys.contains("\(projection).bias"), "\(projection).bias missing")
+        }
+    }
+
     func testRegistrationBuildsThinkerFromConfigData() throws {
         let creator = try XCTUnwrap(SharpAIQwen3OmniMoeOverlay.creators["qwen3_omni_moe"])
         let model = try creator(Data(SharpAIQwen3OmniMoeTestConfig.tiny().utf8))

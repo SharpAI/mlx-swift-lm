@@ -2,7 +2,7 @@
 // Qwen3-style text decoder). Not part of upstream mlx-swift-lm.
 //
 // Ported from lmms-lab-encoder/LLaVA-OneVision-2-8B-Instruct, modeling_llava_onevision2.py:
-// VisionRotaryEmbedding (4:6:6 T:H:W split, interleaved rotate_half), OneVisionEncoderEmbeddings,
+// VisionRotaryEmbedding (4:6:6 T:H:W split, cat([f, f]) table with split-half rotate_half), OneVisionEncoderEmbeddings,
 // OneVisionEncoderAttention / EncoderLayer, LlavaOnevision2VisionPatchMerger, LlavaOnevision2Model
 // (masked_scatter of image features into the placeholder tokens) and the causal LM head.
 // Checkpoint names are produced by SharpAILlavaOnevision2Sanitizer and were checked against the
@@ -66,13 +66,13 @@ enum SharpAILlavaOnevision2VisionRope {
         return (MLX.cos(angles), MLX.sin(angles))
     }
 
-    /// Reference `rotate_half`: pairs (x0, x1), (x2, x3), ... become (-x1, x0), (-x3, x2), ...
-    /// Applied to `[B, H, L, D]`.
+    /// Split-half `rotate_half`, the form that matches the `cat([f, f])` table: `(x1, x2)` becomes
+    /// `(-x2, x1)` over the two halves of the last axis. Applied to `[B, H, L, D]`.
     static func rotateHalf(_ x: MLXArray) -> MLXArray {
-        let pairs = x.reshaped(x.dim(0), x.dim(1), x.dim(2), x.dim(3) / 2, 2)
-        let even = pairs[.ellipsis, 0]
-        let odd = pairs[.ellipsis, 1]
-        return stacked([-odd, even], axis: -1).reshaped(x.shape)
+        let half = x.dim(3) / 2
+        let first = x[.ellipsis, 0 ..< half]
+        let second = x[.ellipsis, half...]
+        return concatenated([-second, first], axis: -1)
     }
 }
 

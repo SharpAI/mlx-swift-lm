@@ -414,6 +414,13 @@ public class SharpAIAliceAiModel: Module, LLMModel, KVCacheDimensionProvider {
             out[key] = value
         }
 
+        // Raw HF layout still has per-expert or split q/k/v conv keys. Converted input has neither
+        // and its norms are already shifted, so the shift below must not run again.
+        let isRawCheckpoint = out.keys.contains { key in
+            key.contains(".mlp.experts.0.")
+                || (key.contains(".linear_attn.") && key.hasSuffix("_conv1d.weight"))
+        }
+
         // vLLM maps `linear_attn.a_log_bias` to `A_log`. Both may be stored as 1-D or 4-D.
         for key in Array(out.keys) where key.hasSuffix(".linear_attn.a_log_bias") {
             let renamed = String(key.dropLast("a_log_bias".count)) + "A_log"
@@ -453,7 +460,7 @@ public class SharpAIAliceAiModel: Module, LLMModel, KVCacheDimensionProvider {
             ".q_norm.weight",
             ".k_norm.weight",
         ]
-        for key in Array(out.keys) {
+        for key in Array(out.keys) where isRawCheckpoint {
             guard let value = out[key], value.ndim == 1,
                 zeroCenteredNorms.contains(where: { key.hasSuffix($0) })
             else { continue }

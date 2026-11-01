@@ -64,6 +64,18 @@ final class SharpAIKolibri1ModelTests: XCTestCase {
         }
     }
 
+    func testNewCacheUsesWindowedCacheForSlidingLayersOnly() throws {
+        let config = try JSONDecoder.json5().decode(
+            SharpAIKolibri1Configuration.self, from: Data(SharpAIKolibri1TinyFixture.json.utf8))
+        let model = SharpAIKolibri1Model(config)
+
+        let cache = try model.newCache(parameters: nil)
+
+        XCTAssertEqual(cache.count, 2)
+        XCTAssertTrue(cache[0] is RotatingKVCache)
+        XCTAssertTrue(cache[1] is KVCacheSimple)
+    }
+
     func testTinyShapeForwardPass() throws {
         let config = try JSONDecoder.json5().decode(
             SharpAIKolibri1Configuration.self, from: Data(SharpAIKolibri1TinyFixture.json.utf8))

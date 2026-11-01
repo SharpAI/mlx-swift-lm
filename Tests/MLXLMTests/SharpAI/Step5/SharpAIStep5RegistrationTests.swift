@@ -6,6 +6,7 @@
 import Foundation
 import MLX
 import MLXLMCommon
+import MLXNN
 import XCTest
 
 @testable import MLXLLM
@@ -225,5 +226,34 @@ final class SharpAIStep5RegistrationTests: XCTestCase {
             }
         }
         return total + hidden
+    }
+
+    /// A quantized router gate holds packed words, so routing must go through the module call.
+    func testMoERoutesThroughQuantizedGate() throws {
+        let json = """
+            {
+                "vocab_size": 32,
+                "hidden_size": 64,
+                "intermediate_size": 32,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 4,
+                "head_dim": 16,
+                "moe_layer_list": [0],
+                "moe_num_experts": 4,
+                "moe_top_k": 2,
+                "moe_intermediate_size": 32,
+                "share_expert_dim": 32
+            }
+            """
+        let config = try JSONDecoder.json5().decode(
+            SharpAIStep5Configuration.self, from: Data(json.utf8))
+        let moe = SharpAIStep5MoE(config, layer: 0)
+        quantize(model: moe, groupSize: 64, bits: 4, filter: { path, _ in path == "gate" })
+        XCTAssertTrue(moe.gate is QuantizedLinear)
+
+        let x = MLXRandom.normal([1, 3, 64])
+        let y = moe(x)
+        XCTAssertEqual(y.shape, [1, 3, 64])
+        XCTAssertTrue(y.asArray(Float.self).allSatisfy { $0.isFinite })
     }
 }

@@ -139,6 +139,43 @@ final class SharpAIHyV4ModelTests: XCTestCase {
             allClose(full[0..., 4 ..< 5, 0...], step, rtol: 1e-3, atol: 1e-4).item(Bool.self))
     }
 
+    /// The indexer keys live in the caller's cache: a cache rebuilt from its saved state and two
+    /// sessions interleaving on one model both match the full forward.
+    func testIndexerKeysFollowRestoredAndInterleavedCaches() throws {
+        let model = try SharpAIHyV4TinyFixture.makeModel()
+        let tokensA = MLXArray([3, 7, 11, 19, 23, 29] as [Int32]).reshaped(1, 6)
+        let tokensB = MLXArray([5, 2, 8, 13, 21, 34] as [Int32]).reshaped(1, 6)
+        let fullA = model(tokensA, cache: nil)
+        let fullB = model(tokensB, cache: nil)
+        eval(fullA, fullB)
+
+        let cacheA: [KVCache] = (0 ..< 3).map { _ in KVCacheSimple() }
+        let cacheB: [KVCache] = (0 ..< 3).map { _ in KVCacheSimple() }
+        eval(model(tokensA[0..., ..<4], cache: cacheA))
+        eval(model(tokensB[0..., ..<4], cache: cacheB))
+
+        // Session A resumes from a cache rebuilt out of saved state.
+        let restoredA: [KVCache] = cacheA.map { source in
+            let restored = KVCacheSimple()
+            restored.state = source.state
+            return restored
+        }
+        let stepA = model(tokensA[0..., 4 ..< 5], cache: restoredA)
+        let stepB = model(tokensB[0..., 4 ..< 5], cache: cacheB)
+        let lastA = model(tokensA[0..., 5...], cache: restoredA)
+        let lastB = model(tokensB[0..., 5...], cache: cacheB)
+        eval(stepA, stepB, lastA, lastB)
+
+        XCTAssertTrue(
+            allClose(fullA[0..., 4 ..< 5, 0...], stepA, rtol: 1e-3, atol: 1e-4).item(Bool.self))
+        XCTAssertTrue(
+            allClose(fullB[0..., 4 ..< 5, 0...], stepB, rtol: 1e-3, atol: 1e-4).item(Bool.self))
+        XCTAssertTrue(
+            allClose(fullA[0..., 5...], lastA, rtol: 1e-3, atol: 1e-4).item(Bool.self))
+        XCTAssertTrue(
+            allClose(fullB[0..., 5...], lastB, rtol: 1e-3, atol: 1e-4).item(Bool.self))
+    }
+
     func testSanitizeSplitsPackedExpertsIntoSwitchMLP() throws {
         let model = try SharpAIHyV4TinyFixture.makeModel()
         let experts = 4

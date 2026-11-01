@@ -23,12 +23,15 @@ public enum SharpAILlamaNemotronVlSanitize {
     /// Module path for one checkpoint key, or nil to drop it.
     ///
     /// Handled: `language_model.model.` (standard Llama export) is dropped to `language_model.`.
-    /// `mlp1.0/1/3` map to `norm`, `fc1`, `fc2`. The reranker/LM-head, RoPE caches, and C-RADIO
-    /// normalization buffers are dropped.
+    /// `mlp1.0/1/3` map to `norm`, `fc1`, `fc2`. The SigLIP pooling head (`vision_model.vision_model.head.*`), the reranker/LM-head,
+    /// RoPE caches, and C-RADIO normalization buffers are dropped.
     static func mappedName(_ key: String) -> String? {
         if key.contains("rotary_emb.inv_freq") || key.contains("position_ids")
             || key.contains("norm_mean") || key.contains("norm_std")
         {
+            return nil
+        }
+        if key.hasPrefix("vision_model.vision_model.head.") {
             return nil
         }
         if key.hasPrefix("lm_head.") || key.hasPrefix("language_model.lm_head.") {

@@ -1,7 +1,7 @@
 // SharpAI fork overlay: SigLIP vision transformer for the LlamaNemotronVL embedder. Not part of upstream mlx-swift-lm.
 //
-// Layout follows the checkpoint: `vision_model.embeddings`, `vision_model.encoder`,
-// `vision_model.post_layernorm`. No CLS token. Input is NHWC pixels.
+// Layout follows the checkpoint: `vision_model.vision_model.embeddings`, `.encoder`,
+// `.post_layernorm`. No CLS token. Input is NHWC pixels.
 
 import Foundation
 import MLX
@@ -125,7 +125,7 @@ enum SharpAILlamaNemotronVlVision {
         }
     }
 
-    /// Module path `vision_model.*`. Returns `[batch, patches, hidden]` after `post_layernorm`.
+    /// Module path `vision_model.vision_model.*` (nested by the owning tower). Returns `[batch, patches, hidden]` after `post_layernorm`.
     final class Transformer: Module {
         @ModuleInfo var embeddings: Embeddings
         @ModuleInfo var encoder: Encoder

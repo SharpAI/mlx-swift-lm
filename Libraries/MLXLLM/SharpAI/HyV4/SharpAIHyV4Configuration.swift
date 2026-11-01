@@ -150,5 +150,19 @@ struct SharpAIHyV4Configuration: Codable, Sendable, ModelConfigurationValidating
             throw SharpAIHyV4Error.invalidConfiguration(
                 "indexer_types must have one entry per hidden layer")
         }
+        if let indexerTypes = indexerTypes, indexerTypes.first == "shared" {
+            throw SharpAIHyV4Error.invalidConfiguration(
+                "indexer_types[0] must be \"full\": a shared layer needs an earlier full layer")
+        }
+        if let mlpLayerTypes = mlpLayerTypes, mlpLayerTypes.count != hiddenLayers {
+            throw SharpAIHyV4Error.invalidConfiguration(
+                "mlp_layer_types must have one entry per hidden layer")
+        }
+        guard attentionHeads > 0 else {
+            throw SharpAIHyV4Error.invalidConfiguration("num_attention_heads must be > 0")
+        }
+        if let hcMult = hcMult, hcMult <= 0 {
+            throw SharpAIHyV4Error.invalidConfiguration("hc_mult must be > 0")
+        }
     }
 }

@@ -1,6 +1,6 @@
 // SharpAI fork overlay tests for pangu_ultra_moe checkpoint key sanitization. Not part of upstream.
-// Expert keys keep their HF names (model.layers.N.mlp.experts.E.*), which the model modules use,
-// so nothing is stacked. The MTP drop follows model.safetensors.index.json of openPangu-Ultra-MoE-718B-V1.1.
+// Routed expert keys (model.layers.N.mlp.experts.E.*) are stacked into model.layers.N.mlp.switch_mlp.*.
+// The MTP drop follows model.safetensors.index.json of openPangu-Ultra-MoE-718B-V1.1.
 // Written without compiling. Run it before relying on it.
 
 import Foundation
@@ -82,13 +82,33 @@ final class SharpAIPanguUltraMoeSanitizeTests: XCTestCase {
         XCTAssertNotNil(result["model.layers.1.mlp.gate.weight"])
     }
 
-    func testKeepsHFNamesForExpertWeights() throws {
-        let config = try makeConfig(tie: false)
-        let name = "model.layers.1.mlp.experts.0.gate_proj.weight"
-        let weights: [String: MLXArray] = [name: vector(4)]
+    func testStacksRoutedExpertsIntoSwitchMLP() throws {
+        let json = """
+            {
+              "model_type": "pangu_ultra_moe",
+              "hidden_size": 8,
+              "num_hidden_layers": 2,
+              "num_attention_heads": 2,
+              "vocab_size": 16,
+              "num_routed_experts": 2
+            }
+            """
+        let config = try JSONDecoder.json5().decode(
+            SharpAIPanguUltraMoeConfiguration.self, from: Data(json.utf8))
+        let prefix = "model.layers.1.mlp"
+        var weights: [String: MLXArray] = [:]
+        for e in 0 ..< 2 {
+            for proj in ["gate_proj", "up_proj", "down_proj"] {
+                weights["\(prefix).experts.\(e).\(proj).weight"] = vector(Float(e))
+            }
+        }
 
         let result = SharpAIPanguUltraMoeSanitizer.sanitize(weights, configuration: config)
 
-        XCTAssertNotNil(result[name])
+        for proj in ["gate_proj", "up_proj", "down_proj"] {
+            XCTAssertNil(result["\(prefix).experts.0.\(proj).weight"])
+            XCTAssertNil(result["\(prefix).experts.1.\(proj).weight"])
+            XCTAssertEqual(result["\(prefix).switch_mlp.\(proj).weight"]?.shape, [2, 2])
+        }
     }
 }

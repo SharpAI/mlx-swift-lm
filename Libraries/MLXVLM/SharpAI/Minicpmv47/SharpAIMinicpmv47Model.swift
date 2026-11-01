@@ -58,7 +58,8 @@ public class SharpAIMinicpmv47: Module, VLMModel {
             sliceStartId: config.sliceStartId,
             sliceEndId: config.sliceEndId,
             newlineId: config.newlineId,
-            mergeFactor: windowMerge ? 4 : 2)
+            mergeFactor: SharpAIMinicpmv47.totalMergeFactor(
+                windowMerge: windowMerge, mergerTimes: config.mergerTimes))
 
         let qwenConfiguration = try SharpAIMinicpmv47.makeQwen35Configuration(
             text: text, vision: vision)
@@ -68,6 +69,12 @@ public class SharpAIMinicpmv47: Module, VLMModel {
             hiddenSize: vision.hiddenSize, llmDim: text.hiddenSize, times: config.mergerTimes)
         self._languageModel.wrappedValue = Qwen35Language.LanguageModel(qwenConfiguration)
         super.init()
+    }
+
+    /// Patches per LLM token along one axis: 2 for the window merger (16x mode) times 2 for every
+    /// MLP merger round.
+    static func totalMergeFactor(windowMerge: Bool, mergerTimes: Int) -> Int {
+        (windowMerge ? 2 : 1) * (1 << max(mergerTimes, 1))
     }
 
     /// Builds the Qwen35 configuration that the text backbone needs.
@@ -115,8 +122,9 @@ public class SharpAIMinicpmv47: Module, VLMModel {
         }
         let height = pixelHeight / patchSize
         let width = pixelWidth / patchSize
-        // 16x merges 4x4 patches into one token (window 2x2, then MLP 2x2). 4x merges 2x2.
-        let mergeFactor = useVitMerger ? 4 : 2
+        // 16x runs the 2x2 window merger first, then every MLP round merges 2x2 more.
+        let mergeFactor = Self.totalMergeFactor(
+            windowMerge: useVitMerger, mergerTimes: config.mergerTimes)
         guard height % mergeFactor == 0, width % mergeFactor == 0 else {
             throw SharpAIMinicpmv47Error.invalidImageGrid(
                 height: height, width: width, mergeFactor: mergeFactor)

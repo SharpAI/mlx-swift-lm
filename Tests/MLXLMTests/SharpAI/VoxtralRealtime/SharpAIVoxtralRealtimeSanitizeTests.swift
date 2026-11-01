@@ -48,6 +48,21 @@ final class SharpAIVoxtralRealtimeSanitizeTests: XCTestCase {
         XCTAssertEqual(out["audio_tower.conv1.bias"]?.shape, [8])
     }
 
+    func testConv1dWeightsAlreadyInMLXLayoutAreNotTransposed() throws {
+        // MLX layout (out=8, k=3, in=4) must pass through unchanged.
+        let weights: [String: MLXArray] = [
+            "language_model.model.embed_tokens.weight": MLXRandom.normal([32, 8]),
+            "audio_tower.conv1.weight": MLXRandom.normal([8, 3, 4]),
+        ]
+        let once = try SharpAIVoxtralRealtimeSanitizer.sanitize(
+            weights, configuration: try configuration())
+        XCTAssertEqual(once["audio_tower.conv1.weight"]?.shape, [8, 3, 4])
+
+        let twice = try SharpAIVoxtralRealtimeSanitizer.sanitize(
+            once, configuration: try configuration())
+        XCTAssertEqual(twice["audio_tower.conv1.weight"]?.shape, [8, 3, 4])
+    }
+
     func testTiedHeadAndBuffersAreDropped() throws {
         let weights: [String: MLXArray] = [
             "language_model.model.embed_tokens.weight": MLXRandom.normal([32, 8]),

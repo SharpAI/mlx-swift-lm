@@ -103,4 +103,13 @@ final class SharpAIOpenvlaModelTests: XCTestCase {
                 error as? SharpAIOpenvlaError, SharpAIOpenvlaError.imageChannelMismatch(3))
         }
     }
+
+    func testDinoPositionEmbeddingHasNoClassSlot() throws {
+        let featurizer = SharpAIOpenvlaDinoV2Featurizer(SharpAIOpenvlaVisionSpec.tiny.dino)
+
+        // 4 patches at 28 px with 14 px patches, and no extra slot for the CLS token.
+        XCTAssertEqual(featurizer.posEmbed.shape, [1, 4, 16])
+        let features = try featurizer(MLXArray.zeros([1, 28, 28, 3]))
+        XCTAssertEqual(features.shape, [1, 4, 16])
+    }
 }

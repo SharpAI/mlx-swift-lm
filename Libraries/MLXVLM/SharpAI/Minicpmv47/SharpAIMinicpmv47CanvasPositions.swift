@@ -34,7 +34,7 @@ struct SharpAIMinicpmv47CanvasPositions {
     let sliceStartId: Int
     let sliceEndId: Int
     let newlineId: Int
-    /// Patch-to-LLM-token factor: 4 in `"16x"` mode, 2 in `"4x"` mode.
+    /// Patch-to-LLM-token factor per axis: `(16x ? 2 : 1) * 2^merger_times`, so 4 and 2 by default.
     let mergeFactor: Int
 
     /// Returns `[T, H, W]` rows of length `ids.count`, and the offset that generation adds to the
@@ -92,6 +92,11 @@ struct SharpAIMinicpmv47CanvasPositions {
             var frameCursor = group.start
             for frame in group.frames {
                 let thumb = try takeGrid(frame.modality)
+                // The frame opens on an `<image>` marker, so a placeholder at index 0 has none.
+                guard frame.thumbStart >= 1 else {
+                    throw SharpAIMinicpmv47Error.canvasGridMismatch(
+                        "visual placeholder at index 0 has no <image> marker before it")
+                }
                 let frameStart = frame.thumbStart - 1
 
                 // Text between two frames is 1-D. The extra step keeps the next halo off the last of them.

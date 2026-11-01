@@ -59,4 +59,44 @@ final class SharpAIMinimaxM3MtpSanitizeTests: XCTestCase {
 
         XCTAssertEqual(SharpAIMinimaxM3MtpSanitizer.sanitize(weights).count, 0)
     }
+
+    func testPerExpertTensorsAreStacked() {
+        let base = "model.mtp.layers.0.transformer_layer.mlp.experts"
+        var weights = [String: MLXArray]()
+        for e in 0 ..< 3 {
+            weights["\(base).\(e).w1.weight"] = MLXArray.ones([4, 2]) * MLXArray(Float(e))
+            weights["\(base).\(e).w3.weight"] = MLXArray.ones([4, 2])
+            weights["\(base).\(e).w2.weight"] = MLXArray.ones([2, 4])
+        }
+
+        let sanitized = SharpAIMinimaxM3MtpSanitizer.sanitize(weights)
+
+        let prefix = "model.layers.0.transformer_layer.mlp.experts"
+        XCTAssertEqual(
+            Set(sanitized.keys),
+            [
+                "\(prefix).gate_proj.weight", "\(prefix).up_proj.weight",
+                "\(prefix).down_proj.weight",
+            ])
+        XCTAssertEqual(sanitized["\(prefix).gate_proj.weight"]?.shape, [3, 4, 2])
+        XCTAssertEqual(sanitized["\(prefix).down_proj.weight"]?.shape, [3, 2, 4])
+    }
+
+    func testFusedExpertsAreSplitAndRouterBiasMoves() {
+        let base = "model.mtp.layers.0.transformer_layer.mlp"
+        let weights: [String: MLXArray] = [
+            "\(base).experts.gate_up_proj": MLXArray.ones([3, 8, 2]),
+            "\(base).experts.down_proj": MLXArray.ones([3, 2, 4]),
+            "\(base).e_score_correction_bias": MLXArray.zeros([3]),
+        ]
+
+        let sanitized = SharpAIMinimaxM3MtpSanitizer.sanitize(weights)
+
+        let prefix = "model.layers.0.transformer_layer.mlp"
+        XCTAssertEqual(sanitized["\(prefix).experts.gate_proj.weight"]?.shape, [3, 4, 2])
+        XCTAssertEqual(sanitized["\(prefix).experts.up_proj.weight"]?.shape, [3, 4, 2])
+        XCTAssertEqual(sanitized["\(prefix).experts.down_proj.weight"]?.shape, [3, 2, 4])
+        XCTAssertNotNil(sanitized["\(prefix).gate.e_score_correction_bias"])
+        XCTAssertNil(sanitized["\(prefix).e_score_correction_bias"])
+    }
 }

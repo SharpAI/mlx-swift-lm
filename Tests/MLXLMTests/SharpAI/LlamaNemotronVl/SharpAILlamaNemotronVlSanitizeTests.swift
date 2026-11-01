@@ -20,10 +20,10 @@ final class SharpAILlamaNemotronVlSanitizeTests: XCTestCase {
 
     func testVisionAndLanguageKeysKeepTheirPaths() {
         let keys = [
-            "vision_model.embeddings.position_embedding.weight",
-            "vision_model.encoder.layers.0.self_attn.q_proj.weight",
-            "vision_model.encoder.layers.0.mlp.fc1.bias",
-            "vision_model.post_layernorm.weight",
+            "vision_model.vision_model.embeddings.position_embedding.weight",
+            "vision_model.vision_model.encoder.layers.0.self_attn.q_proj.weight",
+            "vision_model.vision_model.encoder.layers.0.mlp.fc1.bias",
+            "vision_model.vision_model.post_layernorm.weight",
             "language_model.embed_tokens.weight",
             "language_model.layers.0.self_attn.q_proj.weight",
             "language_model.layers.15.mlp.down_proj.weight",
@@ -53,12 +53,14 @@ final class SharpAILlamaNemotronVlSanitizeTests: XCTestCase {
     func testBuffersAndHeadsAreDropped() {
         XCTAssertEqual(
             sanitizedKeys([
-                "vision_model.embeddings.position_ids",
+                "vision_model.vision_model.embeddings.position_ids",
                 "norm_mean",
                 "norm_std",
                 "language_model.rotary_emb.inv_freq",
                 "lm_head.weight",
                 "language_model.lm_head.weight",
+                "vision_model.vision_model.head.attention.in_proj_weight",
+                "vision_model.vision_model.head.layernorm.weight",
             ]),
             [])
     }
@@ -67,16 +69,16 @@ final class SharpAILlamaNemotronVlSanitizeTests: XCTestCase {
         let torchLayout = MLXArray.zeros([16, 3, 14, 14])
         let mlxLayout = MLXArray.zeros([16, 14, 14, 3])
         let weights = [
-            "vision_model.embeddings.patch_embedding.weight": torchLayout,
-            "vision_model.embeddings.position_embedding.weight": MLXArray.zeros([4, 16]),
+            "vision_model.vision_model.embeddings.patch_embedding.weight": torchLayout,
+            "vision_model.vision_model.embeddings.position_embedding.weight": MLXArray.zeros([4, 16]),
         ]
 
         let sanitized = SharpAILlamaNemotronVlSanitize.sanitize(weights: weights)
 
         XCTAssertEqual(
-            sanitized["vision_model.embeddings.patch_embedding.weight"]?.shape, [16, 14, 14, 3])
+            sanitized["vision_model.vision_model.embeddings.patch_embedding.weight"]?.shape, [16, 14, 14, 3])
         XCTAssertEqual(
-            sanitized["vision_model.embeddings.position_embedding.weight"]?.shape, [4, 16])
+            sanitized["vision_model.vision_model.embeddings.position_embedding.weight"]?.shape, [4, 16])
         XCTAssertFalse(SharpAILlamaNemotronVlSanitize.isTorchConvLayout(mlxLayout))
     }
 }

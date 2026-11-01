@@ -168,6 +168,14 @@ class SharpAIBailingMoeV3Model: Module, LLMModel, KVCacheDimensionProvider {
             sanitized[key] = weight.movedAxis(source: 2, destination: 1)
         }
 
+        // KDA decay parameters are declared 1-D; Kimi-style checkpoints may store A_log as
+        // [1, 1, H, 1] and dt_bias as [1, H * D].
+        for key in Array(sanitized.keys) where key.hasSuffix(".A_log") || key.hasSuffix(".dt_bias") {
+            if let value = sanitized[key], value.ndim > 1 {
+                sanitized[key] = value.reshaped(-1)
+            }
+        }
+
         return sanitized
     }
 

@@ -156,6 +156,26 @@ final class SharpAIMinicpmv47ModelTests: XCTestCase {
         )
     }
 
+    func testPlaceholderAtIndexZeroThrowsInsteadOfTrapping() {
+        let canvas = SharpAIMinicpmv47CanvasPositions(
+            imageStartId: 122, imageEndId: 123, sliceStartId: 124, sliceEndId: 125,
+            newlineId: 126, mergeFactor: 4)
+
+        XCTAssertThrowsError(
+            try canvas.compute(
+                tokenIds: [120, 120, 120, 120, 123, 6],
+                modalities: [1, 1, 1, 1, 0, 0],
+                imageGrids: [(8, 8)], videoGrids: [])
+        )
+    }
+
+    func testTotalMergeFactorFollowsMergerTimes() {
+        XCTAssertEqual(SharpAIMinicpmv47.totalMergeFactor(windowMerge: true, mergerTimes: 1), 4)
+        XCTAssertEqual(SharpAIMinicpmv47.totalMergeFactor(windowMerge: false, mergerTimes: 1), 2)
+        XCTAssertEqual(SharpAIMinicpmv47.totalMergeFactor(windowMerge: true, mergerTimes: 2), 8)
+        XCTAssertEqual(SharpAIMinicpmv47.totalMergeFactor(windowMerge: false, mergerTimes: 2), 4)
+    }
+
     func testLinspaceRoundsHalfToEven() {
         // linspace(0, 2, 2) = [0, 2]; linspace(0, 1, 3) = [0, 0.5, 1] rounds to [0, 0, 1].
         XCTAssertEqual(SharpAIMinicpmv47CanvasPositions.linspaceRounded(end: 2, steps: 2), [0, 2])

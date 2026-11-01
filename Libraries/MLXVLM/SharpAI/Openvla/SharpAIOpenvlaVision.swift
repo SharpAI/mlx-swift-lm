@@ -175,9 +175,8 @@ final class SharpAIOpenvlaViTBlock: Module {
 /// DINOv2 ViT-L/14 with registers. Module path `featurizer.*`.
 ///
 /// Output is the patch tokens of the penultimate block, without the CLS and register tokens.
-/// UNVERIFIED: the CLS and register tokens get the position embedding in the order used here.
-/// UNVERIFIED: timm's reg4 DINOv2 may use `no_embed_class`, which makes `pos_embed` [1, 256, hidden]
-/// with no CLS slot. If so, loading fails on the shape. Not confirmed from any source in this repo.
+/// timm's reg4 DINOv2 uses `no_embed_class`: `pos_embed` is [1, patches, hidden] with no CLS slot,
+/// it is added to the patch tokens only, and then [CLS, registers] are prepended.
 /// The checkpoint's `pos_embed` must already match the 224 px grid. There is no interpolation.
 final class SharpAIOpenvlaDinoV2Featurizer: Module {
     let spec: SharpAIOpenvlaViTSpec
@@ -194,23 +193,21 @@ final class SharpAIOpenvlaDinoV2Featurizer: Module {
         self._patchEmbed.wrappedValue = SharpAIOpenvlaPatchEmbed(spec)
         self._clsToken.wrappedValue = MLXArray.zeros([1, 1, spec.hiddenSize])
         self._regToken.wrappedValue = MLXArray.zeros([1, spec.registerTokens, spec.hiddenSize])
-        self._posEmbed.wrappedValue = MLXArray.zeros([1, 1 + spec.patchCount, spec.hiddenSize])
+        self._posEmbed.wrappedValue = MLXArray.zeros([1, spec.patchCount, spec.hiddenSize])
         self.blocks = (0 ..< spec.depth).map { _ in SharpAIOpenvlaViTBlock(spec) }
     }
 
     /// NHWC pixels `[batch, H, W, 3]` to patch features `[batch, patches, hiddenSize]`.
     func callAsFunction(_ pixels: MLXArray) throws -> MLXArray {
         let batch = pixels.dim(0)
-        let expected = 1 + spec.patchCount
-        guard posEmbed.dim(1) == expected else {
+        guard posEmbed.dim(1) == spec.patchCount else {
             throw SharpAIOpenvlaError.visionPositionMismatch(
-                expected: expected, actual: posEmbed.dim(1))
+                expected: spec.patchCount, actual: posEmbed.dim(1))
         }
 
         let patches = patchEmbed(pixels).reshaped(batch, spec.patchCount, spec.hiddenSize)
-        let cls = broadcast(
-            clsToken + posEmbed[0..., 0 ..< 1, 0...], to: [batch, 1, spec.hiddenSize])
-        let body = patches + posEmbed[0..., 1..., 0...]
+        let cls = broadcast(clsToken, to: [batch, 1, spec.hiddenSize])
+        let body = patches + posEmbed
         let registers = broadcast(regToken, to: [batch, spec.registerTokens, spec.hiddenSize])
 
         var h = concatenated([cls, registers, body], axis: 1)

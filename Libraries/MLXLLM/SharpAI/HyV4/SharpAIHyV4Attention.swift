@@ -25,8 +25,9 @@ import MLX
 import MLXLMCommon
 import MLXNN
 
-/// Top-k key selection (HYV4Indexer). Keys for previously cached positions are kept in an
-/// indexer-only `KVCacheSimple` that is tied to the owning attention cache.
+/// Top-k key selection (HYV4Indexer). The indexer keys of earlier positions are stored in the
+/// owning attention cache (next to the latent), so they follow that cache through restore,
+/// trim and interleaved sessions.
 class SharpAIHyV4Indexer: Module {
     let headCount: Int
     let headDim: Int
@@ -41,10 +42,6 @@ class SharpAIHyV4Indexer: Module {
     @ModuleInfo(key: "weights_proj") var weightsProj: Linear
 
     let rope: RoPELayer
-
-    /// Indexer keys for the owning cache, [B, 1, T, headDim]. Not a module parameter.
-    private var keyCache: KVCacheSimple?
-    private weak var keyCacheOwner: AnyObject?
 
     init(_ config: SharpAIHyV4Configuration) {
         self.headCount = config.resolvedIndexHeads
@@ -68,26 +65,32 @@ class SharpAIHyV4Indexer: Module {
             maxPositionEmbeddings: config.maxPositionEmbeddings)
     }
 
+    /// Indexer keys of this call's tokens, [B, 1, L, headDim], rope applied to the trailing
+    /// `ropeDim` channels as in the reference.
+    func keyStates(_ x: MLXArray, offset: RoPEOffset?) -> MLXArray {
+        let (B, L) = (x.dim(0), x.dim(1))
+        let nopeDim = headDim - ropeDim
+        let kParts = split(
+            kNorm(wk(x)).reshaped(B, L, 1, headDim).transposed(0, 2, 1, 3),
+            indices: [nopeDim], axis: -1)
+        return concatenated(
+            [kParts[0], applyRotaryPosition(rope, to: kParts[1], offset: offset)], axis: -1)
+    }
+
     /// Boolean selection mask [B, L, T]. True marks the keys each query selects.
+    /// `keys` holds the indexer keys of all T positions, [B, 1, T, headDim].
     /// The caller still applies the causal mask: masked future keys can tie at -inf.
     func selection(
-        _ x: MLXArray, qResid: MLXArray, offset: RoPEOffset?, owner: KVCache?, causal: MLXArray
+        _ x: MLXArray, qResid: MLXArray, offset: RoPEOffset?, keys: MLXArray, causal: MLXArray
     ) -> MLXArray {
         let (B, L) = (x.dim(0), x.dim(1))
         let nopeDim = headDim - ropeDim
 
-        // Rope applies to the trailing `ropeDim` channels, as in the reference.
         let qParts = split(
             wqB(qResid).reshaped(B, L, headCount, headDim).transposed(0, 2, 1, 3),
             indices: [nopeDim], axis: -1)
-        let kParts = split(
-            kNorm(wk(x)).reshaped(B, L, 1, headDim).transposed(0, 2, 1, 3),
-            indices: [nopeDim], axis: -1)
         let q = concatenated(
             [qParts[0], applyRotaryPosition(rope, to: qParts[1], offset: offset)], axis: -1)
-        let k = concatenated(
-            [kParts[0], applyRotaryPosition(rope, to: kParts[1], offset: offset)], axis: -1)
-        let keys = cachedKeys(k, owner: owner)  // [B, 1, T, headDim]
 
         // index_score[b, s, t] = sum_h w[b, s, h] * relu(q[b, h, s] . k[b, t])
         let logits = relu(
@@ -106,20 +109,6 @@ class SharpAIHyV4Indexer: Module {
         let top = argPartition(-masked, kth: kept - 1, axis: -1)[.ellipsis, ..<kept]
         let none = MLXArray.zeros(masked.shape, type: Bool.self)
         return putAlong(none, top, values: MLXArray(true), axis: -1)
-    }
-
-    /// Indexer keys for every position in `owner`. The cache is rebuilt when the owner
-    /// changes or when its offset no longer lines up with the indexer's own length.
-    private func cachedKeys(_ k: MLXArray, owner: KVCache?) -> MLXArray {
-        guard let owner else { return k }
-        let ownerObject = owner as AnyObject
-        // The owning cache has already advanced by this call's tokens.
-        let priorLength = owner.offset - k.dim(2)
-        if keyCache == nil || keyCacheOwner !== ownerObject || keyCache!.offset != priorLength {
-            keyCache = KVCacheSimple()
-            keyCacheOwner = ownerObject
-        }
-        return keyCache!.update(keys: k, values: k).0
     }
 }
 
@@ -202,15 +191,30 @@ class SharpAIHyV4Attention: Module {
             to: kvParts[1].reshaped(B, L, 1, qkRopeHeadDim).transposed(0, 2, 1, 3),
             offset: offset)  // [B, 1, L, rope]
 
-        // The cache holds the compressed latent and the shared rope key, one head each.
+        // The cache holds the compressed latent and the shared rope key, one head each. On a
+        // layer with an indexer, the value slot also carries the indexer key after the latent.
+        let indexerKeys = indexer?.keyStates(x, offset: offset)  // [B, 1, L, indexHeadDim]
         var allLatent = latent
         var allRot = kRot
+        var allIndexerKeys = indexerKeys
         if let cache {
+            let storedValues: MLXArray
+            if let indexerKeys {
+                storedValues = concatenated([latent, indexerKeys.asType(latent.dtype)], axis: -1)
+            } else {
+                storedValues = latent
+            }
             let stored = cache.update(
-                keys: concatenated([latent, kRot], axis: -1), values: latent)
+                keys: concatenated([latent, kRot], axis: -1), values: storedValues)
             let storedKeys = split(stored.0, indices: [kvLoraRank], axis: -1)
             allRot = storedKeys[1]
-            allLatent = stored.1
+            if indexerKeys != nil {
+                let storedParts = split(stored.1, indices: [kvLoraRank], axis: -1)
+                allLatent = storedParts[0]
+                allIndexerKeys = storedParts[1]
+            } else {
+                allLatent = stored.1
+            }
         }
         let T = allLatent.dim(2)
 
@@ -225,9 +229,9 @@ class SharpAIHyV4Attention: Module {
         let queries = concatenated([qPass, qRot], axis: -1)  // [B, H, L, qk]
 
         let selection: MLXArray
-        if let indexer {
+        if let indexer, let allIndexerKeys {
             selection = indexer.selection(
-                x, qResid: qResid, offset: offset, owner: cache, causal: causal)
+                x, qResid: qResid, offset: offset, keys: allIndexerKeys, causal: causal)
         } else {
             guard let sparse else {
                 preconditionFailure(

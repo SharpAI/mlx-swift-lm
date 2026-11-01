@@ -84,7 +84,8 @@ class SharpAIFlintAttention: Module {
     }
 }
 
-/// Cache update and sink attention. Quantized caches have no sink path, so they are rejected.
+/// Cache update and sink attention. Quantized caches are dequantized, since the fused quantized
+/// attention has no sink input.
 private func sharpAIFlintSinkAttention(
     queries: MLXArray,
     keys: MLXArray,
@@ -105,10 +106,13 @@ private func sharpAIFlintSinkAttention(
         )
     }
 
-    precondition(
-        !(cache is QuantizedKVCacheProtocol),
-        "Flint attention sinks do not support quantized KV caches.")
-    let (cachedKeys, cachedValues) = cache.update(keys: keys, values: values)
+    var (cachedKeys, cachedValues) = (keys, values)
+    if let quantizedCache = cache as? QuantizedKVCacheProtocol {
+        (cachedKeys, cachedValues) = sharpAIDequantizedKVUpdate(
+            quantizedCache, keys: keys, values: values, dtype: queries.dtype)
+    } else {
+        (cachedKeys, cachedValues) = cache.update(keys: keys, values: values)
+    }
     return MLXFast.scaledDotProductAttention(
         queries: queries,
         keys: cachedKeys,
@@ -117,4 +121,21 @@ private func sharpAIFlintSinkAttention(
         mask: mask,
         sinks: sinks
     )
+}
+
+/// Appends to a quantized cache and returns its full keys and values in `dtype`.
+func sharpAIDequantizedKVUpdate(
+    _ cache: QuantizedKVCacheProtocol,
+    keys: MLXArray,
+    values: MLXArray,
+    dtype: DType
+) -> (MLXArray, MLXArray) {
+    let (qKeys, qValues) = cache.updateQuantized(keys: keys, values: values)
+    let fullKeys = dequantized(
+        qKeys.0, scales: qKeys.1, biases: qKeys.2,
+        groupSize: cache.groupSize, bits: cache.bits, mode: cache.mode)
+    let fullValues = dequantized(
+        qValues.0, scales: qValues.1, biases: qValues.2,
+        groupSize: cache.groupSize, bits: cache.bits, mode: cache.mode)
+    return (fullKeys.asType(dtype), fullValues.asType(dtype))
 }

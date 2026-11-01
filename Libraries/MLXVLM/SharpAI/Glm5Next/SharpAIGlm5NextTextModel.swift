@@ -636,12 +636,10 @@ final class SharpAIGlm5NextIndexedAttention: Module {
 // MARK: - Decoder layer and model
 
 final class SharpAIGlm5NextDecoderLayer: Module {
-    // HF names both attention kinds `self_attn` and both FFN kinds `mlp`. Exactly one of each
-    // pair is non-nil for a given layer.
-    @ModuleInfo(key: "self_attn") var linearAttention: SharpAIGlm5NextLinearAttention?
-    @ModuleInfo(key: "self_attn") var indexedAttention: SharpAIGlm5NextIndexedAttention?
-    @ModuleInfo(key: "mlp") var denseMLP: SharpAIGlm5NextMLP?
-    @ModuleInfo(key: "mlp") var sparseMoE: SharpAIGlm5NextSparseMoE?
+    // HF names both attention kinds `self_attn` and both FFN kinds `mlp`. MLXNN keeps one entry
+    // per key, so each key has a single property holding whichever kind the layer uses.
+    @ModuleInfo(key: "self_attn") var selfAttn: Module?
+    @ModuleInfo(key: "mlp") var mlp: Module?
     @ModuleInfo(key: "input_layernorm") var inputLayernorm: SharpAIGlm5NextRMSNorm
     @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayernorm: SharpAIGlm5NextRMSNorm
     @ModuleInfo(key: "attn_hc") var attnHC: SharpAIGlm5NextHyperConnection
@@ -654,10 +652,8 @@ final class SharpAIGlm5NextDecoderLayer: Module {
         sparseMoE: SharpAIGlm5NextSparseMoE?,
         hidden: Int, rmsEps: Float, hcStreams: Int, hcSinkhornIterations: Int, hcEps: Float
     ) {
-        self._linearAttention.wrappedValue = linearAttention
-        self._indexedAttention.wrappedValue = indexedAttention
-        self._denseMLP.wrappedValue = denseMLP
-        self._sparseMoE.wrappedValue = sparseMoE
+        self._selfAttn.wrappedValue = linearAttention ?? indexedAttention
+        self._mlp.wrappedValue = denseMLP ?? sparseMoE
         self._inputLayernorm.wrappedValue = SharpAIGlm5NextRMSNorm(dimensions: hidden, eps: rmsEps)
         self._postAttentionLayernorm.wrappedValue = SharpAIGlm5NextRMSNorm(
             dimensions: hidden, eps: rmsEps)
@@ -676,9 +672,9 @@ final class SharpAIGlm5NextDecoderLayer: Module {
 
         let attnIn = attnHC(streams)
         var attnOut = inputLayernorm(attnIn.collapsed)
-        if let linearAttention {
+        if let linearAttention = selfAttn as? SharpAIGlm5NextLinearAttention {
             attnOut = linearAttention(attnOut)
-        } else if let indexedAttention {
+        } else if let indexedAttention = selfAttn as? SharpAIGlm5NextIndexedAttention {
             attnOut = indexedAttention(attnOut)
         }
         let afterAttn = Self.combine(
@@ -686,9 +682,9 @@ final class SharpAIGlm5NextDecoderLayer: Module {
 
         let ffnIn = ffnHC(afterAttn)
         var ffnOut = postAttentionLayernorm(ffnIn.collapsed)
-        if let denseMLP {
+        if let denseMLP = mlp as? SharpAIGlm5NextMLP {
             ffnOut = denseMLP(ffnOut)
-        } else if let sparseMoE {
+        } else if let sparseMoE = mlp as? SharpAIGlm5NextSparseMoE {
             ffnOut = sparseMoE(ffnOut)
         }
         return Self.combine(

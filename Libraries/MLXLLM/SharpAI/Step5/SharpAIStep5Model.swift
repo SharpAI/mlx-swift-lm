@@ -189,7 +189,7 @@ class SharpAIStep5MoE: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let logits = x.asType(.float32).matmul(gate.weight.asType(.float32).T)
+        let logits = gate(x.asType(.float32)).asType(.float32)
         let scores = sigmoid(logits)
         let selection = scores + routerBias
 

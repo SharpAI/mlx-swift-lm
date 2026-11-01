@@ -166,8 +166,12 @@ enum SharpAIModernvbertText {
             return finalNorm(h)
         }
 
-        private func additiveMask(_ allowed: MLXArray) -> MLXArray {
-            which(allowed, MLXArray(Float(0)), MLXArray(Float(-1e9)))
+        /// Finite masked value that still fits float16, so a fully masked row softmaxes to a
+        /// uniform row instead of NaN after the cast to the query dtype.
+        static let maskedValue: Float = -3e4
+
+        func additiveMask(_ allowed: MLXArray) -> MLXArray {
+            which(allowed, MLXArray(Float(0)), MLXArray(TextModel.maskedValue))
         }
     }
 }

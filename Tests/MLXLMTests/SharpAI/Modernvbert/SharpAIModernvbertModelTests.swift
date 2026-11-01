@@ -100,6 +100,17 @@ final class SharpAIModernvbertModelTests: XCTestCase {
         XCTAssertEqual(embeddings[0, 4].abs().sum().item(Float.self), 0, accuracy: 1e-6)
     }
 
+    func testAdditiveMaskStaysFiniteInFloat16() throws {
+        let model = SharpAIModernvbert(try tinyConfiguration())
+        let allowed = MLXArray([false, false, false, false] as [Bool]).reshaped(1, 1, 2, 2)
+
+        let mask = model.model.textModel.additiveMask(allowed).asType(.float16)
+        let weights = softmax(mask, axis: -1).asType(.float32)
+
+        XCTAssertFalse(any(isNaN(weights)).item(Bool.self))
+        XCTAssertEqual(weights[0, 0, 0, 0].item(Float.self), 0.5, accuracy: 1e-3)
+    }
+
     func testFirstLayerHasNoAttentionNorm() throws {
         let model = SharpAIModernvbert(try tinyConfiguration())
         let layers = model.model.textModel.layers

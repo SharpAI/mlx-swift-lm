@@ -82,4 +82,50 @@ final class SharpAIFlintModelTests: XCTestCase {
             XCTAssertEqual(layerCache.offset, 7, "layer \(i) cache offset after decode")
         }
     }
+
+    func testQuantizedFullAttentionCacheDoesNotTrap() throws {
+        let config = try JSONDecoder.json5().decode(
+            SharpAIFlintConfiguration.self,
+            from: Data(
+                #"""
+                {
+                    "model_type": "flint",
+                    "vocab_size": 64,
+                    "hidden_size": 128,
+                    "intermediate_size": 48,
+                    "num_hidden_layers": 3,
+                    "num_attention_heads": 2,
+                    "num_key_value_heads": 2,
+                    "head_dim": 64,
+                    "use_sliding_window": true,
+                    "sliding_window": 4,
+                    "layer_types": ["full_attention", "sliding_attention", "full_attention"],
+                    "no_rope_layer_indices": [2],
+                    "moe_intermediate_size": 16,
+                    "shared_expert_intermediate_size": 16,
+                    "num_experts_per_tok": 2,
+                    "num_experts": 4,
+                    "mlp_only_layers": [0]
+                }
+                """#.utf8))
+        try config.validateModelConfiguration()
+        let model = SharpAIFlintModel(config)
+        var cache = try model.newCache(parameters: nil)
+
+        let prompt = MLXArray([1, 2, 3, 4, 5, 6] as [Int32]).reshaped(1, 6)
+        eval(model(prompt, cache: cache))
+        // Swap the full-attention caches for quantized ones, as kv_bits does after prefill.
+        for i in [0, 2] {
+            guard let simple = cache[i] as? KVCacheSimple else {
+                return XCTFail("layer \(i) is not a simple cache")
+            }
+            cache[i] = try simple.toQuantized(groupSize: 64, bits: 8)
+        }
+
+        let logits = model(MLXArray([7] as [Int32]).reshaped(1, 1), cache: cache)
+        eval(logits)
+
+        XCTAssertEqual(logits.shape, [1, 1, 64])
+        XCTAssertEqual(cache[0].offset, 7)
+    }
 }

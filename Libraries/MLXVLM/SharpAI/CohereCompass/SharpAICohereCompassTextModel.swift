@@ -195,12 +195,26 @@ public class SharpAICohereCompassTextModel: Module, LLMModel, KVCacheDimensionPr
 
     public let model: SharpAICohereCompassTextInner
     let logitScale: Float
+    let layerTypes: [String]
+    let slidingWindow: Int
 
     public init(_ config: SharpAICohereCompassTextConfiguration) {
         self.vocabularySize = config.vocabularySize
         self.kvHeads = (0 ..< config.hiddenLayers).map { _ in config.kvHeads }
         self.model = SharpAICohereCompassTextInner(config)
         self.logitScale = config.logitScale
+        self.layerTypes = config.layerTypes
+        self.slidingWindow = config.slidingWindow
+    }
+
+    /// Sliding-attention layers get a rotating cache bounded by the window. Full-attention layers
+    /// keep the whole history.
+    public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try layerTypes.map { layerType in
+            layerType == "sliding_attention"
+                ? try makeSlidingWindowKVCache(parameters: parameters, window: slidingWindow)
+                : try makeAttentionKVCache(parameters: parameters)
+        }
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {

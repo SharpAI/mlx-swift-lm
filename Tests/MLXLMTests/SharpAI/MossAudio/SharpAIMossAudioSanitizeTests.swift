@@ -20,6 +20,34 @@ final class SharpAIMossAudioSanitizeTests: XCTestCase {
         XCTAssertNil(result["model.layers.0.self_attn.rotary_emb.inv_freq"])
     }
 
+    func testTransposesPyTorchConvWeightsToMLXLayout() {
+        let weights: [String: MLXArray] = [
+            "audio_encoder.conv1.weight": MLXArray.zeros([8, 1, 3, 3]),
+            "audio_encoder.conv2.weight": MLXArray.zeros([8, 8, 3, 3]),
+            "audio_encoder.conv3.weight": MLXArray.zeros([8, 8, 3, 3]),
+            "audio_encoder.conv1.bias": MLXArray.zeros([8]),
+        ]
+
+        let result = SharpAIMossAudioSanitize.sanitize(weights: weights)
+
+        XCTAssertEqual(result["audio_encoder.conv1.weight"]?.shape, [8, 3, 3, 1])
+        XCTAssertEqual(result["audio_encoder.conv2.weight"]?.shape, [8, 3, 3, 8])
+        XCTAssertEqual(result["audio_encoder.conv3.weight"]?.shape, [8, 3, 3, 8])
+        XCTAssertEqual(result["audio_encoder.conv1.bias"]?.shape, [8])
+    }
+
+    func testLeavesMLXLayoutConvWeightsAlone() {
+        let weights: [String: MLXArray] = [
+            "audio_encoder.conv1.weight": MLXArray.zeros([8, 3, 3, 1]),
+            "audio_encoder.conv2.weight": MLXArray.zeros([8, 3, 3, 8]),
+        ]
+
+        let result = SharpAIMossAudioSanitize.sanitize(weights: weights)
+
+        XCTAssertEqual(result["audio_encoder.conv1.weight"]?.shape, [8, 3, 3, 1])
+        XCTAssertEqual(result["audio_encoder.conv2.weight"]?.shape, [8, 3, 3, 8])
+    }
+
     func testEmptyInputGivesEmptyOutput() {
         XCTAssertTrue(SharpAIMossAudioSanitize.sanitize(weights: [:]).isEmpty)
     }

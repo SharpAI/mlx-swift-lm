@@ -117,4 +117,51 @@ final class SharpAIDeepseekV3BidirecModelTests: XCTestCase {
         let model = SharpAIDeepseekV3BidirecModel(try makeConfig(qLoraRank: "null"))
         XCTAssertEqual(model.loraLayers.count, 2)
     }
+
+    func testGateUsesUnbiasedScoresAndAlwaysAppliesScalingFactor() throws {
+        let json = """
+            {
+                "model_type": "deepseek_v3_bidirec",
+                "vocab_size": 32,
+                "hidden_size": 8,
+                "intermediate_size": 16,
+                "moe_intermediate_size": 8,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 2,
+                "n_routed_experts": 4,
+                "n_shared_experts": 1,
+                "num_experts_per_tok": 2,
+                "n_group": 1,
+                "topk_group": 1,
+                "norm_topk_prob": false,
+                "routed_scaling_factor": 2.5,
+                "first_k_dense_replace": 1,
+                "moe_layer_freq": 1,
+                "q_lora_rank": null,
+                "kv_lora_rank": 4,
+                "qk_rope_head_dim": 2,
+                "qk_nope_head_dim": 2,
+                "v_head_dim": 4,
+                "rms_norm_eps": 1e-6,
+                "rope_theta": 10000.0,
+                "max_position_embeddings": 128,
+                "attention_bias": false
+            }
+            """
+        let config = try JSONDecoder.json5().decode(
+            SharpAIDeepseekV3BidirecConfiguration.self, from: Data(json.utf8))
+        let gate = SharpAIDeepseekV3BidirecGate(config)
+        // Zero router weights give sigmoid(0) = 0.5 for every expert; the bias only picks experts.
+        gate.e_score_correction_bias = MLXArray([0.0, 0.3, 0.2, 0.1] as [Float])
+
+        let x = MLXArray.ones([1, 2, 8])
+        let (inds, weights) = gate(x)
+        eval(inds, weights)
+
+        XCTAssertEqual(Set(inds.asArray(Int32.self)), [1, 2])
+        for w in weights.asArray(Float.self) {
+            XCTAssertEqual(w, 1.25, accuracy: 1e-5)
+        }
+    }
 }

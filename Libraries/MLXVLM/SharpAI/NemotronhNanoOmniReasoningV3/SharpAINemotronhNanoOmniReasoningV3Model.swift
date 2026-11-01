@@ -29,6 +29,11 @@ public final class SharpAINemotronhNanoOmniReasoningV3Model: Module, LanguageMod
     private static let textKeyPrefixes = ["backbone.", "lm_head."]
     /// Video-only patch embedder. Video input is not ported, so these weights are dropped.
     private static let droppedSubstrings = ["video_embedder"]
+    /// RADIO buffers with no module in the built tower (the processor normalizes pixels, and the
+    /// summary token layout comes from the configuration).
+    private static let droppedSuffixes = [
+        "input_conditioner.norm_mean", "input_conditioner.norm_std", "radio_model.summary_idxs",
+    ]
 
     public let configuration: SharpAINemotronhNanoOmniReasoningV3Configuration
 
@@ -69,7 +74,10 @@ public final class SharpAINemotronhNanoOmniReasoningV3Model: Module, LanguageMod
     public func prepare(
         _ input: LMInput, cache: [KVCache], state: LMOutput.State?, prefill: PrefillParameters
     ) throws -> PrepareResult {
-        try languageModel.prepare(input, cache: cache, state: state, prefill: prefill)
+        guard input.image == nil, input.video == nil, input.audio == nil else {
+            throw SharpAINemotronhNanoOmniReasoningV3Error.multimodalInputNotSupported
+        }
+        return try languageModel.prepare(input, cache: cache, state: state, prefill: prefill)
     }
 
     public func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
@@ -123,7 +131,9 @@ public final class SharpAINemotronhNanoOmniReasoningV3Model: Module, LanguageMod
             } else if Self.textKeyPrefixes.contains(where: { key.hasPrefix($0) }) {
                 text[key] = value
             } else if keptPrefixes.contains(where: { key.hasPrefix($0) }) {
-                if Self.droppedSubstrings.contains(where: { key.contains($0) }) {
+                if Self.droppedSubstrings.contains(where: { key.contains($0) })
+                    || Self.droppedSuffixes.contains(where: { key.hasSuffix($0) })
+                {
                     continue
                 }
                 kept[key] = value

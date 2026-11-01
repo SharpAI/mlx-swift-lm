@@ -205,12 +205,12 @@ final class SharpAIDeepseekV3BidirecGate: Module {
         }
 
         let inds = argPartition(-choice, kth: topK - 1, axis: -1)[.ellipsis, ..<topK]
-        var weights = takeAlong(choice, inds, axis: -1)
+        var weights = takeAlong(scores, inds, axis: -1)
         if topK > 1, normTopkProb {
             let denominator = weights.sum(axis: -1, keepDims: true) + 1e-20
             weights = weights / denominator
-            weights = weights * routedScalingFactor
         }
+        weights = weights * MLXArray(routedScalingFactor)
 
         return (inds, weights)
     }

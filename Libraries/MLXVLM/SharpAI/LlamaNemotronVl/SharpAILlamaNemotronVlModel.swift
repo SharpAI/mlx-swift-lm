@@ -13,11 +13,21 @@ import MLX
 import MLXLMCommon
 import MLXNN
 
+/// Wraps the SigLIP transformer one level deeper, matching the checkpoint's
+/// `vision_model.vision_model.*` paths (the reference `SiglipVisionModel` adds that level).
+final class SharpAILlamaNemotronVlVisionTower: Module {
+    @ModuleInfo(key: "vision_model") var transformer: SharpAILlamaNemotronVlVision.Transformer
+
+    init(_ config: SharpAILlamaNemotronVlConfiguration.VisionConfiguration) {
+        self._transformer.wrappedValue = SharpAILlamaNemotronVlVision.Transformer(config)
+    }
+}
+
 /// VLM embedder with a SigLIP tower, a pixel-shuffle projector, and a bidirectional Llama decoder.
-/// Weight keys: `vision_model.*`, `mlp1.*`, `language_model.*`.
+/// Weight keys: `vision_model.vision_model.*`, `mlp1.*`, `language_model.*`.
 public final class SharpAILlamaNemotronVl: Module, VLMModel, KVCacheDimensionProvider {
 
-    @ModuleInfo(key: "vision_model") var visionModel: SharpAILlamaNemotronVlVision.Transformer
+    @ModuleInfo(key: "vision_model") var visionModel: SharpAILlamaNemotronVlVisionTower
     @ModuleInfo var mlp1: SharpAILlamaNemotronVlProjector.MLP1
     @ModuleInfo(key: "language_model") var languageModel: SharpAILlamaNemotronVlLanguage.Model
 
@@ -33,7 +43,7 @@ public final class SharpAILlamaNemotronVl: Module, VLMModel, KVCacheDimensionPro
         let vision = config.visionConfiguration
         let factor = config.pixelShuffleFactor
 
-        self._visionModel.wrappedValue = SharpAILlamaNemotronVlVision.Transformer(vision)
+        self._visionModel.wrappedValue = SharpAILlamaNemotronVlVisionTower(vision)
         self._mlp1.wrappedValue = SharpAILlamaNemotronVlProjector.MLP1(
             inputDimensions: vision.hiddenSize * factor * factor,
             hiddenDimensions: text.hiddenSize,
@@ -90,7 +100,7 @@ public final class SharpAILlamaNemotronVl: Module, VLMModel, KVCacheDimensionPro
     /// Vision features as `[images * tokens, text hidden]`, after pixel shuffle and projection.
     private func imageFeatures(_ pixelValues: MLXArray, dtype: DType) -> MLXArray {
         let nhwc = pixelValues.transposed(0, 2, 3, 1).asType(dtype)
-        let patches = visionModel(nhwc)
+        let patches = visionModel.transformer(nhwc)
 
         let count = patches.dim(1)
         let side = Int(Double(count).squareRoot())

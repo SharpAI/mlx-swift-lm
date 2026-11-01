@@ -59,7 +59,7 @@ final class SharpAIQwen3OmniMoeAudioAttention: Module {
         self.headDim = headDim
         self.scale = pow(Float(headDim), -0.5)
         _qProj.wrappedValue = Linear(hiddenSize, hiddenSize, bias: true)
-        _kProj.wrappedValue = Linear(hiddenSize, hiddenSize, bias: false)
+        _kProj.wrappedValue = Linear(hiddenSize, hiddenSize, bias: true)
         _vProj.wrappedValue = Linear(hiddenSize, hiddenSize, bias: true)
         _outProj.wrappedValue = Linear(hiddenSize, hiddenSize, bias: true)
     }

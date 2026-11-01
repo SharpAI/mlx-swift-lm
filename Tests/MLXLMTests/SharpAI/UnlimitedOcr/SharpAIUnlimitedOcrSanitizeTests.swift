@@ -63,7 +63,7 @@ final class SharpAIUnlimitedOcrSanitizeTests: XCTestCase {
 
         XCTAssertEqual(sanitized["model.vision_model.embeddings.patch_embedding.weight"]?.shape,
             [1024, 14, 14, 3])
-        XCTAssertEqual(sanitized["model.sam_model.neck.0.weight"]?.shape, [256, 1, 1, 768])
+        XCTAssertEqual(sanitized["model.sam_model.neck.c0.weight"]?.shape, [256, 1, 1, 768])
     }
 
     func testDoesNotDropTextKeysThatOnlyResembleVisionPrefixes() {
@@ -75,5 +75,30 @@ final class SharpAIUnlimitedOcrSanitizeTests: XCTestCase {
         let sanitized = SharpAIUnlimitedOcrSanitizer.sanitize(weights)
 
         XCTAssertEqual(Set(sanitized.keys), Set(weights.keys))
+    }
+
+    func testNeckKeysAreRenamedToNonNumericModuleKeys() {
+        let weights: [String: MLXArray] = [
+            "model.sam_model.neck.0.weight": zeros([4, 2, 1, 1]),
+            "model.sam_model.neck.1.weight": scalar(),
+            "model.sam_model.neck.1.bias": scalar(),
+            "model.sam_model.neck.2.weight": zeros([4, 4, 3, 3]),
+            "model.sam_model.neck.3.weight": scalar(),
+            "model.sam_model.net_2.weight": zeros([4, 4, 3, 3]),
+        ]
+        let sanitized = SharpAIUnlimitedOcrSanitizer.sanitize(weights)
+
+        XCTAssertEqual(
+            Set(sanitized.keys),
+            [
+                "model.sam_model.neck.c0.weight", "model.sam_model.neck.n1.weight",
+                "model.sam_model.neck.n1.bias", "model.sam_model.neck.c2.weight",
+                "model.sam_model.neck.n3.weight", "model.sam_model.net_2.weight",
+            ])
+        XCTAssertEqual(sanitized["model.sam_model.neck.c2.weight"]?.shape, [4, 3, 3, 4])
+
+        // Renaming is idempotent.
+        let again = SharpAIUnlimitedOcrSanitizer.sanitize(sanitized)
+        XCTAssertEqual(Set(again.keys), Set(sanitized.keys))
     }
 }

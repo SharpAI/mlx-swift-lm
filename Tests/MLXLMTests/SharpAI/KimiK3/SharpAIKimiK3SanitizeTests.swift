@@ -10,7 +10,7 @@ import XCTest
 
 final class SharpAIKimiK3SanitizeTests: XCTestCase {
 
-    func testKeepsAllKeysAndShapesUnchanged() {
+    func testDropsVisionKeysAndKeepsLanguageKeys() {
         let weights: [String: MLXArray] = [
             "language_model.model.embed_tokens.weight": MLXArray.zeros([64, 32]),
             "vision_tower.encoder.blocks.0.wqkv.weight": MLXArray.zeros([16, 16]),
@@ -19,9 +19,8 @@ final class SharpAIKimiK3SanitizeTests: XCTestCase {
 
         let sanitized = SharpAIKimiK3Sanitizer.sanitize(weights)
 
-        XCTAssertEqual(Set(sanitized.keys), Set(weights.keys))
+        XCTAssertEqual(Set(sanitized.keys), ["language_model.model.embed_tokens.weight"])
         XCTAssertEqual(sanitized["language_model.model.embed_tokens.weight"]?.shape, [64, 32])
-        XCTAssertEqual(sanitized["vision_tower.encoder.blocks.0.wqkv.weight"]?.shape, [16, 16])
     }
 
     func testEmptyInputGivesEmptyOutput() {

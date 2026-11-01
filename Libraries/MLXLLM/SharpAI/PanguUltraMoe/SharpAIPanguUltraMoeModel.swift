@@ -8,8 +8,8 @@
 //  num_dense_layers use a dense MLP, the rest a sigmoid-gated MoE with shared experts. With
 //  sandwich_norm, a second norm wraps the attention output and the MLP output.
 //
-//  Weight keys are the HF names. Routed experts stay separate modules (`mlp.experts.N.*`), so
-//  sanitize does not stack them. The multi-token-prediction layer (index num_hidden_layers) is
+//  Weight keys are the HF names, except that sanitize stacks the routed experts
+//  (`mlp.experts.N.*`) into `mlp.switch_mlp.*`. The multi-token-prediction layer (index num_hidden_layers) is
 //  not part of this model and is dropped in sanitize.
 //  UNVERIFIED: no checkpoint was loaded and no output was compared with the reference Python.
 //
@@ -54,7 +54,7 @@ class SharpAIPanguUltraMoeMoE: Module, UnaryLayer {
     let routedScalingFactor: Float
 
     @ModuleInfo(key: "gate") var gate: Linear
-    let experts: [SharpAIPanguUltraMoeMLP]
+    @ModuleInfo(key: "switch_mlp") var switchMLP: SwitchGLU
     @ModuleInfo(key: "shared_experts") var sharedExperts: SharpAIPanguUltraMoeMLP?
 
     init(_ config: SharpAIPanguUltraMoeConfiguration) {
@@ -67,10 +67,8 @@ class SharpAIPanguUltraMoeMoE: Module, UnaryLayer {
             config.routedScalingFactor, "routed_scaling_factor")
 
         _gate.wrappedValue = Linear(config.hiddenSize, numRouted, bias: false)
-        self.experts = (0 ..< numRouted).map { _ in
-            SharpAIPanguUltraMoeMLP(
-                hiddenSize: config.hiddenSize, intermediateSize: moeIntermediate)
-        }
+        _switchMLP.wrappedValue = SwitchGLU(
+            inputDims: config.hiddenSize, hiddenDims: moeIntermediate, numExperts: numRouted)
         if let shared = config.sharedExperts, shared > 0 {
             _sharedExperts.wrappedValue = SharpAIPanguUltraMoeMLP(
                 hiddenSize: config.hiddenSize, intermediateSize: moeIntermediate * shared)
@@ -87,14 +85,10 @@ class SharpAIPanguUltraMoeMoE: Module, UnaryLayer {
         }
         weights = weights * routedScalingFactor
 
-        // Sum of the selected gate weights per expert. Unselected experts get weight zero,
-        // which gives the same result as dispatching each token to its K experts.
-        var routed = zeros(x.shape)
-        for (e, expert) in experts.enumerated() {
-            let selected = (inds .== MLXArray(Int32(e))).asType(weights.dtype)
-            let expertWeight = (weights * selected).sum(axis: -1, keepDims: true)  // [B, L, 1]
-            routed = routed + expertWeight * expert(x).asType(weights.dtype)
-        }
+        let expertOutputs = switchMLP(x, inds)  // [B, L, K, H]
+        let routed =
+            (expertOutputs * weights.asType(expertOutputs.dtype)[.ellipsis, .newAxis])
+            .sum(axis: -2)
 
         var out = routed.asType(x.dtype)
         if let sharedExperts {
@@ -307,8 +301,8 @@ class SharpAIPanguUltraMoeModel: Module, LLMModel, KVCacheDimensionProvider {
         return model.embedTokens.asLinear(out)
     }
 
-    /// Drops rotary buffers, the tied LM head and the MTP layers. Routed experts keep their HF
-    /// names, so nothing is stacked.
+    /// Drops rotary buffers, the tied LM head and the MTP layers, and stacks routed experts
+    /// into `switch_mlp`.
     func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         SharpAIPanguUltraMoeSanitizer.sanitize(weights, configuration: configuration)
     }
