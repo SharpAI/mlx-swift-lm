@@ -3,6 +3,53 @@
 MLX Swift LM is a Swift package to build tools and applications with large language models (LLMs) and vision language models (VLMs) in [MLX Swift](https://github.com/ml-explore/mlx-swift).
 
 > [!IMPORTANT]
+> **This is the SharpAI fork of [ml-explore/mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm).**
+> It tracks upstream (nothing in upstream `main` is missing here) and adds more model architectures,
+> DeepSeek-V4 support, an offline mode and a conformance test suite. The table below says exactly what
+> differs and how many models you get. Counts are for the commit this README ships with; the
+> [How to recount](#how-to-recount) section reproduces them.
+
+## How this fork differs from upstream
+
+| `model_type` registry | Upstream `ml-explore/mlx-swift-lm` | This fork (registered, works through the factory) | Difference |
+| --- | ---: | ---: | ---: |
+| LLM (`LLMTypeRegistry`) | 67 | **72** | **+5** |
+| VLM (`VLMTypeRegistry`) | 22 | 22 | 0 |
+| Embedder (`EmbedderTypeRegistry`) | 12 | 12 | 0 |
+
+The +5 LLM types are `deepseek_v3_2`, `gemma4_assistant`, `glm_moe_dsa`, `jamba_3b` and `deepseek_v4`
+(DeepSeek-V4, registered through a fork hook that wins over upstream).
+
+**Coded but not registered yet.** The fork also contains 127 further model implementations under
+`Libraries/MLXLLM/SharpAI/` (56) and `Libraries/MLXVLM/SharpAI/` (71), covering 128 distinct `model_type`
+values (57 LLM, 72 VLM). They compile and have unit tests, but they are **not reachable through
+`LLMModelFactory` / `VLMModelFactory` on `main`**, and none has been loaded from a real checkpoint.
+Wiring them in is tracked as a separate step (LLM first, VLM after it needs processors).
+When a key is wired, upstream still wins if upstream registers the same `model_type`.
+
+Other differences from upstream:
+
+- **DeepSeek-V4** model, KV cache (compressor state) and prompt-cache restore.
+- **Offline mode**: `SWIFTLM_OFFLINE` hard-blocks downloads; `HF_HUB_OFFLINE` serves cache hits and
+  throws on a miss without waiting (`Libraries/MLXLMCommon/SharpAIOverlay/OfflineGuard.swift`).
+- **Conformance suite** under `scripts/conformance/` and `tools/conformance/`: generated expectations
+  for every registry, golden-output tests against reference outputs (vLLM-derived), and a sealed offline CI job.
+- Extra CI jobs (macOS 15 build and test, sealed offline conformance, umbrella-repo integration).
+
+Everything else is upstream code; we merge upstream regularly, so upstream fixes arrive here.
+
+### How to recount
+
+```bash
+git fetch upstream
+git show upstream/main:Libraries/MLXLLM/LLMModelFactory.swift   # LLMTypeRegistry keys
+python3 scripts/conformance/gen_expectations.py                 # prints registry key counts for this tree
+```
+
+`Tests/MLXLMTests/Conformance/ConformanceExpectations.swift` is generated from the same sources and fails
+CI when a registry changes without the expectation being regenerated.
+
+> [!IMPORTANT]
 > The `main` branch is a _new_ major version number: 3.x.  In order
 > to decouple from tokenizer and downloader packages some breaking
 > changes were introduced. See [upgrading documentation](https://swiftpackageindex.com/ml-explore/mlx-swift-lm/main/documentation/mlxlmcommon/upgrade) for detailed instructions on upgrading.
