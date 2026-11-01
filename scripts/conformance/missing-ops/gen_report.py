@@ -96,7 +96,9 @@ OVERLAYS = {
 # SL-50: the SharpAIModelOverlays aggregate lists the wired model_types one per line; each is declared by
 # one per-model registration file, whose first `XConfiguration.self` is the type it decodes.
 WIRED_AGGREGATE = {"llm": ("Libraries/MLXLLM/SharpAI/SharpAIModelOverlays.swift", "llmWiredKeys",
-                           "Libraries/MLXLLM/SharpAI")}
+                           "Libraries/MLXLLM/SharpAI"),
+                   "vlm": ("Libraries/MLXVLM/SharpAI/SharpAIVLMModelOverlays.swift", "vlmWiredKeys",
+                           "Libraries/MLXVLM/SharpAI")}
 
 
 def wired_entries(root, kind):
