@@ -55,6 +55,7 @@ class SharpAIInklingModel: Module, LLMModel {
         }
         self.model = SharpAIInklingTextModelInner(config)
         _lmHead.wrappedValue = Linear(config.hiddenSize, config.vocabularySize, bias: false)
+        _ = SharpAIInklingTokenHistoryCache.registration
     }
 
     func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {

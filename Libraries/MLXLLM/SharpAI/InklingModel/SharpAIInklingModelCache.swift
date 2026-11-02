@@ -26,6 +26,11 @@ final class SharpAIInklingTokenHistoryCache: BaseKVCache, AuxiliaryKVCache {
         return cache
     }
 
+    /// Registers the class once so a saved prompt cache restores in a fresh process.
+    static let registration: Void = {
+        try! registerKVCacheType(SharpAIInklingTokenHistoryCache.self)
+    }()
+
     private(set) var tokens: MLXArray?
 
     override init() { super.init() }
