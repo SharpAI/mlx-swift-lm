@@ -34,6 +34,8 @@ public enum EmbedderTypeRegistry {
         "distilbert": create(BertConfiguration.self) { BertModel($0) },
 
         "nomic_bert": create(NomicBertConfiguration.self) { NomicBertModel($0, pooler: false) },
+        // SharpAI: ModernBERT encoder (SL-67). Upstream wins: no upstream key may be overridden.
+        "modernbert": create(ModernBertConfiguration.self) { ModernBertModel($0) },
         "qwen3": create(Qwen3Configuration.self) { Qwen3Model($0) },
         "embedding_gemma2": create(EmbeddingGemma2Configuration.self) { EmbeddingGemma2($0) },
         "embedding_gemma2_text": create(EmbeddingGemma2Configuration.self) { EmbeddingGemma2($0) },
