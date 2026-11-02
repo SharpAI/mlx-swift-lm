@@ -19,7 +19,8 @@ public struct DeepseekV3Configuration: Codable, Sendable {
     var nRoutedExperts: Int?
     var routedScalingFactor: Float
     var kvLoraRank: Int
-    var qLoraRank: Int
+    // Optional: DeepSeek-V2-Lite style configs set `q_lora_rank: null` (plain q_proj).
+    var qLoraRank: Int?
     var qkRopeHeadDim: Int
     var vHeadDim: Int
     var qkNopeHeadDim: Int
