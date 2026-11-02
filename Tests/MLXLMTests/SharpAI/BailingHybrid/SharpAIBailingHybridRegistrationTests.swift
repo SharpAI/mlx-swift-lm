@@ -55,6 +55,27 @@ final class SharpAIBailingHybridRegistrationTests: XCTestCase {
         }
         """
 
+    func testUnsupportedVariantsAreRejectedUpFront() throws {
+        let creator = try XCTUnwrap(SharpAIBailingHybridOverlay.creators["bailing_hybrid"])
+        func json(_ extra: String) -> Data {
+            Data(
+                (validJSON.dropLast(2) + ",\n" + extra + "\n}").utf8)
+        }
+        let variants = [
+            "\"architectures\": [\"BailingMoeV3ForCausalLM\"]",
+            "\"linear_silu\": true",
+            "\"up_proj_norm\": true",
+            "\"quantization_config\": {\"quant_method\": \"fp8\"}",
+        ]
+        for extra in variants {
+            XCTAssertThrowsError(try creator(json(extra)), extra) { error in
+                guard case ModelFactoryError.unsupportedModelType = error else {
+                    return XCTFail("expected unsupportedModelType for \(extra), got \(error)")
+                }
+            }
+        }
+    }
+
     func testCreatorIsRegisteredForModelType() {
         XCTAssertNotNil(SharpAIBailingHybridOverlay.creators["bailing_hybrid"])
     }

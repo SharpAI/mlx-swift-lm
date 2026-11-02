@@ -91,12 +91,44 @@ final class SharpAIInklingModelRegistrationTests: XCTestCase {
         XCTAssertLessThan(maxDiff, 1e-4)
     }
 
-    func testIncrementalDecodeFailsLoudly() throws {
+    func testCachedDecodeMatchesFullSequenceForward() throws {
         let creator = try makeCreator()
         let model = try XCTUnwrap(creator(Data(tinyJSON.utf8)) as? SharpAIInklingModel)
+        // Deterministic synthetic checkpoint under the model's own parameter names, loaded the
+        // way a checkpoint is: sanitize, then update with every key verified.
+        var checkpoint: [String: MLXArray] = [:]
+        for (key, value) in model.parameters().flattened() {
+            checkpoint[key] = SharpAIAirgap.fill(name: key, shape: value.shape, dtype: value.dtype)
+        }
+        let sanitized = model.sanitize(weights: checkpoint)
+        XCTAssertEqual(Set(sanitized.keys), Set(checkpoint.keys))
+        try model.update(
+            parameters: ModuleParameters.unflattened(sanitized), verify: [.all])
+        eval(model)
 
-        // No KV or short-conv state exists yet, so generation must fail loudly, not silently.
-        XCTAssertThrowsError(try model.newCache(parameters: nil))
+        let tokens = MLXArray([Int32(3), 7, 11, 19, 23, 5, 31]).reshaped([1, 7])
+        let full = model(tokens, cache: nil)
+
+        let cache = try model.newCache(parameters: nil)
+        XCTAssertEqual(cache.count, 1)
+        let prefill = model(tokens[0..., ..<6], cache: cache)
+        XCTAssertEqual(cache[0].offset, 6)
+        let step = model(tokens[0..., 6...], cache: cache)
+        XCTAssertEqual(cache[0].offset, 7)
+        XCTAssertEqual(prefill.shape, [1, 6, 60])
+        XCTAssertEqual(step.shape, [1, 1, 60])
+
+        let prefillDiff = abs(prefill - full[0..., ..<6, 0...]).max().item(Float.self)
+        let stepDiff = abs(step - full[0..., 6..., 0...]).max().item(Float.self)
+        XCTAssertLessThan(prefillDiff, 1e-4)
+        XCTAssertLessThan(stepDiff, 1e-4)
+        XCTAssertTrue(step.asArray(Float.self).allSatisfy { $0.isFinite })
+
+        // Trim rewinds the record: re-decoding the last token gives the same logits again.
+        XCTAssertEqual(cache[0].trim(1), 1)
+        XCTAssertEqual(cache[0].offset, 6)
+        let again = model(tokens[0..., 6...], cache: cache)
+        XCTAssertLessThan(abs(again - step).max().item(Float.self), 1e-5)
     }
 
     func testRelativeBiasMatchesTransformersFormula() {

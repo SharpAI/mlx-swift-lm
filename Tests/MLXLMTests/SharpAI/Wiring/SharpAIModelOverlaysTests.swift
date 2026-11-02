@@ -11,7 +11,7 @@ import Testing
 struct SharpAIModelOverlaysTests {
 
     /// Overlay keys that are deliberately NOT registered; see the header of SharpAIModelOverlays.swift.
-    static let excluded: [String] = ["dots3_note_mtp", "k3_dspark", "kimi_k3_mtp", "minimax_m2", "minimax_m3_dspark", "minimax_m3_mtp", "muse_spark_dspark", "sarvam_mla", "unknown", "params.json", "inkling_model", "inkling_mm_model", "pangu_ultra_moe_mtp", "step5", "modernbert", "llama_bidirec", "deepseek_v3_bidirec", "openai_privacy_filter", "jina_embeddings_v5"]
+    static let excluded: [String] = ["dots3_note_mtp", "k3_dspark", "kimi_k3_mtp", "minimax_m2", "minimax_m3_dspark", "minimax_m3_mtp", "muse_spark_dspark", "sarvam_mla", "unknown", "params.json", "inkling_mm_model", "pangu_ultra_moe_mtp", "step5", "modernbert", "llama_bidirec", "deepseek_v3_bidirec", "openai_privacy_filter", "jina_embeddings_v5"]
 
     @Test("every wired key resolves in LLMTypeRegistry.shared")
     func everyWiredKeyIsRegistered() async {

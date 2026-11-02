@@ -157,6 +157,12 @@ enum SharpAIAirgap {
         .init(key: "vaultgemma", json: #"""
 {"architectures": ["VaultGemmaForCausalLM"], "model_type": "vaultgemma", "vocab_size": 100, "hidden_size": 32, "intermediate_size": 64, "num_hidden_layers": 2, "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 8, "hidden_activation": "gelu_pytorch_tanh", "max_position_embeddings": 64, "rms_norm_eps": 1e-06, "rope_theta": 10000.0, "tie_word_embeddings": true, "attention_bias": false, "query_pre_attn_scalar": 8, "sliding_window": 4, "layer_types": ["sliding_attention", "full_attention"], "final_logit_softcapping": 30.0, "attn_logit_softcapping": 50.0}
 """#),
+        .init(key: "bailing_hybrid", json: #"""
+{"model_type":"bailing_hybrid","vocab_size":32,"hidden_size":32,"intermediate_size":48,"num_hidden_layers":2,"num_attention_heads":4,"num_key_value_heads":4,"head_dim":8,"rms_norm_eps":1e-6,"rope_theta":10000.0,"tie_word_embeddings":false,"kv_lora_rank":8,"qk_nope_head_dim":4,"qk_rope_head_dim":4,"v_head_dim":4,"layer_group_size":2,"group_norm_size":2,"partial_rotary_factor":0.5,"num_experts":4,"num_experts_per_tok":2,"moe_intermediate_size":8,"num_shared_experts":1,"moe_shared_expert_intermediate_size":8,"first_k_dense_replace":1,"n_group":2,"topk_group":1,"routed_scaling_factor":2.5,"moe_router_enable_expert_bias":true}
+"""#),
+        .init(key: "inkling_model", json: #"""
+{"model_type":"inkling_model","architectures":["InklingForCausalLM"],"vocab_size":64,"unpadded_vocab_size":60,"hidden_size":32,"num_hidden_layers":4,"num_attention_heads":4,"num_key_value_heads":2,"head_dim":8,"swa_num_attention_heads":4,"swa_num_key_value_heads":1,"swa_head_dim":8,"sliding_window_size":4,"d_rel":4,"rel_extent":8,"log_scaling_n_floor":2,"log_scaling_alpha":0.1,"local_layer_ids":[0,1,3],"dense_mlp_idx":1,"sconv_kernel_size":4,"intermediate_size":16,"dense_intermediate_size":48,"n_routed_experts":8,"num_experts_per_tok":2,"n_shared_experts":2,"route_scale":8.0,"logits_mup_width_multiplier":4.0}
+"""#),
     ]
 }
 
