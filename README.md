@@ -14,13 +14,13 @@ MLX Swift LM is a Swift package to build tools and applications with large langu
 | | Upstream `ml-explore/mlx-swift-lm` | This fork: usable through the factory today | This fork: implemented in the repo (added on top) |
 | --- | ---: | ---: | ---: |
 | **LLM** (`LLMTypeRegistry`) | 67 | **109** (+42) | **+57** new types |
-| **VLM** (`VLMTypeRegistry`) | 22 | 22 | **+72** new types |
+| **VLM** (`VLMTypeRegistry`) | 22 | **28** (+6) | **+72** new types |
 | **Embedder** (`EmbedderTypeRegistry`) | 12 | 12 | — |
 
 **The 127 new implementations are the main difference.** They live in `Libraries/MLXLLM/SharpAI/` (56) and
 `Libraries/MLXVLM/SharpAI/` (71): model classes, configuration, weight sanitizing and creators, each with
 unit tests. 37 of the LLM ones are wired into `LLMModelFactory` and load through the real factory path; the
-remaining LLM ones and the VLM ones follow (VLM needs processors first). If upstream registers the same
+remaining LLM ones and the other VLM ones follow (VLM needs processors first). If upstream registers the same
 `model_type`, upstream wins. They are tested air-gapped: each wired model loads a deterministic synthetic
 checkpoint (config.json plus safetensors, generated locally, nothing downloaded) and runs a forward pass.
 Reports from real use are welcome.
@@ -28,6 +28,8 @@ Reports from real use are welcome.
 The 42 extra LLM types usable today are the 37 wired ones plus `deepseek_v3_2`, `gemma4_assistant`,
 `glm_moe_dsa`, `jamba_3b` and `deepseek_v4` (DeepSeek-V4, registered through a fork hook that wins over
 upstream). The fork also adds 2 and changes 39 existing upstream LLM model files.
+The 6 extra VLM types usable today are `interns1_pro`, `interns2_mobius`, `kimi_k3`, `qwen4_exp`, `step1` and
+`intern_s2_preview`; the first five are text-only for now (image, video and audio input is rejected with a clear error).
 
 Other differences from upstream:
 
