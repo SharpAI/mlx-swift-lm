@@ -29,6 +29,7 @@ public enum SharpAIVLMModelOverlays {
     /// `intern_s2_preview` subclasses upstream Qwen3.5 and keeps its real (Qwen3-VL) processor.
     /// One per line: `scripts/conformance/gen_expectations.py` and `missing-ops/gen_report.py` read this list.
     public static let vlmWiredKeys: Set<String> = [
+        "cosmos3_omni",
         "intern_s2_preview",
         "interns1_pro",
         "interns2_mobius",
@@ -43,6 +44,7 @@ public enum SharpAIVLMModelOverlays {
         func add(_ source: [String: (Data) throws -> any LanguageModel]) {
             for (key, creator) in source where vlmWiredKeys.contains(key) { all[key] = creator }
         }
+        add(SharpAICosmos3OmniOverlay.creators)
         add(SharpAIInternS2PreviewOverlay.creators)
         add(SharpAIInterns1ProOverlay.creators)
         add(SharpAIInterns2MobiusOverlay.creators)

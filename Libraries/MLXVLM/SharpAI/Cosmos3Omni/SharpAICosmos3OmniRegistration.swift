@@ -5,14 +5,15 @@
 // (Verified against: https://raw.githubusercontent.com/huggingface/transformers/main/src/transformers/models/cosmos3_omni/modeling_cosmos3_omni.py).
 // This creator therefore builds a `Qwen3VL` from the same understanding config.
 //
-// Loading is NOT wired here. A loader must run `SharpAICosmos3OmniSanitizer.sanitize`, then
-// `qwen3VLAttentionNames`, then `Qwen3VL.sanitize`. The sanitizer rejects `*_moe_gen` keys, so a
-// checkpoint that still carries the generation experts (nvidia/Cosmos3-Nano) does not load until
-// the drop-or-reject policy is decided.
-// Wiring into VLMTypeRegistry is left to the overlay consumer; VLMModelFactory is not edited.
+// The creator returns `SharpAICosmos3OmniModel`: the Qwen3VL as child `und`, the generation tower
+// (`gen`, the second Mixture-of-Transformers stream) and the modality heads (`gen_heads`). Its
+// `sanitize(weights:)` runs the Cosmos sanitizer, `qwen3VLAttentionNames` and `Qwen3VL.sanitize`, so the
+// real checkpoint keys (understanding, generation tower and heads) all load with none dropped.
+// The aggregate in SharpAIVLMModelOverlays wires it into VLMTypeRegistry.
 //
-// Known gaps (not implemented): generation experts (MoT, diffusion, action, sound), the processor
-// for image and video inputs, and the subfolder weight layout (see SharpAICosmos3OmniWeightFiles).
+// Known gaps (not implemented): sampler and guidance, VAE, sound tokenizer, the processor for
+// image and video inputs (the Qwen3VLProcessor is used, UNVERIFIED against the checkpoint), and
+// the subfolder weight layout loading (see SharpAICosmos3OmniWeightFiles).
 
 import Foundation
 import MLXLMCommon
@@ -26,7 +27,12 @@ public enum SharpAICosmos3OmniOverlay {
                 SharpAICosmos3OmniConfiguration.self, from: data)
             try configuration.validateModelConfiguration()
             let understanding = try SharpAICosmos3OmniConfiguration.qwen3VLConfiguration(from: data)
-            return Qwen3VL(understanding)
+            // The head sizes are decoded on their own, without the tower checks (the tiny reference
+            // config has an mrope_section that does not sum to head_dim / 2, which only matters for
+            // the tower). A malformed head field throws here instead of building default-sized heads.
+            let heads = try SharpAICosmos3OmniHeadsConfiguration.decode(
+                rootConfig: data, fallbackHiddenSize: understanding.textConfiguration.hiddenSize)
+            return SharpAICosmos3OmniModel(understanding, heads: heads)
         }
     ]
 }

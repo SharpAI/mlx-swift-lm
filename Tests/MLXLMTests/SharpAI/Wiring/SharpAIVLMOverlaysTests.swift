@@ -67,9 +67,9 @@ struct SharpAIVLMOverlaysTests {
 
     @Test("every wired key resolves in VLMTypeRegistry.shared")
     func wiredKeysAreRegistered() async {
-        #expect(SharpAIVLMModelOverlays.vlmWiredKeys.count == 6)
+        #expect(SharpAIVLMModelOverlays.vlmWiredKeys.count == 7)
         #expect(SharpAIVLMModelOverlays.textOnlyKeys.isSubset(of: SharpAIVLMModelOverlays.vlmWiredKeys))
-        #expect(SharpAIVLMModelOverlays.vlmWiredKeys.subtracting(SharpAIVLMModelOverlays.textOnlyKeys) == ["intern_s2_preview"])
+        #expect(SharpAIVLMModelOverlays.vlmWiredKeys.subtracting(SharpAIVLMModelOverlays.textOnlyKeys) == ["cosmos3_omni", "intern_s2_preview"])
         for key in SharpAIVLMModelOverlays.vlmWiredKeys.sorted() {
             #expect(await VLMTypeRegistry.shared.contains(key), "\(key) is wired but not registered")
         }
@@ -108,6 +108,14 @@ struct SharpAIVLMOverlaysTests {
         #expect(try registry.processorType(for: context, declaredProcessorType: nil) == SharpAITextOnlyProcessor.processorType)
         let fallback = try registry.fallbackProcessorConfiguration(for: context)
         #expect(fallback?.processorType == SharpAITextOnlyProcessor.processorType)
+    }
+
+    @Test("cosmos3_omni resolves to the upstream Qwen3-VL processor")
+    func cosmosUsesQwen3VLProcessor() throws {
+        let context = VLMProcessorLoadingContext(modelId: "m", modelType: "cosmos3_omni", configurationData: Data("{}".utf8))
+        let registry = VLMProcessorLoadingRegistry.shared
+        #expect(try registry.processorType(for: context, declaredProcessorType: nil) == "Qwen3VLProcessor")
+        #expect(try registry.processorType(for: context, declaredProcessorType: "Cosmos3Processor") == "Qwen3VLProcessor")
     }
 
     @Test("a model that keeps its own processor is left alone")

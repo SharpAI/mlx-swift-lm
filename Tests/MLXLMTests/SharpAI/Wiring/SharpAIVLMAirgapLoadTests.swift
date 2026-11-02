@@ -18,6 +18,9 @@ import Testing
 struct SharpAIVLMAirgapLoadTests {
 
     static let cases: [SharpAIAirgap.Case] = [
+        .init(key: "cosmos3_omni", json: #"""
+{"model_type":"cosmos3_omni","architectures":["Cosmos3OmniForConditionalGeneration"],"tie_word_embeddings":false,"image_token_id":60,"video_token_id":61,"vision_start_token_id":62,"vision_end_token_id":63,"model":{"config":{"sound_gen":true,"action_gen":true,"latent_channel":2,"latent_patch_size":2,"max_action_dim":4,"sound_dim":4,"num_embodiment_domains":3}},"text_config":{"model_type":"qwen3_vl_text","hidden_size":32,"intermediate_size":32,"num_hidden_layers":2,"num_attention_heads":4,"num_key_value_heads":2,"head_dim":8,"max_position_embeddings":512,"rms_norm_eps":1e-06,"vocab_size":64,"rope_parameters":{"mrope_interleaved":true,"mrope_section":[2,1,1],"rope_theta":10000,"rope_type":"default"}},"vision_config":{"deepstack_visual_indexes":[0,1],"depth":2,"hidden_size":32,"in_channels":3,"intermediate_size":32,"model_type":"qwen3_vl_vision","num_heads":4,"num_position_embeddings":16,"out_hidden_size":32,"patch_size":16,"spatial_merge_size":1,"temporal_patch_size":2}}
+"""#),
         .init(key: "interns1_pro", json: #"""
 {"model_type":"interns1_pro","tie_word_embeddings":false,"text_config":{"hidden_size":8,"num_hidden_layers":1,"intermediate_size":16,"num_attention_heads":2,"num_key_value_heads":1,"head_dim":4,"vocab_size":16}}
 """#),
