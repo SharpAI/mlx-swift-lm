@@ -11,7 +11,7 @@
 // `ModelTypeRegistry.contains` stays false for them):
 //   - creators that always throw (dots3_note_mtp, k3_dspark, kimi_k3_mtp, minimax_m2,
 //     minimax_m3_dspark, minimax_m3_mtp, muse_spark_dspark, sarvam_mla, unknown, params.json)
-//   - models that build but cannot generate (inkling_model, inkling_mm_model, pangu_ultra_moe_mtp)
+//   - models that build but cannot generate (inkling_mm_model, pangu_ultra_moe_mtp)
 //   - conditional or experimental ones (step5)
 //   - encoder-style models that the generation path does not serve (modernbert, llama_bidirec,
 //     deepseek_v3_bidirec, openai_privacy_filter, jina_embeddings_v5)
@@ -32,6 +32,7 @@ public enum SharpAIModelOverlays {
         "PanguEmbedded",
         "alice_ai",
         "axk1",
+        "bailing_hybrid",
         "beam",
         "bailing_moe_v3",
         "cohere2_moe",
@@ -46,6 +47,7 @@ public enum SharpAIModelOverlays {
         "hy_v3",
         "hy_v4",
         "hyperclovax",
+        "inkling_model",
         "iquestcoder",
         "iquestloopcoder",
         "jais2",
@@ -77,6 +79,7 @@ public enum SharpAIModelOverlays {
             add(SharpAIAliceAiOverlay.creators)
             add(SharpAIAxk1Overlay.creators)
             add(SharpAIBailingMoeV3Overlay.creators)
+            add(SharpAIBailingHybridOverlay.creators)
             add(SharpAIBeamOverlay.creators)
             add(SharpAICohere2MoeOverlay.creators)
             add(SharpAIDeepseekV32Overlay.creators)
@@ -90,6 +93,7 @@ public enum SharpAIModelOverlays {
             add(SharpAIHyV3Overlay.creators)
             add(SharpAIHyV4Overlay.creators)
             add(SharpAIHyperclovaxOverlay.creators)
+            add(SharpAIInklingModelOverlay.creators)
             add(SharpAIIquestcoderOverlay.creators)
             add(SharpAIIquestloopcoderOverlay.creators)
             add(SharpAIJais2Overlay.creators)
