@@ -110,7 +110,9 @@ public enum VLMTypeRegistry {
         "lfm2-vl": create(LFM2VLConfiguration.self, LFM2VL.init),
         "glm_ocr": create(GlmOcrConfiguration.self, GlmOcr.init),
         "muse_glimmer": create(MuseGlimmerConfiguration.self, MuseGlimmer.init),
-    ])
+    ]
+    // SharpAI: SL-51 overlays, UPSTREAM WINS -- a key the literal above registers keeps its creator.
+    .merging(SharpAIVLMModelOverlays.vlm, uniquingKeysWith: SharpAIVLMModelOverlays.upstreamWins))
 }
 
 public enum VLMProcessorTypeRegistry {
@@ -155,7 +157,9 @@ public enum VLMProcessorTypeRegistry {
             GlmOcrProcessorConfiguration.self, GlmOcrProcessor.init),
         "MuseGlimmerProcessor": create(
             MuseGlimmerProcessorConfiguration.self, MuseGlimmerProcessor.init),
-    ])
+    ]
+    // SharpAI: SL-51 processors, UPSTREAM WINS.
+    .merging(SharpAIVLMModelOverlays.processors, uniquingKeysWith: SharpAIVLMModelOverlays.upstreamWins))
 }
 
 /// Registry of models and any overrides that go with them, e.g. prompt augmentation.

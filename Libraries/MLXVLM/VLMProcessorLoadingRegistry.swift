@@ -74,6 +74,8 @@ public final class VLMProcessorLoadingRegistry: @unchecked Sendable {
             "mistral3": "Mistral3Processor",
             "gemma4_unified": "Gemma4UnifiedProcessor",
         ]),
+        // SharpAI: SL-51 text-only models share one processor whatever their checkpoint declares.
+        SharpAITextOnlyProcessorLoadingResolver(modelTypes: SharpAIVLMModelOverlays.textOnlyKeys),
     ])
 
     private let lock = NSLock()

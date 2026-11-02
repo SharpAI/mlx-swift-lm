@@ -32,7 +32,9 @@ OVERLAY_FILES = {"llm": ["Libraries/MLXLLM/SharpAI/SharpAIDeepseekV4Registration
 
 # SL-50: model_types wired through the SharpAIModelOverlays aggregate (upstream wins), listed one per
 # line in `llmWiredKeys`. Only those are registered at runtime; the per-model overlay files hold more.
-WIRED_AGGREGATE = {"llm": ("Libraries/MLXLLM/SharpAI/SharpAIModelOverlays.swift", "llmWiredKeys")}
+# SL-51 adds the VLM aggregate (`vlmWiredKeys`).
+WIRED_AGGREGATE = {"llm": ("Libraries/MLXLLM/SharpAI/SharpAIModelOverlays.swift", "llmWiredKeys"),
+                   "vlm": ("Libraries/MLXVLM/SharpAI/SharpAIVLMModelOverlays.swift", "vlmWiredKeys")}
 
 
 def wired_keys(kind):
