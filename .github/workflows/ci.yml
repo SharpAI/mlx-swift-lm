@@ -150,8 +150,13 @@ jobs:
           retention-days: 7
 
   integration-test:
+    # Also covers what the former "Test with SwiftLM (Umbrella Repo)" workflow (downstream_integration.yml) ran: both
+    # checked out SwiftLM main and built it against this PR. One job now does both, so a PR holds one macOS runner
+    # for them instead of two. The Release build + speculative script and the Debug build + `swift test` stay separate
+    # steps, each with `!cancelled()` so a failure in one does not hide the other.
     name: Build & Test SwiftLM Integration
     runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - name: Checkout mlx-swift-lm (this repository)
         uses: actions/checkout@v4
@@ -164,7 +169,7 @@ jobs:
         with:
           repository: SharpAI/SwiftLM
           # The newCache-throws fix (SwiftLM#167) has long been merged to main, so test
-          # against main, as downstream_integration.yml does. The old temporary branch
+          # against main (this job also runs the former downstream_integration.yml steps). The old temporary branch
           # is 167 commits behind main and cannot build against newer mlx-swift-lm.
           ref: main
           path: SwiftLM
@@ -172,6 +177,9 @@ jobs:
 
       - name: Select Xcode 26 (Swift 6.2)
         run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Install Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || true
 
       - name: Redirect Dependencies to Local Form
         run: |
@@ -187,6 +195,13 @@ jobs:
           git fetch origin main
           git checkout origin/main
           
+      - name: Cache SwiftLM Swift packages
+        uses: actions/cache@v4
+        with:
+          path: SwiftLM/.build
+          key: ${{ runner.os }}-swiftlm-spm-${{ hashFiles('SwiftLM/Package.resolved') }}
+          restore-keys: ${{ runner.os }}-swiftlm-spm-
+
       - name: Build SwiftLM
         run: |
           cd SwiftLM
@@ -199,11 +214,35 @@ jobs:
           /tmp/mlx_venv/bin/pip install --quiet mlx
           MLX_LIB=$(find /tmp/mlx_venv -name "mlx.metallib" | head -n 1)
           cp $MLX_LIB .build/release/ 2>/dev/null || true
+          echo "MLX_METAL_LIB=$MLX_LIB" >> "$GITHUB_ENV"
 
       - name: Run Speculative Decoding Tests
         run: |
           cd SwiftLM
           bash tests/test-speculative-eval.sh
+
+      # Former downstream_integration.yml (Debug build of SwiftLM's tests against this PR's mlx-swift-lm).
+      - name: Build SwiftLM tests (Debug)
+        if: ${{ !cancelled() }}
+        run: |
+          cd SwiftLM
+          swift build --build-tests
+
+      - name: Copy Metal library to Debug build outputs
+        if: ${{ !cancelled() }}
+        run: |
+          test -f "$MLX_METAL_LIB" || { echo "::error::mlx.metallib not found at $MLX_METAL_LIB"; exit 1; }
+          sudo cp "$MLX_METAL_LIB" /usr/local/lib/mlx.metallib || true
+          # Copy to all locations the test runner and linked bundles may search
+          find SwiftLM/.build -type d \( -name "debug" -o -name "release" \) -exec cp "$MLX_METAL_LIB" {}/ \; 2>/dev/null || true
+          find SwiftLM/.build -name "*.xctest" -exec cp "$MLX_METAL_LIB" {}/Contents/MacOS/ \; 2>/dev/null || true
+          find SwiftLM/.build -name "*Tests" -type f -exec sh -c 'cp "'"$MLX_METAL_LIB"'" "$(dirname ${1})/"' _ {} \; 2>/dev/null || true
+
+      - name: Run SwiftLM Integration Tests
+        if: ${{ !cancelled() }}
+        run: |
+          cd SwiftLM
+          swift test --parallel --skip-build
 
   sealed-offline:
     # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights. The
