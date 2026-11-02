@@ -10,21 +10,6 @@ import MLX
 import MLXLMCommon
 import MLXNN
 
-/// `mlp2x_gelu` projector: Linear, GELU, Linear. Keys are `mm_projector.0` and `mm_projector.2`.
-final class SharpAIPhi4SiglipProjector: Module {
-    @ModuleInfo(key: "0") var linear0: Linear
-    @ModuleInfo(key: "2") var linear2: Linear
-
-    init(inputSize: Int, hiddenSize: Int) {
-        _linear0.wrappedValue = Linear(inputSize, hiddenSize, bias: true)
-        _linear2.wrappedValue = Linear(hiddenSize, hiddenSize, bias: true)
-    }
-
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
-        linear2(MLXNN.gelu(linear0(x)))
-    }
-}
-
 /// phi4-siglip model. Created by ``SharpAIPhi4SiglipOverlay``.
 public class SharpAIPhi4SiglipModel: Module, VLMModel, KVCacheDimensionProvider {
 
