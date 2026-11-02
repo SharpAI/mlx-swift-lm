@@ -251,7 +251,7 @@ final class SharpAIStep5RegistrationTests: XCTestCase {
         quantize(model: moe, groupSize: 64, bits: 4, filter: { path, _ in path == "gate" })
         XCTAssertTrue(moe.gate is QuantizedLinear)
 
-        let x = MLXRandom.normal([1, 3, 64])
+        let x = SharpAIAirgap.fill(name: "step5.gate.input", shape: [1, 3, 64], dtype: .float32)
         let y = moe(x)
         XCTAssertEqual(y.shape, [1, 3, 64])
         XCTAssertTrue(y.asArray(Float.self).allSatisfy { $0.isFinite })
