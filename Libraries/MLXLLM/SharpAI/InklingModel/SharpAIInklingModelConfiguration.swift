@@ -9,9 +9,12 @@ import Foundation
 
 public enum SharpAIInklingModelError: LocalizedError {
     case incrementalDecodeNotImplemented(String)
+    case corruptTokenHistoryCache
 
     public var errorDescription: String? {
         switch self {
+        case .corruptTokenHistoryCache:
+            return "Corrupt prompt cache: inkling token history must hold one token tensor."
         case .incrementalDecodeNotImplemented(let type):
             return
                 "Model type \(type) runs full-sequence forward only. KV-cache and short-conv "
