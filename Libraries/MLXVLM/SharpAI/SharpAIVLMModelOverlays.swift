@@ -21,6 +21,9 @@ public enum SharpAIVLMModelOverlays {
         "interns1_pro",
         "interns2_mobius",
         "kimi_k3",
+        "opencua",
+        "openpangu_vl",
+        "qwen3_omni_moe",
         "qwen4_exp",
         "step1",
     ]
@@ -34,6 +37,9 @@ public enum SharpAIVLMModelOverlays {
         "interns1_pro",
         "interns2_mobius",
         "kimi_k3",
+        "opencua",
+        "openpangu_vl",
+        "qwen3_omni_moe",
         "qwen4_exp",
         "step1",
     ]
@@ -49,6 +55,9 @@ public enum SharpAIVLMModelOverlays {
         add(SharpAIInterns1ProOverlay.creators)
         add(SharpAIInterns2MobiusOverlay.creators)
         add(SharpAIKimiK3Overlay.creators)
+        add(SharpAIOpencuaOverlay.creators)
+        add(SharpAIOpenpanguVlOverlay.creators)
+        add(SharpAIQwen3OmniMoeOverlay.creators)
         add(SharpAIQwen4ExpOverlay.creators)
         add(SharpAIStep1Overlay.creators)
         return all
