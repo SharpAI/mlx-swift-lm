@@ -5,6 +5,12 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+
+# Pull requests run only the two gate jobs (build-and-test, xcodebuild-test). The hosted macOS runners are
+# over-subscribed, and every job a PR starts must be given a runner within 15 minutes or it is cancelled, so each extra
+# job lowers the chance a PR ever finishes. integration-test (downstream SwiftLM) and sealed-offline run on push to
+# main and on manual dispatch instead: a break they would catch shows up right after the merge, not before it.
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -150,6 +156,7 @@ jobs:
           retention-days: 7
 
   integration-test:
+    if: github.event_name != 'pull_request'
     # Also covers what the former "Test with SwiftLM (Umbrella Repo)" workflow (downstream_integration.yml) ran: both
     # checked out SwiftLM main and built it against this PR. One job now does both, so a PR holds one macOS runner
     # for them instead of two. The Release build + speculative script and the Debug build + `swift test` stay separate
@@ -245,6 +252,7 @@ jobs:
           swift test --parallel --skip-build
 
   sealed-offline:
+    if: github.event_name != 'pull_request'
     # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights. The
     # Metal toolchain and the MLX metallib are fetched BEFORE the seal (same as the main job). NOT a required check (branch protection is untouched). The dependency fetch happens before the seal;
     # scripts/conformance/offline-build/run-blocked.sh then self-tests the seal, resolves from the SwiftPM cache,
