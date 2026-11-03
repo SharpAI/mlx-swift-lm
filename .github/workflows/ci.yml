@@ -259,7 +259,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
-          swift test -c release --parallel --skip-build
+          # --no-parallel: the GPU tests abort (signal 6) when two overlap; Release is fast enough to hit it, Debug was not.
+          swift test -c release --no-parallel --skip-build
 
       # SwiftLM/.build is cached at job end, so keep SwiftLM unless space is short; the clean copy is always removed.
       - name: "[swiftlm] Free disk (only if short)"
