@@ -419,4 +419,51 @@ struct TextToolCallRecoveryTests {
         #expect(native.rejectedToolCalls.first?.reason == .invalidArguments)
         #expect(native.rejectedToolCalls.first?.detail == "arguments.city is required")
     }
+
+    // Replaces assert at ToolCallProcessor.swift:385; Release compiles the assert out.
+    @Test("Recovery events pair one-to-one with accepted recovered calls")
+    func recoveryEventsPairWithAcceptedCalls() throws {
+        let tools: [[String: any Sendable]] = [
+            [
+                "function": [
+                    "name": "weather",
+                    "parameters": [
+                        "type": "object",
+                        "properties": ["city": ["type": "string"]],
+                        "required": ["city"],
+                    ] as [String: any Sendable],
+                ] as [String: any Sendable]
+            ],
+            [
+                "function": [
+                    "name": "clock",
+                    "parameters": [
+                        "type": "object",
+                        "properties": [:] as [String: any Sendable],
+                    ] as [String: any Sendable],
+                ] as [String: any Sendable]
+            ],
+        ]
+        let processor = ToolCallProcessor(
+            format: .json, tools: tools, toolCallPolicy: .init(validation: .strict))
+
+        // The schema-invalid call comes FIRST and the valid, differently named
+        // call second, so a shifted or unfiltered pairing changes toolName/count.
+        _ = processor.processChunk("<function=weather></function><function=clock></function>")
+        processor.processEOS()
+
+        #expect(processor.toolCalls.count == 1)
+        #expect(processor.toolCalls.first?.function.name == "clock")
+        #expect(processor.rejectedToolCalls.count == 1)
+        #expect(processor.rejectedToolCalls.first?.reason == .invalidArguments)
+        #expect(processor.rejectedToolCalls.first?.toolName == "weather")
+        // Only the accepted call is a recovery; the rejected one yields no event.
+        #expect(processor.recoveredToolCallCount == 1)
+        #expect(processor.recoveryEvents.count == 1)
+        #expect(processor.recoveryEvents.count == processor.toolCalls.count)
+        let event = try #require(processor.recoveryEvents.first)
+        #expect(event.toolName == "clock")
+        #expect(event.toolName == processor.toolCalls.first?.function.name)
+        #expect(event.dialect == .qwenFunction)
+    }
 }

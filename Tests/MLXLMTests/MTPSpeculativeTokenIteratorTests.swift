@@ -1652,3 +1652,45 @@ func testDiscardingAGeneratedTokenDoesNotMoveTheTimeline() throws {
     #expect(timeline >= prompt.count + emitted - 1)
     #expect(iter.mainCacheStorage.nativeAttentionOffsetsAreAligned)
 }
+
+
+/// Release-safe replacement for the `assert` in MTPSpeculativeTokenIterator before `draftBlock`:
+/// the snapshot the drafter attends over spans exactly what the cache leaf behind each entry can
+/// still describe. The oracle is the leaf's own `maxSize`, evaluated against the timeline the
+/// iterator handed the drafter (`queryOffset == processedTokenCount` for this mock), so a stale or
+/// un-clamped snapshot fails here even when `assert` is compiled out.
+// Replaces assert at MTPSpeculativeTokenIterator.swift:476; Release compiles the assert out.
+@Test(arguments: [(4, 4), (8, 4), (8, 3), (16, 4), (16, 6)])
+func testSharedKVSnapshotMatchesEmittedLengthOfItsLeafEveryRound(
+    window: Int, blockSize: Int
+) throws {
+    let drafter = MockDrafter(draftedTokenValue: 7)
+    let model = PositionScriptedMainModel(
+        script: mixedAcceptanceScript(drafted: 7), slidingWindow: window)
+
+    let (_, iter) = try runMTP(
+        model: model, drafter: drafter, prompt: [1, 2, 3], maxTokens: window * 6,
+        blockSize: blockSize)
+    #expect(iter.passthroughReason == nil, "the run fell back, so no round reached draftBlock")
+    #expect(drafter.receivedSharedKVSpans.count > 1)
+    #expect(drafter.receivedSharedKVSpans.count == drafter.receivedQueryOffsets.count)
+
+    // PositionScriptedMainModel maps full_attention -> leaf 0 (KVCacheSimple) and
+    // sliding_attention -> leaf 1 (RotatingKVCache(maxSize: window)).
+    let leaves = iter.mainCacheStorage.cache
+    let sources = ["full_attention": 0, "sliding_attention": 1]
+    #expect(leaves[0].maxSize == nil)
+    #expect(leaves[1].maxSize == window)
+
+    for (round, spans) in drafter.receivedSharedKVSpans.enumerated() {
+        let timeline = drafter.receivedQueryOffsets[round]
+        #expect(Set(spans.keys) == Set(sources.keys), "round \(round): snapshot keys")
+        for (key, leaf) in sources {
+            let span = try #require(spans[key])
+            let expected = Swift.min(timeline, leaves[leaf].maxSize ?? .max)
+            #expect(
+                span == expected,
+                "round \(round) \(key): drafter got \(span) entries, expected \(expected) at timeline \(timeline)")
+        }
+    }
+}

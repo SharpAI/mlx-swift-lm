@@ -19,15 +19,17 @@ permissions:
 # starved; it now needs one. The phases below replace the four former jobs, in order:
 #   1. Build and Test            Release build, full library tests, then the three named gates
 #   2. SwiftLM integration       SwiftLM main built against this checkout, all in Release: speculative script + swift test
-#   3. Sealed offline            network denied, no weights (observation only: it cannot turn the job red); the one DEBUG
-#                                build, and it also runs the tests that hit the library's assert()s, which Release compiles out
-# The former `xcodebuild test (Debug)` job is gone: we ship Release, and it rebuilt the whole package in Debug for the sake of
-# 14 assert()/assertionFailure() calls. Those are now covered by the Debug filters in phase 3, without a second Debug build.
+#   3. Sealed offline            network denied, no weights, Release (observation only: it cannot turn the job red)
+# Everything is built and tested in Release, which is what we ship. The former `xcodebuild test (Debug)` job is gone: it rebuilt
+# the whole package in Debug for the sake of 14 assert()/assertionFailure() calls, which Release compiles out. Those invariants
+# are now checked by explicit tests (KVCacheStorageInvariantTests, KVCacheMetaStateRestoreTests, OpenELMConfigurationTests and
+# the tests added to KVCacheRoundTests, MTPSpeculativeTokenIteratorTests, ChatSessionTests, TextToolCallRecoveryTests) that run
+# in phase 1's full Release suite. Two asserts have no test (Gemma3nText vocabSize > 0, Bitnet input dtype): no input can break them.
 # Every step after the setup uses `!cancelled()`, so a failure in one phase does not hide the others. .build is kept between
 # phases (and saved by the cache at the end) unless free disk drops under 20 GiB. Rerunning a failed job reruns all of it.
 jobs:
   ci:
-    name: CI (build, Debug, SwiftLM integration, sealed offline)
+    name: CI (build, SwiftLM integration, sealed offline)
     runs-on: macos-15
     timeout-minutes: 240
     steps:
@@ -226,7 +228,7 @@ jobs:
           avail=$(df -g / | awk 'NR==2{print $4}')
           if [ "$avail" -lt 20 ]; then echo "only ${avail} GiB free, removing SwiftLM"; rm -rf SwiftLM; df -h / | tail -1; fi
 
-      # ---- phase 3: Sealed offline conformance (the one Debug build) ----
+      # ---- phase 3: Sealed offline conformance (Release) ----
       # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights. The Metal
       # toolchain (installed in the setup) and the MLX metallib are fetched BEFORE the seal. This phase is observation only: it
       # is continue-on-error and prints an explicit verdict, so it cannot turn the job red. The dependency fetch happens before
@@ -259,8 +261,9 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         env:
-          FILTERS: "Conformance SharpAIOverlay KVCacheTests RotatingKVCacheRewindTests ChatSession"
-          TEST_ARGS: "--no-parallel"
+          FILTERS: "Conformance SharpAIOverlay"
+          BUILD_ARGS: "-c release -Xswiftc -enable-testing"
+          TEST_ARGS: "-c release --no-parallel"
           POST_BUILD: |
             set -eu
             MLX_LIB=$(cat /tmp/mlx_metallib_path)
@@ -269,7 +272,7 @@ jobs:
             while IFS= read -r d; do
               cp "$MLX_LIB" "$d/"
               n=$((n + 1))
-            done < <({ find "$SCRATCH" -type d \( -name MacOS -o -name Resources \); find "$SCRATCH" -maxdepth 3 -type d -name debug; })
+            done < <({ find "$SCRATCH" -type d \( -name MacOS -o -name Resources \); find "$SCRATCH" -maxdepth 3 -type d \( -name debug -o -name release \); })
             echo "post-build: copied mlx.metallib into $n directories"
             test "$n" -gt 0 || { echo "::error::metallib not installed: no MacOS/Resources/debug directory under $SCRATCH"; exit 1; }
         run: bash scripts/conformance/offline-build/run-blocked.sh
