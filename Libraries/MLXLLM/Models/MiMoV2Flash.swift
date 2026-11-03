@@ -109,6 +109,7 @@ class MiMoV2FlashAttention: Module {
     let isSlidingWindow: Bool
     let hasSinks: Bool
     let scale: Float
+    let valueScale: Float?
 
     let numAttentionHeads: Int
     let numKeyValueHeads: Int
@@ -142,6 +143,7 @@ class MiMoV2FlashAttention: Module {
         }
 
         self.scale = pow(Float(headDim), -0.5)
+        self.valueScale = args.attentionValueScale
 
         _wq.wrappedValue = Linear(
             args.hiddenSize, numAttentionHeads * headDim, bias: false)
@@ -174,7 +176,10 @@ class MiMoV2FlashAttention: Module {
 
         var q = queries.reshaped(B, L, numAttentionHeads, -1).transposed(0, 2, 1, 3)
         var k = keys.reshaped(B, L, numKeyValueHeads, -1).transposed(0, 2, 1, 3)
-        let v = values.reshaped(B, L, numKeyValueHeads, -1).transposed(0, 2, 1, 3)
+        var v = values.reshaped(B, L, numKeyValueHeads, -1).transposed(0, 2, 1, 3)
+        if let valueScale {
+            v = v * valueScale
+        }
 
         let offset = cache?.ropeOffset
         q = applyRotaryPosition(rope, to: q, offset: offset)
@@ -517,6 +522,8 @@ public struct MiMoV2FlashConfiguration: Codable, Sendable {
     var swaHeadDim: Int
     var swaVHeadDim: Int
     var partialRotaryFactor: Float
+    /// Optional multiplier applied to v after v_proj (absent or 1 leaves v untouched).
+    var attentionValueScale: Float?
 
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type"
@@ -552,6 +559,7 @@ public struct MiMoV2FlashConfiguration: Codable, Sendable {
         case swaHeadDim = "swa_head_dim"
         case swaVHeadDim = "swa_v_head_dim"
         case partialRotaryFactor = "partial_rotary_factor"
+        case attentionValueScale = "attention_value_scale"
     }
 }
 

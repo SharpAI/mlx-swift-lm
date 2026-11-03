@@ -9,7 +9,9 @@ import XCTest
 final class DeepseekV3Tests: XCTestCase {
 
     // Tiny MoE config: 4 routed experts in 2 groups, top-1 group, top-2 experts.
-    private func makeConfig(numHiddenLayers: Int = 2) throws -> DeepseekV3Configuration {
+    private func makeConfig(
+        numHiddenLayers: Int = 2, qLoraLine: String = "\"q_lora_rank\": 4,"
+    ) throws -> DeepseekV3Configuration {
         let json = """
             {
                 "model_type": "deepseek_v3",
@@ -29,7 +31,7 @@ final class DeepseekV3Tests: XCTestCase {
                 "routed_scaling_factor": 1.0,
                 "first_k_dense_replace": 1,
                 "moe_layer_freq": 1,
-                "q_lora_rank": 4,
+                \(qLoraLine)
                 "kv_lora_rank": 4,
                 "qk_rope_head_dim": 2,
                 "qk_nope_head_dim": 2,
@@ -64,6 +66,35 @@ final class DeepseekV3Tests: XCTestCase {
                 layerCache.offset, tokenCount,
                 "layer \(i) cache advanced by \(layerCache.offset) for \(tokenCount) tokens")
         }
+    }
+
+    // MARK: - Optional q_lora_rank (DeepSeek-V2-Lite style: null => plain q_proj)
+
+    private func attnKeys(_ model: DeepseekV3Model) -> Set<String> {
+        Set(model.parameters().flattened().map { $0.0 }.filter { $0.hasPrefix("model.layers.0.self_attn.") })
+    }
+
+    func testNullQLoraRankDecodesAndRunsForward() throws {
+        for line in ["\"q_lora_rank\": null,", ""] {
+            let config = try makeConfig(qLoraLine: line)
+            XCTAssertNil(config.qLoraRank)
+            let model = DeepseekV3Model(config)
+            let logits = model(MLXArray([1, 2, 3] as [Int32]).reshaped(1, 3), cache: nil)
+            eval(logits)
+            XCTAssertEqual(logits.shape, [1, 3, 32])
+            let keys = attnKeys(model)
+            XCTAssertTrue(keys.contains("model.layers.0.self_attn.q_proj.weight"))
+            XCTAssertFalse(keys.contains { $0.contains("q_a_proj") || $0.contains("q_b_proj") })
+        }
+    }
+
+    func testQLoraRankPathKeepsLowRankKeys() throws {
+        let config = try makeConfig()
+        XCTAssertEqual(config.qLoraRank, 4)
+        let keys = attnKeys(DeepseekV3Model(config))
+        XCTAssertTrue(keys.contains("model.layers.0.self_attn.q_a_proj.weight"))
+        XCTAssertTrue(keys.contains("model.layers.0.self_attn.q_b_proj.weight"))
+        XCTAssertFalse(keys.contains("model.layers.0.self_attn.q_proj.weight"))
     }
 
     func testForwardPassProducesLogitsShape() throws {
