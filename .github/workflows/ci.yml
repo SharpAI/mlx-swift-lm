@@ -7,11 +7,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# Pull requests run only the two gate jobs (build-and-test, xcodebuild-test). The hosted macOS runners are
-# over-subscribed, and every job a PR starts must be given a runner within 15 minutes or it is cancelled, so each extra
-# job lowers the chance a PR ever finishes. integration-test (downstream SwiftLM) and sealed-offline run on push to
-# main and on manual dispatch instead: a break they would catch shows up right after the merge, not before it.
-
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -19,12 +14,22 @@ concurrency:
 permissions:
   contents: read
 
+# One job runs every check, one phase after another. The hosted macOS runners are over-subscribed and a job that is not
+# given a runner within 15 minutes is cancelled with no steps run, so a PR that needed four runners had four chances to be
+# starved; it now needs one. Nothing was dropped: the phases below are the four former jobs, in order.
+#   1. Build and Test            Release build, full library tests, then the three named gates
+#   2. xcodebuild test (Debug)   the DEBUG-only asserts that phase 1 compiles out
+#   3. SwiftLM integration       SwiftLM main built against this checkout: Release + speculative script, Debug + swift test
+#   4. Sealed offline            network denied, no weights (observation only: it cannot turn the job red)
+# Every step after the setup uses `!cancelled()`, so a failure in one phase does not hide the others; each phase deletes its
+# build output at the end because a standard hosted macOS runner has little free disk. Rerunning a failed job reruns all of it.
 jobs:
-  build-and-test:
-    name: Build and Test (macOS 15)
+  ci:
+    name: CI (build, Debug, SwiftLM integration, sealed offline)
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
+      # ---- setup, once ----
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -59,10 +64,13 @@ jobs:
       - name: Resolve dependencies
         run: swift package resolve
 
-      - name: Build (Release)
+      # ---- phase 1: Build and Test (macOS 15) ----
+      - name: "[1/4] Build (Release)"
+        if: ${{ !cancelled() }}
         run: swift build -c release -Xswiftc -enable-testing --build-tests
 
-      - name: Install MLX Metal library
+      - name: "[1/4] Install MLX Metal library"
+        if: ${{ !cancelled() }}
         run: |
           python3 -m venv /tmp/mlx_venv
           /tmp/mlx_venv/bin/pip install --quiet mlx
@@ -77,7 +85,8 @@ jobs:
           # Aggressive: put it next to any executable in the release dir
           find .build -type f -executable -exec cp $MLX_LIB $(dirname "{}")/ \; 2>/dev/null || true
 
-      - name: Run Library Tests (Metal Accelerated)
+      - name: "[1/4] Run Library Tests (Metal Accelerated)"
+        if: ${{ !cancelled() }}
         run: |
           # --no-parallel: GPU-heavy tests submit Metal command buffers that
           # aren't safe under concurrent access from multiple tests at once
@@ -85,58 +94,43 @@ jobs:
           # assertion when two such tests overlapped on CI's runner).
           swift test -c release --skip-build --no-parallel
 
-      - name: Speculative Decoding Protection Gate
+      - name: "[1/4] Speculative Decoding Protection Gate"
+        if: ${{ !cancelled() }}
         run: |
           # --no-parallel on every GPU gate, for the reason given above.
           # Ensure speculative decoding parity and cache integrity are never regressed
           swift test -c release --filter SpeculativeDecodingTests --skip-build --no-parallel
 
-      - name: High-Rigor Architectural Parity (Gemma 4)
+      - name: "[1/4] High-Rigor Architectural Parity (Gemma 4)"
+        if: ${{ !cancelled() }}
         run: |
           # Verify Gemma 4 Gated Residuals and PLE math integrity
           swift test -c release --filter Gemma4Tests --skip-build --no-parallel
 
-      - name: Performance & Memory Ceiling Audit (8GB Target)
+      - name: "[1/4] Performance & Memory Ceiling Audit (8GB Target)"
+        if: ${{ !cancelled() }}
         run: |
           # Enforce 6GB RSS limit and throughput baselines
           swift test -c release --filter PerformanceRegressionTests --skip-build --no-parallel
 
-      - name: Upload test results on failure
-        if: failure()
+      - name: "[1/4] Upload test results on failure"
+        if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
           name: library-test-results
           path: .build/artifacts/
           retention-days: 7
 
-  xcodebuild-test:
-    # Debug build: runs the DEBUG-only asserts that the Release job above
-    # compiles out, with Metal shaders built from our mlx-swift source.
-    name: xcodebuild test (Debug)
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Select Xcode 26 (Swift 6.2)
-        run: sudo xcode-select -s /Applications/Xcode_26.3.app
-
-      - name: Install Metal Toolchain
-        run: xcodebuild -downloadComponent MetalToolchain || true
-
-      - name: Checkout SharpAI/mlx-swift
-        uses: actions/checkout@v4
-        with:
-          repository: SharpAI/mlx-swift
-          path: mlx-swift
-
-      - name: Redirect mlx-swift dependency to local checkout
+      - name: "[1/4] Free disk"
+        if: ${{ !cancelled() }}
         run: |
-          sed -i '' -E 's|\.package\(path: "\.\./mlx-swift"\),|\.package(path: "./mlx-swift"),|' Package.swift
+          rm -rf .build
+          df -h / | tail -1
 
-      - name: Test
+      # ---- phase 2: xcodebuild test (Debug) ----
+      # Debug build: runs the DEBUG-only asserts that phase 1 compiles out, with Metal shaders built from our mlx-swift source.
+      - name: "[2/4] xcodebuild test (Debug)"
+        if: ${{ !cancelled() }}
         env:
           TEST_RUNNER_SWIFT_BACKTRACE: interactive=no,symbolicate=fast
         run: |
@@ -147,74 +141,71 @@ jobs:
             -parallel-testing-enabled NO \
             -resultBundlePath TestResults.xcresult
 
-      - name: Upload test results on failure
-        if: failure()
+      - name: "[2/4] Upload xcodebuild results on failure"
+        if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
           name: xcodebuild-test-results
           path: TestResults.xcresult
           retention-days: 7
 
-  integration-test:
-    if: github.event_name != 'pull_request'
-    # Also covers what the former "Test with SwiftLM (Umbrella Repo)" workflow (downstream_integration.yml) ran: both
-    # checked out SwiftLM main and built it against this PR. One job now does both, so a PR holds one macOS runner
-    # for them instead of two. The Release build + speculative script and the Debug build + `swift test` stay separate
-    # steps, each with `!cancelled()` so a failure in one does not hide the other.
-    name: Build & Test SwiftLM Integration
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - name: Checkout mlx-swift-lm (this repository)
+      - name: "[2/4] Free disk"
+        if: ${{ !cancelled() }}
+        run: |
+          rm -rf ~/Library/Developer/Xcode/DerivedData/* TestResults.xcresult
+          df -h / | tail -1
+
+      # ---- phase 3: Build & Test SwiftLM Integration ----
+      # SwiftLM main is built against a CLEAN copy of this repository (the working tree above had Package.swift redirected).
+      # The newCache-throws fix (SwiftLM#167) has long been merged to main, so test against main. The old temporary branch is
+      # 167 commits behind main and cannot build against newer mlx-swift-lm.
+      - name: "[3/4] Checkout a clean copy of this repository"
+        if: ${{ !cancelled() }}
         uses: actions/checkout@v4
         with:
-          path: mlx-swift-lm
+          path: mlx-swift-lm-clean
           submodules: recursive
 
-      - name: Checkout SwiftLM
+      - name: "[3/4] Checkout SwiftLM"
+        if: ${{ !cancelled() }}
         uses: actions/checkout@v4
         with:
           repository: SharpAI/SwiftLM
-          # The newCache-throws fix (SwiftLM#167) has long been merged to main, so test
-          # against main (this job also runs the former downstream_integration.yml steps). The old temporary branch
-          # is 167 commits behind main and cannot build against newer mlx-swift-lm.
           ref: main
           path: SwiftLM
           submodules: recursive
 
-      - name: Select Xcode 26 (Swift 6.2)
-        run: sudo xcode-select -s /Applications/Xcode_26.3.app
-
-      - name: Install Metal Toolchain
-        run: xcodebuild -downloadComponent MetalToolchain || true
-
-      - name: Redirect Dependencies to Local Form
+      - name: "[3/4] Redirect SwiftLM to this checkout"
+        if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
-          
           # Replace the local submodule with the actively checked out code
           rm -rf mlx-swift-lm
-          cp -r ../mlx-swift-lm .
+          cp -r ../mlx-swift-lm-clean mlx-swift-lm
 
-      - name: Update mlx-swift submodule to latest main
+      - name: "[3/4] Update mlx-swift submodule to latest main"
+        if: ${{ !cancelled() }}
         run: |
           cd SwiftLM/mlx-swift
           git fetch origin main
           git checkout origin/main
-          
-      - name: Cache SwiftLM Swift packages
+
+      - name: "[3/4] Cache SwiftLM Swift packages"
+        if: ${{ !cancelled() }}
         uses: actions/cache@v4
         with:
           path: SwiftLM/.build
           key: ${{ runner.os }}-swiftlm-spm-${{ hashFiles('SwiftLM/Package.resolved') }}
           restore-keys: ${{ runner.os }}-swiftlm-spm-
 
-      - name: Build SwiftLM
+      - name: "[3/4] Build SwiftLM (Release)"
+        if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
           swift build -c release
 
-      - name: Install MLX Metal library
+      - name: "[3/4] Install MLX Metal library"
+        if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
           python3 -m venv /tmp/mlx_venv
@@ -223,19 +214,19 @@ jobs:
           cp $MLX_LIB .build/release/ 2>/dev/null || true
           echo "MLX_METAL_LIB=$MLX_LIB" >> "$GITHUB_ENV"
 
-      - name: Run Speculative Decoding Tests
+      - name: "[3/4] Run Speculative Decoding Tests"
+        if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
           bash tests/test-speculative-eval.sh
 
-      # Former downstream_integration.yml (Debug build of SwiftLM's tests against this PR's mlx-swift-lm).
-      - name: Build SwiftLM tests (Debug)
+      - name: "[3/4] Build SwiftLM tests (Debug)"
         if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
           swift build --build-tests
 
-      - name: Copy Metal library to Debug build outputs
+      - name: "[3/4] Copy Metal library to Debug build outputs"
         if: ${{ !cancelled() }}
         run: |
           test -f "$MLX_METAL_LIB" || { echo "::error::mlx.metallib not found at $MLX_METAL_LIB"; exit 1; }
@@ -245,53 +236,33 @@ jobs:
           find SwiftLM/.build -name "*.xctest" -exec cp "$MLX_METAL_LIB" {}/Contents/MacOS/ \; 2>/dev/null || true
           find SwiftLM/.build -name "*Tests" -type f -exec sh -c 'cp "'"$MLX_METAL_LIB"'" "$(dirname ${1})/"' _ {} \; 2>/dev/null || true
 
-      - name: Run SwiftLM Integration Tests
+      - name: "[3/4] Run SwiftLM Integration Tests"
         if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
           swift test --parallel --skip-build
 
-  sealed-offline:
-    if: github.event_name != 'pull_request'
-    # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights. The
-    # Metal toolchain and the MLX metallib are fetched BEFORE the seal (same as the main job). NOT a required check (branch protection is untouched). The dependency fetch happens before the seal;
-    # scripts/conformance/offline-build/run-blocked.sh then self-tests the seal, resolves from the SwiftPM cache,
-    # builds clean and runs the filters, failing on a vacuous (zero-test) filter.
-    name: Sealed offline conformance (macOS 15)
-    runs-on: macos-15
-    # Observation phase: report the result without turning the workflow red (owner gate 2: observe once before merge).
-    continue-on-error: true
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: "[3/4] Free disk"
+        if: ${{ !cancelled() }}
+        run: |
+          rm -rf SwiftLM mlx-swift-lm-clean
+          df -h / | tail -1
 
-      - name: Select Xcode 26 (Swift 6.2)
-        run: sudo xcode-select -s /Applications/Xcode_26.3.app
-
-      - name: Checkout SharpAI/mlx-swift
-        uses: actions/checkout@v4
-        with:
-          repository: SharpAI/mlx-swift
-          path: mlx-swift
-
-      # The fork's default branch is the dependency by design (Package.swift: "We MUST depend on the SharpAI fork"; a sync
-      # bot advances it), same as the main job. Record exactly which revision this run used so a result can be reproduced.
-      - name: Record the mlx-swift revision
+      # ---- phase 4: Sealed offline conformance ----
+      # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights. The Metal
+      # toolchain (installed in the setup) and the MLX metallib are fetched BEFORE the seal. This phase is observation only: it
+      # is continue-on-error and prints an explicit verdict, so it cannot turn the job red. The dependency fetch happens before
+      # the seal; scripts/conformance/offline-build/run-blocked.sh then self-tests the seal, resolves from the SwiftPM cache,
+      # builds clean and runs the filters, failing on a vacuous (zero-test) filter.
+      - name: "[4/4] Record the mlx-swift revision"
+        if: ${{ !cancelled() }}
         run: |
           rev=$(git -C mlx-swift rev-parse HEAD)
           echo "mlx-swift revision: $rev"
           echo "mlx-swift revision: \`$rev\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Redirect mlx-swift dependency to local checkout
-        run: |
-          sed -i '' -E 's|\.package\(path: "\.\./mlx-swift"\),|\.package(path: "./mlx-swift"),|' Package.swift
-
-      - name: Install Metal Toolchain (network allowed, before the seal)
-        run: xcodebuild -downloadComponent MetalToolchain || true
-
-      - name: Prefetch dependencies and the MLX Metal library (network allowed, before the seal)
+      - name: "[4/4] Prefetch dependencies and the MLX Metal library (network allowed, before the seal)"
+        if: ${{ !cancelled() }}
         run: |
           swift package resolve
           # The metallib must come from the same MLX release as the C++ the Swift build compiles. That release is the
@@ -299,12 +270,16 @@ jobs:
           MLX_VER=$(awk '/#define MLX_VERSION_(MAJOR|MINOR|PATCH) /{v[$2]=$3} END{printf "%s.%s.%s", v["MLX_VERSION_MAJOR"], v["MLX_VERSION_MINOR"], v["MLX_VERSION_PATCH"]}' mlx-swift/Source/Cmlx/mlx/mlx/version.h)
           echo "$MLX_VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::cannot read the MLX version from mlx-swift (got '$MLX_VER')"; exit 1; }
           echo "MLX version of the mlx-swift checkout: $MLX_VER"
-          python3 -m venv /tmp/mlx_venv
-          /tmp/mlx_venv/bin/pip install --quiet "mlx==$MLX_VER"
-          find /tmp/mlx_venv -name "mlx.metallib" | head -n 1 > /tmp/mlx_metallib_path
+          rm -rf /tmp/mlx_venv_sealed
+          python3 -m venv /tmp/mlx_venv_sealed
+          /tmp/mlx_venv_sealed/bin/pip install --quiet "mlx==$MLX_VER"
+          find /tmp/mlx_venv_sealed -name "mlx.metallib" | head -n 1 > /tmp/mlx_metallib_path
           test -s /tmp/mlx_metallib_path
 
-      - name: Build and test with network blocked
+      - name: "[4/4] Build and test with network blocked"
+        id: sealed
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         env:
           FILTERS: "Conformance SharpAIOverlay"
           TEST_ARGS: "--no-parallel"
@@ -321,14 +296,15 @@ jobs:
             test "$n" -gt 0 || { echo "::error::metallib not installed: no MacOS/Resources/debug directory under $SCRATCH"; exit 1; }
         run: bash scripts/conformance/offline-build/run-blocked.sh
 
-      # continue-on-error keeps the workflow green, so say the verdict explicitly where a reviewer looks.
-      - name: Sealed offline verdict
-        if: always()
+      # continue-on-error keeps the job green, so say the verdict explicitly where a reviewer looks.
+      - name: "[4/4] Sealed offline verdict"
+        if: ${{ always() }}
         run: |
-          case "${{ job.status }}" in
+          case "${{ steps.sealed.outcome }}" in
             success) verdict=PASS ;;
             cancelled) verdict=CANCELLED ;;
+            skipped) verdict=SKIPPED ;;
             *) verdict=FAIL ;;
           esac
           echo "SEALED-OFFLINE: $verdict"
-          { echo "### SEALED-OFFLINE: $verdict"; echo "Observation phase: this job is continue-on-error, so a FAIL does not turn the workflow red."; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### SEALED-OFFLINE: $verdict"; echo "Observation phase: this phase is continue-on-error, so a FAIL does not turn the job red."; } >> "$GITHUB_STEP_SUMMARY"
