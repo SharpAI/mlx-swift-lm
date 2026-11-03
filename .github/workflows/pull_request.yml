@@ -1,7 +1,9 @@
 name: Build and Test
 
+# Inherited from ml-explore/mlx-swift-lm. Every job below is guarded by `github.repository == 'ml-explore/mlx-swift-lm'` and the
+# docs / mac jobs need a self-hosted runner, so in SharpAI/mlx-swift-lm a pull_request run only produced three grey "skipped"
+# checks. PRs here are checked by ci.yml; this workflow stays available by hand. Restore `pull_request:` to re-enable it.
 on:
-  pull_request:
   workflow_dispatch:
 
 permissions:
