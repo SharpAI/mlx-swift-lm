@@ -75,6 +75,7 @@ public struct TextToolTokenLoopHandler: TokenLoopHandler {
     /// new token is available.
     private var lastToken: Int = 0
     var cachedPromptTokenCount = 0
+    var speculativeDecodingFallbackReason: SpeculativeDecodingFallbackReason?
 
     public init(
         tokenizer: Tokenizer, stopStrings: Set<String> = [], format: ToolCallFormat,
@@ -125,7 +126,9 @@ public struct TextToolTokenLoopHandler: TokenLoopHandler {
             info.withToolCallCounts(
                 rejected: decoder.rejectedToolCallCount,
                 recovered: decoder.recoveredToolCallCount)
-        ).attributingCachedPromptTokens(cachedPromptTokenCount)
+        ).attributingSessionMetadata(
+            cachedPromptTokenCount: cachedPromptTokenCount,
+            speculativeDecodingFallbackReason: speculativeDecodingFallbackReason)
     }
 
     private mutating func process(
