@@ -4,7 +4,8 @@
 // Policy (owner decision, SL-50): UPSTREAM WINS. `VLMModelFactory` merges these dictionaries with a closure
 // that keeps the upstream value for any key the upstream-owned literal already registers.
 //
-// PR1 wires models whose vision and audio towers are not ported, plus one that reuses the upstream Qwen3.5
+// PR3 wires eagle_2_5_vl, moondream3 and phi4-siglip: their processors read the model's own config.json
+// (see SharpAIConfigBackedProcessors). PR1 wires models whose vision and audio towers are not ported, plus one that reuses the upstream Qwen3.5
 // processor. Everything else in `Libraries/MLXVLM/SharpAI` stays unregistered on purpose until it has a
 // processor or a working creator (see docs/research/sl51-vlm-scout-2026-11-01.md).
 
@@ -28,17 +29,28 @@ public enum SharpAIVLMModelOverlays {
         "step1",
     ]
 
+    /// `model_type` to processor type for models whose processor is built from `config.json` (SL-51 PR3).
+    /// The processor types are registered in ``processors``.
+    public static let configBackedProcessorTypes: [String: String] = [
+        "eagle_2_5_vl": SharpAIConfigBackedProcessors.eagle25Vl,
+        "moondream3": SharpAIConfigBackedProcessors.moondream3,
+        "phi4-siglip": SharpAIConfigBackedProcessors.phi4Siglip,
+    ]
+
     /// `model_type`s registered in `VLMTypeRegistry.shared` through this aggregate.
     /// `intern_s2_preview` subclasses upstream Qwen3.5 and keeps its real (Qwen3-VL) processor.
     /// One per line: `scripts/conformance/gen_expectations.py` and `missing-ops/gen_report.py` read this list.
     public static let vlmWiredKeys: Set<String> = [
         "cosmos3_omni",
+        "eagle_2_5_vl",
         "intern_s2_preview",
         "interns1_pro",
         "interns2_mobius",
         "kimi_k3",
+        "moondream3",
         "opencua",
         "openpangu_vl",
+        "phi4-siglip",
         "qwen3_omni_moe",
         "qwen4_exp",
         "step1",
@@ -51,12 +63,15 @@ public enum SharpAIVLMModelOverlays {
             for (key, creator) in source where vlmWiredKeys.contains(key) { all[key] = creator }
         }
         add(SharpAICosmos3OmniOverlay.creators)
+        add(SharpAIEagle25VlOverlay.creators)
         add(SharpAIInternS2PreviewOverlay.creators)
         add(SharpAIInterns1ProOverlay.creators)
         add(SharpAIInterns2MobiusOverlay.creators)
         add(SharpAIKimiK3Overlay.creators)
+        add(SharpAIMoondream3Overlay.creators)
         add(SharpAIOpencuaOverlay.creators)
         add(SharpAIOpenpanguVlOverlay.creators)
+        add(SharpAIPhi4SiglipOverlay.creators)
         add(SharpAIQwen3OmniMoeOverlay.creators)
         add(SharpAIQwen4ExpOverlay.creators)
         add(SharpAIStep1Overlay.creators)
@@ -66,6 +81,15 @@ public enum SharpAIVLMModelOverlays {
     /// Processor types added to `VLMProcessorTypeRegistry.shared`.
     nonisolated(unsafe) public static let processors:
         [String: (Data, any Tokenizer) throws -> any UserInputProcessor] = [
+            SharpAIConfigBackedProcessors.eagle25Vl: { data, tokenizer in
+                try SharpAIEagle25VlOverlay.makeProcessor(configurationData: data, tokenizer: tokenizer)
+            },
+            SharpAIConfigBackedProcessors.moondream3: { data, tokenizer in
+                try SharpAIMoondream3Overlay.makeProcessor(configurationData: data, tokenizer: tokenizer)
+            },
+            SharpAIConfigBackedProcessors.phi4Siglip: { data, tokenizer in
+                try SharpAIPhi4SiglipOverlay.makeProcessor(configurationData: data, tokenizer: tokenizer)
+            },
             SharpAITextOnlyProcessor.processorType: { data, tokenizer in
                 let configuration =
                     (try? JSONDecoder.json5().decode(

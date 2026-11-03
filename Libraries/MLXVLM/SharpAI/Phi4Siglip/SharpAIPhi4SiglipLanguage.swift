@@ -110,7 +110,10 @@ final class SharpAIPhi4SiglipBackbone: Module {
     let layers: [SharpAIPhi4SiglipLayer]
     @ModuleInfo var norm: RMSNorm
     @ModuleInfo(key: "vision_tower") var visionTower: SharpAIPhi4SiglipVisionTower
-    @ModuleInfo(key: "mm_projector") var mmProjector: SharpAIPhi4SiglipProjector
+    /// `[Linear, GELU, Linear]` stored as an array so the checkpoint keys `mm_projector.0.*` and
+    /// `mm_projector.2.*` unflatten into it (a dictionary-style Module with the keys "0" and "2"
+    /// cannot take them: `ModuleParameters.unflattened` builds an array for numeric keys).
+    @ModuleInfo(key: "mm_projector") var mmProjectorLayers: [Module]
 
     init(_ config: SharpAIPhi4SiglipConfiguration) {
         _embedTokens.wrappedValue = Embedding(
@@ -120,8 +123,19 @@ final class SharpAIPhi4SiglipBackbone: Module {
         }
         _norm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
         _visionTower.wrappedValue = SharpAIPhi4SiglipVisionTower(config.visionConfiguration)
-        _mmProjector.wrappedValue = SharpAIPhi4SiglipProjector(
-            inputSize: config.mmHiddenSize, hiddenSize: config.hiddenSize)
+        _mmProjectorLayers.wrappedValue = [
+            Linear(config.mmHiddenSize, config.hiddenSize, bias: true),
+            GELU(),
+            Linear(config.hiddenSize, config.hiddenSize, bias: true),
+        ]
+    }
+
+    func mmProjector(_ x: MLXArray) -> MLXArray {
+        var h = x
+        for layer in mmProjectorLayers {
+            h = (layer as! UnaryLayer)(h)
+        }
+        return h
     }
 
     func callAsFunction(embeddings: MLXArray, cache: [KVCache]?) -> MLXArray {

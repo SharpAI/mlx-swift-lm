@@ -190,4 +190,26 @@ final class SharpAIStep5ConfigurationTests: XCTestCase {
         XCTAssertEqual(config.swigluLimitsShared, [4.0, 3.0])
         XCTAssertNoThrow(try config.validateModelConfiguration())
     }
+
+    /// The real Step-5-Preview ships 95 limit entries for 92 layers (3 trailing MTP entries).
+    func testTruncates95SwigluLimitsTo92Layers() throws {
+        let limits = (0 ..< 95).map { "\(Float($0) + 1.0)" }.joined(separator: ",")
+        let config = try decode(
+            """
+            {
+                "vocab_size": 64,
+                "hidden_size": 16,
+                "intermediate_size": 32,
+                "num_hidden_layers": 92,
+                "num_attention_heads": 4,
+                "swiglu_limits": [\(limits)],
+                "swiglu_limits_shared": [\(limits)]
+            }
+            """)
+
+        XCTAssertEqual(config.swigluLimits.count, 92)
+        XCTAssertEqual(config.swigluLimitsShared.count, 92)
+        XCTAssertEqual(config.swigluLimits.last, 92.0)
+        XCTAssertNoThrow(try config.validateModelConfiguration())
+    }
 }

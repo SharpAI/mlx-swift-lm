@@ -42,6 +42,10 @@ struct SharpAIVLMAirgapLoadTests {
         .init(key: "intern_s2_preview", json: #"""
 {"model_type":"intern_s2_preview","vocab_size":64,"image_token_id":60,"video_token_id":61,"vision_start_token_id":62,"vision_end_token_id":63,"text_config":{"model_type":"qwen3_5_moe_text","hidden_size":64,"num_hidden_layers":2,"intermediate_size":128,"num_attention_heads":2,"num_key_value_heads":1,"head_dim":32,"vocab_size":64,"full_attention_interval":2,"tie_word_embeddings":false,"linear_num_value_heads":2,"linear_num_key_heads":1,"linear_key_head_dim":32,"linear_value_head_dim":32,"linear_conv_kernel_dim":4,"num_experts":0,"num_experts_per_tok":0,"max_position_embeddings":4096,"rope_parameters":{"mrope_section":[8,4,4],"rope_theta":100000,"partial_rotary_factor":1.0,"type":"default"}},"vision_config":{"model_type":"qwen3_vl","depth":1,"hidden_size":32,"intermediate_size":64,"out_hidden_size":64,"num_heads":2,"patch_size":16,"spatial_merge_size":2,"temporal_patch_size":2,"num_position_embeddings":64}}
 """#),
+        .init(key: "eagle_2_5_vl", json: SharpAIEagle25VlTestFixtures.tinyJSON),
+        // answer_id -1: the model sets the answer token's logit to -inf by design, which the finite check would reject.
+        .init(key: "moondream3", json: SharpAIMoondream3TestFixtures.tinyJSON.replacingOccurrences(of: "\"answer_id\": 3", with: "\"answer_id\": -1")),
+        .init(key: "phi4-siglip", json: SharpAIPhi4SiglipTestFixtures.tinyJSON),
     ]
 
     /// `vocab_size` at the top level or under `text_config`.

@@ -566,7 +566,9 @@ func resolveProcessorConfiguration(
     guard let processorType else {
         throw missingProcessorTypeError(filename: configuration.filename)
     }
-    return VLMProcessorConfiguration(data: configuration.data, processorType: processorType)
+    // SharpAI: SL-51 PR3. Some processors read `config.json`, not the checkpoint's processor file.
+    let data = try registry.processorConfigurationData(for: context) ?? configuration.data
+    return VLMProcessorConfiguration(data: data, processorType: processorType)
 }
 
 /// Processor configuration selected from a checkpoint file or a generated fallback.

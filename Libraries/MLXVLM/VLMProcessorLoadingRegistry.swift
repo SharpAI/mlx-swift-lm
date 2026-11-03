@@ -48,6 +48,11 @@ public protocol VLMProcessorLoadingResolver: Sendable {
         for context: VLMProcessorLoadingContext,
         declaredProcessorType: String?
     ) throws -> String?
+
+    /// Replacement bytes for the selected processor configuration, or `nil` to keep it.
+    func processorConfigurationData(
+        for context: VLMProcessorLoadingContext
+    ) throws -> Data?
 }
 
 extension VLMProcessorLoadingResolver {
@@ -59,6 +64,10 @@ extension VLMProcessorLoadingResolver {
         for context: VLMProcessorLoadingContext,
         declaredProcessorType: String?
     ) throws -> String? { nil }
+
+    public func processorConfigurationData(
+        for context: VLMProcessorLoadingContext
+    ) throws -> Data? { nil }
 }
 
 /// Ordered registry of processor-loading resolvers used by ``VLMModelFactory``.
@@ -79,6 +88,9 @@ public final class VLMProcessorLoadingRegistry: @unchecked Sendable {
         ModelTypeProcessorResolver(processorTypes: ["cosmos3_omni": "Qwen3VLProcessor"]),
         // SharpAI: SL-51 text-only models share one processor whatever their checkpoint declares.
         SharpAITextOnlyProcessorLoadingResolver(modelTypes: SharpAIVLMModelOverlays.textOnlyKeys),
+        // SharpAI: SL-51 PR3 models whose processor is built from config.json.
+        SharpAIConfigBackedProcessorLoadingResolver(
+            processorTypes: SharpAIVLMModelOverlays.configBackedProcessorTypes),
     ])
 
     private let lock = NSLock()
@@ -113,6 +125,18 @@ public final class VLMProcessorLoadingRegistry: @unchecked Sendable {
                 for: context, declaredProcessorType: declaredProcessorType)
             {
                 return processorType
+            }
+        }
+        return nil
+    }
+
+    /// SharpAI SL-51 PR3: processors built from the model's own `config.json`.
+    func processorConfigurationData(
+        for context: VLMProcessorLoadingContext
+    ) throws -> Data? {
+        for resolver in snapshot() {
+            if let data = try resolver.processorConfigurationData(for: context) {
+                return data
             }
         }
         return nil

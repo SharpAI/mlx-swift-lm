@@ -2,7 +2,7 @@
 //  SharpAIStep5Registration.swift
 //  MLXLLM
 //
-//  Overlay creators for `step5`. Not wired into LLMTypeRegistry. The owner wires it.
+//  Overlay creators for `step5`. Wired through SharpAIModelOverlays (SL-64).
 //  The creator decodes and validates the config, refuses features that are not ported
 //  (DSA sparse/full-attention layers, fp8 experts, non-identity rope scaling), and then
 //  builds the text model. The forward path covers sliding-window layers only.

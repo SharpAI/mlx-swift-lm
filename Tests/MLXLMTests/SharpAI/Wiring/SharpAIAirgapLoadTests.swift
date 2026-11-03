@@ -163,6 +163,9 @@ enum SharpAIAirgap {
         .init(key: "inkling_model", json: #"""
 {"model_type":"inkling_model","architectures":["InklingForCausalLM"],"vocab_size":64,"unpadded_vocab_size":60,"hidden_size":32,"num_hidden_layers":4,"num_attention_heads":4,"num_key_value_heads":2,"head_dim":8,"swa_num_attention_heads":4,"swa_num_key_value_heads":1,"swa_head_dim":8,"sliding_window_size":4,"d_rel":4,"rel_extent":8,"log_scaling_n_floor":2,"log_scaling_alpha":0.1,"local_layer_ids":[0,1,3],"dense_mlp_idx":1,"sconv_kernel_size":4,"intermediate_size":16,"dense_intermediate_size":48,"n_routed_experts":8,"num_experts_per_tok":2,"n_shared_experts":2,"route_scale":8.0,"logits_mup_width_multiplier":4.0}
 """#),
+        .init(key: "step5", json: #"""
+{"model_type":"step5","vocab_size":32,"hidden_size":16,"intermediate_size":32,"num_hidden_layers":2,"num_attention_heads":4,"num_attention_groups":2,"head_dim":4,"layer_types":["sliding_attention","sliding_attention"],"sliding_window":3,"use_head_wise_attn_gate":true,"moe_layer_list":[1],"moe_num_experts":4,"moe_top_k":2,"moe_intermediate_size":8,"share_expert_dim":8,"swiglu_limits":[7.0,7.0,7.0],"swiglu_limits_shared":[7.0,7.0,7.0]}
+"""#),
     ]
 }
 
