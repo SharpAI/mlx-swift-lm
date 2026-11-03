@@ -14,25 +14,30 @@ concurrency:
 permissions:
   contents: read
 
-# One job runs every check, one phase after another. The hosted macOS runners are over-subscribed and a job that is not
-# given a runner within 15 minutes is cancelled with no steps run, so a PR that needed four runners had four chances to be
-# starved; it now needs one. The phases below replace the four former jobs, in order:
-#   1. Build and Test            Release build, full library tests, then the three named gates
-#   2. SwiftLM integration       SwiftLM main built against this checkout, all in Release: speculative script + swift test
-#   3. Sealed offline            network denied, no weights, Release (observation only: it cannot turn the job red)
-# Everything is built and tested in Release, which is what we ship. The former `xcodebuild test (Debug)` job is gone: it rebuilt
-# the whole package in Debug for the sake of 14 assert()/assertionFailure() calls, which Release compiles out. Those invariants
-# are now checked by explicit tests (KVCacheStorageInvariantTests, KVCacheMetaStateRestoreTests, OpenELMConfigurationTests and
-# the tests added to KVCacheRoundTests, MTPSpeculativeTokenIteratorTests, ChatSessionTests, TextToolCallRecoveryTests) that run
-# in phase 1's full Release suite. Two asserts have no test (Gemma3nText vocabSize > 0, Bitnet input dtype): no input can break them.
+# Two lanes, two runners, in parallel. The hosted macOS runners are over-subscribed and a job that is not given a runner within
+# 15 minutes is cancelled with no steps run; the old four jobs had four chances to be starved. Two lanes have two, and a lane
+# that starves can be rerun alone (`gh run rerun --failed`). The lanes share nothing within a run; they carry work over from
+# PREVIOUS runs through actions/cache, keyed so that the expensive part survives: the Cmlx C/C++ (about 16 minutes in Release,
+# compiled from mlx-swift sources that rarely change) is keyed on the mlx-swift commit and the Xcode version.
+#   lib      Release build, full library tests, the three named gates (this also runs the explicit tests that replace the
+#            library's assert()s, which Release compiles out)
+#   swiftlm  SwiftLM main built against a clean copy of this checkout, all Release: speculative script + swift test; then the
+#            sealed offline phase (network denied, no weights, Release; observation only: it cannot turn the job red; it always
+#            builds clean by design, so it never uses a cache)
+# We ship Release, so nothing is built in Debug. The former `xcodebuild test (Debug)` job is gone: it rebuilt the whole package
+# in Debug for the sake of 14 assert()/assertionFailure() calls, which Release compiles out. Those invariants are now checked
+# by explicit tests (KVCacheStorageInvariantTests, KVCacheMetaStateRestoreTests, OpenELMConfigurationTests and the tests added
+# to KVCacheRoundTests, MTPSpeculativeTokenIteratorTests, ChatSessionTests, TextToolCallRecoveryTests). Two asserts have no
+# test (Gemma3nText vocabSize > 0, Bitnet input dtype): no input can break them.
 # Every step after the setup uses `!cancelled()`, so a failure in one phase does not hide the others. .build is kept between
-# phases (and saved by the cache at the end) unless free disk drops under 20 GiB. Rerunning a failed job reruns all of it.
+# phases (and saved by the cache at the end) unless free disk drops under 20 GiB.
 jobs:
-  ci:
-    name: CI (build, SwiftLM integration, sealed offline)
+  lib:
+    name: CI lib (Release build, tests, gates)
     runs-on: macos-15
-    timeout-minutes: 240
+    timeout-minutes: 180
     steps:
+      # ---- setup ----
       # ---- setup, once ----
       - uses: actions/checkout@v4
         with:
@@ -44,20 +49,6 @@ jobs:
       - name: Install Metal Toolchain
         run: xcodebuild -downloadComponent MetalToolchain || true
 
-      - name: Cache Swift packages
-        uses: actions/cache@v4
-        with:
-          path: .build
-          # Package.resolved is gitignored, so it cannot key the cache (the key was a constant and the cache never refreshed).
-          # Key on the tracked manifest plus the commit so every green run saves a fresh .build; restore the newest one.
-          key: ${{ runner.os }}-spm-v3-${{ hashFiles('Package.swift') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-spm-v3-${{ hashFiles('Package.swift') }}-
-            ${{ runner.os }}-spm-v3-
-
-      - name: Clear stale module cache
-        run: find .build -type d -name ModuleCache -exec rm -rf {} + 2>/dev/null || true
-
       - name: Checkout SharpAI/mlx-swift
         uses: actions/checkout@v4
         with:
@@ -68,15 +59,33 @@ jobs:
         run: |
           sed -i '' -E 's|\.package\(path: "\.\./mlx-swift"\),|\.package(path: "./mlx-swift"),|' Package.swift
 
+      - name: Record the mlx-swift revision
+        run: echo "MLX_SWIFT_SHA=$(git -C mlx-swift rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      # Package.resolved is gitignored, so it cannot key the cache. Key on the mlx-swift commit (what the Cmlx objects depend
+      # on), the Xcode version and the manifest, plus the commit so every green run saves; restore the closest earlier one.
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-lib-spm-v4-xc263-${{ env.MLX_SWIFT_SHA }}-${{ hashFiles('Package.swift') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-lib-spm-v4-xc263-${{ env.MLX_SWIFT_SHA }}-${{ hashFiles('Package.swift') }}-
+            ${{ runner.os }}-lib-spm-v4-xc263-${{ env.MLX_SWIFT_SHA }}-
+            ${{ runner.os }}-lib-spm-v4-xc263-
+
+      - name: Clear stale module cache
+        run: find .build -type d -name ModuleCache -exec rm -rf {} + 2>/dev/null || true
+
       - name: Resolve dependencies
         run: swift package resolve
 
-      # ---- phase 1: Build and Test (macOS 15) ----
-      - name: "[1/3] Build (Release)"
+      # ---- Build and Test (macOS 15) ----
+      - name: "[lib] Build (Release)"
         if: ${{ !cancelled() }}
         run: swift build -c release -Xswiftc -enable-testing --build-tests
 
-      - name: "[1/3] Install MLX Metal library"
+      - name: "[lib] Install MLX Metal library"
         if: ${{ !cancelled() }}
         run: |
           python3 -m venv /tmp/mlx_venv
@@ -92,7 +101,7 @@ jobs:
           # Aggressive: put it next to any executable in the release dir
           find .build -type f -executable -exec cp $MLX_LIB $(dirname "{}")/ \; 2>/dev/null || true
 
-      - name: "[1/3] Run Library Tests (Metal Accelerated)"
+      - name: "[lib] Run Library Tests (Metal Accelerated)"
         if: ${{ !cancelled() }}
         run: |
           # --no-parallel: GPU-heavy tests submit Metal command buffers that
@@ -101,26 +110,26 @@ jobs:
           # assertion when two such tests overlapped on CI's runner).
           swift test -c release --skip-build --no-parallel
 
-      - name: "[1/3] Speculative Decoding Protection Gate"
+      - name: "[lib] Speculative Decoding Protection Gate"
         if: ${{ !cancelled() }}
         run: |
           # --no-parallel on every GPU gate, for the reason given above.
           # Ensure speculative decoding parity and cache integrity are never regressed
           swift test -c release --filter SpeculativeDecodingTests --skip-build --no-parallel
 
-      - name: "[1/3] High-Rigor Architectural Parity (Gemma 4)"
+      - name: "[lib] High-Rigor Architectural Parity (Gemma 4)"
         if: ${{ !cancelled() }}
         run: |
           # Verify Gemma 4 Gated Residuals and PLE math integrity
           swift test -c release --filter Gemma4Tests --skip-build --no-parallel
 
-      - name: "[1/3] Performance & Memory Ceiling Audit (8GB Target)"
+      - name: "[lib] Performance & Memory Ceiling Audit (8GB Target)"
         if: ${{ !cancelled() }}
         run: |
           # Enforce 6GB RSS limit and throughput baselines
           swift test -c release --filter PerformanceRegressionTests --skip-build --no-parallel
 
-      - name: "[1/3] Upload test results on failure"
+      - name: "[lib] Upload test results on failure"
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
@@ -129,25 +138,55 @@ jobs:
           retention-days: 7
 
       # Keep .build: the job-end cache save stores it, so the next run builds incrementally. Delete it only when space is short.
-      - name: "[1/3] Free disk (only if short)"
+      - name: "[lib] Free disk (only if short)"
         if: ${{ !cancelled() }}
         run: |
           df -h / | tail -1
           avail=$(df -g / | awk 'NR==2{print $4}')
           if [ "$avail" -lt 20 ]; then echo "only ${avail} GiB free, removing .build"; rm -rf .build; df -h / | tail -1; fi
 
-      # ---- phase 2: Build & Test SwiftLM Integration (Release) ----
+  swiftlm:
+    name: CI SwiftLM (integration, sealed offline)
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      # ---- setup ----
+      # ---- setup, once ----
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode 26 (Swift 6.2)
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Install Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Checkout SharpAI/mlx-swift
+        uses: actions/checkout@v4
+        with:
+          repository: SharpAI/mlx-swift
+          path: mlx-swift
+
+      - name: Redirect mlx-swift dependency to local checkout
+        run: |
+          sed -i '' -E 's|\.package\(path: "\.\./mlx-swift"\),|\.package(path: "./mlx-swift"),|' Package.swift
+
+      # The working tree (with ./mlx-swift and the redirected Package.swift) is what the sealed phase builds; SwiftLM itself is
+      # built against the CLEAN copy below.
+
+      # ---- Build & Test SwiftLM Integration (Release) ----
       # SwiftLM main is built against a CLEAN copy of this repository (the working tree above had Package.swift redirected).
       # The newCache-throws fix (SwiftLM#167) has long been merged to main, so test against main. The old temporary branch is
       # 167 commits behind main and cannot build against newer mlx-swift-lm.
-      - name: "[2/3] Checkout a clean copy of this repository"
+      - name: "[swiftlm] Checkout a clean copy of this repository"
         if: ${{ !cancelled() }}
         uses: actions/checkout@v4
         with:
           path: mlx-swift-lm-clean
           submodules: recursive
 
-      - name: "[2/3] Checkout SwiftLM"
+      - name: "[swiftlm] Checkout SwiftLM"
         if: ${{ !cancelled() }}
         uses: actions/checkout@v4
         with:
@@ -156,7 +195,7 @@ jobs:
           path: SwiftLM
           submodules: recursive
 
-      - name: "[2/3] Redirect SwiftLM to this checkout"
+      - name: "[swiftlm] Redirect SwiftLM to this checkout"
         if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
@@ -164,30 +203,31 @@ jobs:
           rm -rf mlx-swift-lm
           cp -r ../mlx-swift-lm-clean mlx-swift-lm
 
-      - name: "[2/3] Update mlx-swift submodule to latest main"
+      - name: "[swiftlm] Update mlx-swift submodule to latest main"
         if: ${{ !cancelled() }}
         run: |
           cd SwiftLM/mlx-swift
           git fetch origin main
           git checkout origin/main
+          echo "SWIFTLM_MLX_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
-      - name: "[2/3] Cache SwiftLM Swift packages"
+      - name: "[swiftlm] Cache SwiftLM Swift packages"
         if: ${{ !cancelled() }}
         uses: actions/cache@v4
         with:
           path: SwiftLM/.build
-          key: ${{ runner.os }}-swiftlm-spm-v2-${{ hashFiles('SwiftLM/Package.resolved') }}-${{ github.sha }}
+          key: ${{ runner.os }}-swiftlm-spm-v3-xc263-${{ env.SWIFTLM_MLX_SHA }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-swiftlm-spm-v2-${{ hashFiles('SwiftLM/Package.resolved') }}-
-            ${{ runner.os }}-swiftlm-spm-v2-
+            ${{ runner.os }}-swiftlm-spm-v3-xc263-${{ env.SWIFTLM_MLX_SHA }}-
+            ${{ runner.os }}-swiftlm-spm-v3-xc263-
 
-      - name: "[2/3] Build SwiftLM (Release, with its tests)"
+      - name: "[swiftlm] Build SwiftLM (Release, with its tests)"
         if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
           swift build -c release -Xswiftc -enable-testing --build-tests
 
-      - name: "[2/3] Install MLX Metal library"
+      - name: "[swiftlm] Install MLX Metal library"
         if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
@@ -197,13 +237,13 @@ jobs:
           cp $MLX_LIB .build/release/ 2>/dev/null || true
           echo "MLX_METAL_LIB=$MLX_LIB" >> "$GITHUB_ENV"
 
-      - name: "[2/3] Run Speculative Decoding Tests"
+      - name: "[swiftlm] Run Speculative Decoding Tests"
         if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
           bash tests/test-speculative-eval.sh
 
-      - name: "[2/3] Copy Metal library to the build outputs"
+      - name: "[swiftlm] Copy Metal library to the build outputs"
         if: ${{ !cancelled() }}
         run: |
           test -f "$MLX_METAL_LIB" || { echo "::error::mlx.metallib not found at $MLX_METAL_LIB"; exit 1; }
@@ -213,14 +253,14 @@ jobs:
           find SwiftLM/.build -name "*.xctest" -exec cp "$MLX_METAL_LIB" {}/Contents/MacOS/ \; 2>/dev/null || true
           find SwiftLM/.build -name "*Tests" -type f -exec sh -c 'cp "'"$MLX_METAL_LIB"'" "$(dirname ${1})/"' _ {} \; 2>/dev/null || true
 
-      - name: "[2/3] Run SwiftLM Integration Tests"
+      - name: "[swiftlm] Run SwiftLM Integration Tests"
         if: ${{ !cancelled() }}
         run: |
           cd SwiftLM
           swift test -c release --parallel --skip-build
 
       # SwiftLM/.build is cached at job end, so keep SwiftLM unless space is short; the clean copy is always removed.
-      - name: "[2/3] Free disk (only if short)"
+      - name: "[swiftlm] Free disk (only if short)"
         if: ${{ !cancelled() }}
         run: |
           rm -rf mlx-swift-lm-clean
@@ -228,20 +268,20 @@ jobs:
           avail=$(df -g / | awk 'NR==2{print $4}')
           if [ "$avail" -lt 20 ]; then echo "only ${avail} GiB free, removing SwiftLM"; rm -rf SwiftLM; df -h / | tail -1; fi
 
-      # ---- phase 3: Sealed offline conformance (Release) ----
+      # ---- Sealed offline conformance (Release) ----
       # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights. The Metal
       # toolchain (installed in the setup) and the MLX metallib are fetched BEFORE the seal. This phase is observation only: it
       # is continue-on-error and prints an explicit verdict, so it cannot turn the job red. The dependency fetch happens before
       # the seal; scripts/conformance/offline-build/run-blocked.sh then self-tests the seal, resolves from the SwiftPM cache,
       # builds clean and runs the filters, failing on a vacuous (zero-test) filter.
-      - name: "[3/3] Record the mlx-swift revision"
+      - name: "[sealed] Record the mlx-swift revision"
         if: ${{ !cancelled() }}
         run: |
           rev=$(git -C mlx-swift rev-parse HEAD)
           echo "mlx-swift revision: $rev"
           echo "mlx-swift revision: \`$rev\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: "[3/3] Prefetch dependencies and the MLX Metal library (network allowed, before the seal)"
+      - name: "[sealed] Prefetch dependencies and the MLX Metal library (network allowed, before the seal)"
         if: ${{ !cancelled() }}
         run: |
           swift package resolve
@@ -256,7 +296,7 @@ jobs:
           find /tmp/mlx_venv_sealed -name "mlx.metallib" | head -n 1 > /tmp/mlx_metallib_path
           test -s /tmp/mlx_metallib_path
 
-      - name: "[3/3] Build and test with network blocked"
+      - name: "[sealed] Build and test with network blocked"
         id: sealed
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -278,7 +318,7 @@ jobs:
         run: bash scripts/conformance/offline-build/run-blocked.sh
 
       # continue-on-error keeps the job green, so say the verdict explicitly where a reviewer looks.
-      - name: "[3/3] Sealed offline verdict"
+      - name: "[sealed] Sealed offline verdict"
         if: ${{ always() }}
         run: |
           case "${{ steps.sealed.outcome }}" in
