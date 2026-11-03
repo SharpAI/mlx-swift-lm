@@ -52,7 +52,6 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
     let mainModel: any LanguageModel
     let drafter: any MTPDrafterModel
 
-    public var state: LMOutput.State? { mainState }
     var mainState: LMOutput.State?
     public let streamingError: SSDStreamingError? = nil
     let mainCacheStorage: KVCacheStorage
