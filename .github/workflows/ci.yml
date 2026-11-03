@@ -44,9 +44,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-v2-${{ hashFiles('Package.resolved') }}
+          # Package.resolved is gitignored, so it cannot key the cache (the key was a constant and the cache never refreshed).
+          # Key on the tracked manifest plus the commit so every green run saves a fresh .build; restore the newest one.
+          key: ${{ runner.os }}-spm-v3-${{ hashFiles('Package.swift') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-spm-v2-
+            ${{ runner.os }}-spm-v3-${{ hashFiles('Package.swift') }}-
+            ${{ runner.os }}-spm-v3-
 
       - name: Clear stale module cache
         run: find .build -type d -name ModuleCache -exec rm -rf {} + 2>/dev/null || true
@@ -121,11 +124,13 @@ jobs:
           path: .build/artifacts/
           retention-days: 7
 
-      - name: "[1/4] Free disk"
+      # Keep .build: the job-end cache save stores it, so the next run builds incrementally. Delete it only when space is short.
+      - name: "[1/4] Free disk (only if short)"
         if: ${{ !cancelled() }}
         run: |
-          rm -rf .build
           df -h / | tail -1
+          avail=$(df -g / | awk 'NR==2{print $4}')
+          if [ "$avail" -lt 20 ]; then echo "only ${avail} GiB free, removing .build"; rm -rf .build; df -h / | tail -1; fi
 
       # ---- phase 2: xcodebuild test (Debug) ----
       # Debug build: runs the DEBUG-only asserts that phase 1 compiles out, with Metal shaders built from our mlx-swift source.
@@ -195,8 +200,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: SwiftLM/.build
-          key: ${{ runner.os }}-swiftlm-spm-${{ hashFiles('SwiftLM/Package.resolved') }}
-          restore-keys: ${{ runner.os }}-swiftlm-spm-
+          key: ${{ runner.os }}-swiftlm-spm-v2-${{ hashFiles('SwiftLM/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-swiftlm-spm-v2-${{ hashFiles('SwiftLM/Package.resolved') }}-
+            ${{ runner.os }}-swiftlm-spm-v2-
 
       - name: "[3/4] Build SwiftLM (Release)"
         if: ${{ !cancelled() }}
@@ -242,11 +249,14 @@ jobs:
           cd SwiftLM
           swift test --parallel --skip-build
 
-      - name: "[3/4] Free disk"
+      # SwiftLM/.build is cached at job end, so keep SwiftLM unless space is short; the clean copy is always removed.
+      - name: "[3/4] Free disk (only if short)"
         if: ${{ !cancelled() }}
         run: |
-          rm -rf SwiftLM mlx-swift-lm-clean
+          rm -rf mlx-swift-lm-clean
           df -h / | tail -1
+          avail=$(df -g / | awk 'NR==2{print $4}')
+          if [ "$avail" -lt 20 ]; then echo "only ${avail} GiB free, removing SwiftLM"; rm -rf SwiftLM; df -h / | tail -1; fi
 
       # ---- phase 4: Sealed offline conformance ----
       # SL-28: build and run the offline conformance suites with the network DENIED (sandbox-exec), no weights. The Metal
