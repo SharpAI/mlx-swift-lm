@@ -264,7 +264,10 @@ jobs:
           # pointer was not the last allocation", signal 6; they pass in Debug), which hides every test after them. With
           # the suite skipped, the other 127 SwiftLM tests pass in Release (checked locally). It is a SwiftLM Release-only
           # bug unrelated to this repository (tracked as SL-71); remove the --skip once it is fixed in SwiftLM.
-          swift test -c release --no-parallel --skip-build \
+          # --disable-swift-testing: SwiftLM has only XCTest tests. With Swift 6.2 in Release, the Swift Testing phase that
+          # follows the XCTest run starts SwiftLM's own entry point ("Missing expected argument '--model'") and the step
+          # exits 1 although all XCTest tests passed.
+          swift test -c release --no-parallel --skip-build --disable-swift-testing \
             --skip ClientDisconnectTests
 
       # SwiftLM/.build is cached at job end, so keep SwiftLM unless space is short; the clean copy is always removed.
