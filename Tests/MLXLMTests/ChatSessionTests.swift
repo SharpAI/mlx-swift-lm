@@ -2264,6 +2264,43 @@ public class ChatSessionTests: XCTestCase {
         XCTAssertNil(completionInfo.speculativeDecodingTelemetry)
     }
 
+    /// Replaces assert at ChatSession.swift:1242; Release compiles the assert out.
+    /// Release-safe replacement for the `assert(kvCache.nativeAttentionOffsetsAreAligned)` at
+    /// the start of a continuing turn: after every turn the session-owned main cache must have
+    /// every attention leaf at the shared timeline position.
+    func testMainCacheAttentionOffsetsStayAlignedAcrossTurns() async throws {
+        let (_, continuation) = AsyncStream<Int>.makeStream()
+        let tokenizer = PrefixPreservingTokenizer(renderedLengthContinuation: continuation)
+        let processor = TestInputProcessor(
+            tokenizer: tokenizer,
+            configuration: ModelConfiguration(id: "test"),
+            messageGenerator: DefaultMessageGenerator())
+        let session = ChatSession(
+            model(processor: processor),
+            generateParameters: GenerateParameters(maxTokens: 3, temperature: 0))
+
+        for prompt in ["first", "second", "third"] {
+            _ = try await collectGeneration(session.streamDetails(to: prompt))
+            let optionalProgress = await session.cacheProgress()
+            let progress = try XCTUnwrap(optionalProgress)
+            let result = try await session.withCache { cache -> (aligned: Bool, count: Int) in
+                let cache = try XCTUnwrap(cache)
+                // Rebuild a storage over the live entries with the session's own timeline,
+                // then ask the exact predicate the assert used.
+                let aligned = KVCacheStorage(
+                    cache, plan: .disabled, processedTokenCount: progress.main
+                ).nativeAttentionOffsetsAreAligned
+                return (aligned, cache.count)
+            }
+            let checked = try XCTUnwrap(result)
+            // Guard against the vacuous pass of allSatisfy over an empty cache.
+            XCTAssertGreaterThan(checked.count, 0, "no cache entries after turn \(prompt)")
+            XCTAssertGreaterThan(progress.main, 0)
+            XCTAssertTrue(
+                checked.aligned, "attention offsets diverged after turn \(prompt)")
+        }
+    }
+
     /// Carried model state does not disqualify a turn from speculation. The
     /// anchors these models carry position from the cache offset, and a
     /// rejected proposal rewinds that offset along with the KV rows.

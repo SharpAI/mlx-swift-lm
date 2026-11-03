@@ -57,7 +57,6 @@ struct SharpAIVLMOverlaysTests {
         "muse_glimmer_assistant",
         "muse_spark",
         "nemo_speechlm",
-        "openpangu_vl",
         "ovis2_6_moe",
         "step3p7",
         "step5_mtp",
@@ -67,7 +66,7 @@ struct SharpAIVLMOverlaysTests {
 
     @Test("every wired key resolves in VLMTypeRegistry.shared")
     func wiredKeysAreRegistered() async {
-        #expect(SharpAIVLMModelOverlays.vlmWiredKeys.count == 10)
+        #expect(SharpAIVLMModelOverlays.vlmWiredKeys.count == 13)
         #expect(SharpAIVLMModelOverlays.textOnlyKeys.isSubset(of: SharpAIVLMModelOverlays.vlmWiredKeys))
         #expect(SharpAIVLMModelOverlays.vlmWiredKeys.subtracting(SharpAIVLMModelOverlays.textOnlyKeys) == ["cosmos3_omni", "eagle_2_5_vl", "intern_s2_preview", "moondream3", "phi4-siglip"])
         for key in SharpAIVLMModelOverlays.vlmWiredKeys.sorted() {

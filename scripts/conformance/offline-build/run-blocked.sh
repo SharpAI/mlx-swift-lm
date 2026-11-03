@@ -23,7 +23,8 @@
 #   KEEP=1        do not remove SCRATCH first (incremental)
 #   POST_BUILD    optional shell snippet run INSIDE the sandbox after the build and before the tests, with SCRATCH
 #                 exported (CI uses it to copy mlx.metallib next to the test binaries)
-#   TEST_ARGS     extra arguments for `swift test` (CI: --no-parallel, GPU tests are not safe to overlap)
+#   TEST_ARGS     extra arguments for `swift test` (CI: -c release --no-parallel, GPU tests are not safe to overlap)
+#   BUILD_ARGS    extra arguments for `swift build` (CI: -c release -Xswiftc -enable-testing); default none = a Debug build
 #
 # upstream-watch: if Package.swift gains a dependency that is not in the SwiftPM cache, stage 1 fails and names
 # the URL it tried to fetch.
@@ -37,6 +38,7 @@ LOCK_BUILD=${LOCK_BUILD:-}
 LOCK_GPU=${LOCK_GPU:-}
 POST_BUILD=${POST_BUILD:-}
 TEST_ARGS=${TEST_ARGS:-}
+BUILD_ARGS=${BUILD_ARGS:-}
 PROFILE='(version 1)(allow default)(deny network*)'
 
 finish() { echo "EXIT=$1"; exit "$1"; }
@@ -172,7 +174,7 @@ if fetched_from_network "$SCRATCH/resolve.log"; then
 
 echo "[run-blocked] stage 2: clean build (network blocked)"
 # shellcheck disable=SC2086
-$LOCK_BUILD sandbox-exec -p "$PROFILE" swift build --build-tests "${SW[@]}" > "$SCRATCH/build.log" 2>&1; st=$?
+$LOCK_BUILD sandbox-exec -p "$PROFILE" swift build --build-tests "${SW[@]}" $BUILD_ARGS > "$SCRATCH/build.log" 2>&1; st=$?
 tail -5 "$SCRATCH/build.log" | cut -c1-300
 [ $st -eq 0 ] || { echo "[run-blocked] build failed, log: $SCRATCH/build.log"; finish $st; }
 

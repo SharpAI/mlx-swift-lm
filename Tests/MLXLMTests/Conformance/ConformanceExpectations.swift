@@ -21,7 +21,7 @@ enum ConformanceExpectations {
     /// Every key found in each registry's source (not only the survey's), so a vanished registration is caught.
     static let registryKeys: [ConformanceRegistry: [String]] = [
         .llm: ["PanguEmbedded", "acereason", "afmoe", "alice_ai", "apertus", "axk1", "baichuan_m1", "bailing_hybrid", "bailing_moe", "bailing_moe_v3", "beam", "bitnet", "cohere", "cohere2_moe", "deepseek_v2", "deepseek_v3", "deepseek_v32", "deepseek_v3_2", "deepseek_v4", "domynedge", "dory", "ernie4_5", "exaone4", "exaone_moe", "falcon_h1", "flint", "gemma", "gemma2", "gemma3", "gemma3_text", "gemma3n", "gemma4", "gemma4_assistant", "gemma4_text", "gemma4_unified", "glm4", "glm4_moe", "glm4_moe_lite", "glm_moe_dsa", "gpt_oss", "granite", "granite_swa", "granitemoe_swa", "granitemoehybrid", "helium", "hrm_text", "hunyuan_v1_dense", "hy_v3", "hy_v4", "hyperclovax", "inkling_model", "internlm2", "iquestcoder", "iquestloopcoder", "jais2", "jamba", "jamba_3b", "k2_horizon", "kolibri1", "laguna", "lfm2", "lfm2_moe", "lille-130m", "llama", "longcat_flash", "mamba2", "mellum", "mimo", "mimo_v2", "mimo_v2_flash", "minicpm", "minimax", "minimax_m3_text", "mistral", "mistral3", "mixtral", "muse_glimmer_text", "nanbeige", "nanochat", "nemotron_h", "nemotron_h_mtp", "nemotron_h_puzzle", "nemotron_labs_diffusion", "olmo2", "olmo3", "olmo_hybrid", "olmoe", "openelm", "pangu_ultra_moe", "param2moe", "phi", "phi3", "phimoe", "plamo3", "qwen2", "qwen3", "qwen3_5", "qwen3_5_moe", "qwen3_5_moe_text", "qwen3_5_text", "qwen3_8", "qwen3_8_moe", "qwen3_8_text", "qwen3_moe", "qwen3_next", "sarvam_moe", "smollm3", "starcoder2", "step3p5", "step5", "telechat3", "vaultgemma"],
-        .vlm: ["cosmos3_omni", "eagle_2_5_vl", "fastvlm", "gemma3", "gemma4", "gemma4_unified", "glm_ocr", "idefics3", "intern_s2_preview", "interns1_pro", "interns2_mobius", "kimi_k3", "lfm2-vl", "lfm2_vl", "llava_qwen2", "mistral3", "moondream3", "muse_glimmer", "paligemma", "phi4-siglip", "pixtral", "qwen2_5_vl", "qwen2_vl", "qwen3_5", "qwen3_5_moe", "qwen3_8", "qwen3_8_moe", "qwen3_vl", "qwen3_vl_moe", "qwen4_exp", "smolvlm", "step1"],
+        .vlm: ["cosmos3_omni", "eagle_2_5_vl", "fastvlm", "gemma3", "gemma4", "gemma4_unified", "glm_ocr", "idefics3", "intern_s2_preview", "interns1_pro", "interns2_mobius", "kimi_k3", "lfm2-vl", "lfm2_vl", "llava_qwen2", "mistral3", "moondream3", "muse_glimmer", "opencua", "openpangu_vl", "paligemma", "phi4-siglip", "pixtral", "qwen2_5_vl", "qwen2_vl", "qwen3_5", "qwen3_5_moe", "qwen3_8", "qwen3_8_moe", "qwen3_omni_moe", "qwen3_vl", "qwen3_vl_moe", "qwen4_exp", "smolvlm", "step1"],
         .embedder: ["bert", "distilbert", "embedding_gemma2", "embedding_gemma2_text", "gemma3", "gemma3_text", "gemma3n", "lfm2", "modernbert", "nomic_bert", "qwen3", "roberta", "xlm-roberta"],
     ]
 
@@ -143,8 +143,8 @@ enum ConformanceExpectations {
         .init(modelType: "nemotron_parse", registries: [], archs: ["NemotronParseForConditionalGeneration", "RadioMBartPrefixForCausalLM"], surveyStatus: "missing"),
         .init(modelType: "olmo_hybrid", registries: [.llm], archs: ["OlmoHybridForCausalLM"], surveyStatus: "missing"),
         .init(modelType: "openai_privacy_filter", registries: [], archs: ["OpenAIPrivacyFilterForTokenClassification"], surveyStatus: "missing"),
-        .init(modelType: "opencua", registries: [], archs: ["OpenCUAForConditionalGeneration"], surveyStatus: "missing"),
-        .init(modelType: "openpangu_vl", registries: [], archs: ["OpenPanguVLForConditionalGeneration (name inferred)"], surveyStatus: "missing"),
+        .init(modelType: "opencua", registries: [.vlm], archs: ["OpenCUAForConditionalGeneration"], surveyStatus: "missing"),
+        .init(modelType: "openpangu_vl", registries: [.vlm], archs: ["OpenPanguVLForConditionalGeneration (name inferred)"], surveyStatus: "missing"),
         .init(modelType: "openvla", registries: [], archs: ["OpenVLAForActionPrediction"], surveyStatus: "missing"),
         .init(modelType: "ops_colqwen3", registries: [], archs: ["OpsColQwen3Model"], surveyStatus: "partial"),
         .init(modelType: "ovis2_6_moe", registries: [], archs: ["Ovis2_6ForCausalLM / Ovis2_6_MoeForCausalLM"], surveyStatus: "missing"),
@@ -164,7 +164,7 @@ enum ConformanceExpectations {
         .init(modelType: "qwen3_5_mtp", registries: [], archs: ["Qwen3_5MTP", "Qwen3_5MoeMTP"], surveyStatus: "supported"),
         .init(modelType: "qwen3_5_text", registries: [.llm], archs: ["Qwen3_5ForCausalLM"], surveyStatus: "supported"),
         .init(modelType: "qwen3_asr", registries: [], archs: ["Qwen3ASRForConditionalGeneration", "Qwen3ASRForcedAlignerForTokenClassification", "Qwen3ASRRealtimeGeneration"], surveyStatus: "missing"),
-        .init(modelType: "qwen3_omni_moe", registries: [], archs: ["ClefOmniForJointSchema", "Qwen3OmniDSparkModel"], surveyStatus: "missing"),
+        .init(modelType: "qwen3_omni_moe", registries: [.vlm], archs: ["ClefOmniForJointSchema", "Qwen3OmniDSparkModel"], surveyStatus: "missing"),
         .init(modelType: "qwen3_vl_nemotron_embed", registries: [], archs: ["Qwen3VLNemotronEmbedModel"], surveyStatus: "partial"),
         .init(modelType: "qwen4_exp", registries: [.vlm], archs: ["Qwen4ExpForCausalLM", "Qwen4ExpForConditionalGeneration", "Qwen4ExpMTP"], surveyStatus: "missing"),
         .init(modelType: "roberta", registries: [.embedder], archs: ["RobertaForTokenClassification"], surveyStatus: "partial"),

@@ -869,3 +869,38 @@ func testRewindAfterReplacementUsesOnlyRetainedHistory(retainPrefillHistory: Boo
         before.expectUnchanged(replacement, "replacement has no rewind history")
     }
 }
+
+// MARK: - Invariant: every leaf of a round agrees on how much the round wrote
+
+// Replaces assert at KVCacheRound.swift:234; Release compiles the assert out.
+@Test(arguments: [1, 3, 4, 6, 8])
+func testRoundLeavesAgreeOnWrittenPositions(width: Int) throws {
+    // Mixed topology: write-through leaves and staged rotating leaves (one with a pinned
+    // prefix), prefilled past the window so the rings have wrapped.
+    let cache: [KVCache] = [
+        KVCacheSimple(),
+        RotatingKVCache(maxSize: 4, keep: 0),
+        KVCacheSimple(),
+        RotatingKVCache(maxSize: 4, keep: 1),
+    ]
+    let (pk, pv) = positionedKV(0 ..< 6)
+    cache.forEach { _ = $0.update(keys: pk, values: pv) }
+
+    let storage = KVCacheStorage(cache, plan: .disabled)
+    let overlay = try #require(StagedRound(storage, width: 8))
+    #expect(overlay.round.writtenPositions == 0, "nothing written yet")
+    #expect(overlay.round.strategies.allSatisfy { $0.writtenPositions == 0 })
+
+    stageRound(overlay, 6 ..< (6 + width))
+
+    let perLeaf = overlay.round.strategies.map(\.writtenPositions)
+    #expect(
+        perLeaf == Array(repeating: width, count: cache.count),
+        "leaves disagree on how much the round wrote: \(perLeaf)")
+    #expect(overlay.round.writtenPositions == width)
+
+    // The agreed count is what commit bounds `retaining` by; the timeline must follow.
+    let accepted = width / 2
+    overlay.commit(accepted: accepted)
+    #expect(Set(cache.map(\.offset)) == [6 + accepted])
+}
