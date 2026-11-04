@@ -13,23 +13,27 @@ MLX Swift LM is a Swift package to build tools and applications with large langu
 
 | | Upstream `ml-explore/mlx-swift-lm` | This fork: usable through the factory today | This fork: implemented in the repo (added on top) |
 | --- | ---: | ---: | ---: |
-| **LLM** (`LLMTypeRegistry`) | 67 | **109** (+42) | **+57** new types |
-| **VLM** (`VLMTypeRegistry`) | 22 | **28** (+6) | **+72** new types |
-| **Embedder** (`EmbedderTypeRegistry`) | 12 | 12 | — |
+| **LLM** (`LLMTypeRegistry`) | 67 | **112** (+45) | **+57** new types |
+| **VLM** (`VLMTypeRegistry`) | 22 | **35** (+13) | **+72** new types |
+| **Embedder** (`EmbedderTypeRegistry`) | 12 | **13** (+1) | — |
 
 **The 127 new implementations are the main difference.** They live in `Libraries/MLXLLM/SharpAI/` (56) and
 `Libraries/MLXVLM/SharpAI/` (71): model classes, configuration, weight sanitizing and creators, each with
-unit tests. 37 of the LLM ones are wired into `LLMModelFactory` and load through the real factory path; the
+unit tests. 40 of the LLM ones are wired into `LLMModelFactory` and load through the real factory path; the
 remaining LLM ones and the other VLM ones follow (VLM needs processors first). If upstream registers the same
 `model_type`, upstream wins. They are tested air-gapped: each wired model loads a deterministic synthetic
 checkpoint (config.json plus safetensors, generated locally, nothing downloaded) and runs a forward pass.
 Reports from real use are welcome.
 
-The 42 extra LLM types usable today are the 37 wired ones plus `deepseek_v3_2`, `gemma4_assistant`,
+The 45 extra LLM types usable today are the 40 wired ones plus `deepseek_v3_2`, `gemma4_assistant`,
 `glm_moe_dsa`, `jamba_3b` and `deepseek_v4` (DeepSeek-V4, registered through a fork hook that wins over
-upstream). The fork also adds 2 and changes 39 existing upstream LLM model files.
-The 6 extra VLM types usable today are `interns1_pro`, `interns2_mobius`, `kimi_k3`, `qwen4_exp`, `step1` and
-`intern_s2_preview`; the first five are text-only for now (image, video and audio input is rejected with a clear error).
+upstream). The fork also adds 2 and changes 40 existing upstream LLM model files.
+The 13 extra VLM types usable today are `cosmos3_omni`, `eagle_2_5_vl`, `intern_s2_preview`, `interns1_pro`,
+`interns2_mobius`, `kimi_k3`, `moondream3`, `opencua`, `openpangu_vl`, `phi4-siglip`, `qwen3_omni_moe`,
+`qwen4_exp` and `step1`. **Eight of them are text-only for now** (`interns1_pro`, `interns2_mobius`, `kimi_k3`,
+`opencua`, `openpangu_vl`, `qwen3_omni_moe`, `qwen4_exp`, `step1`; the newest three are `opencua`,
+`openpangu_vl` and `qwen3_omni_moe`): image, video and audio input is rejected with a clear error. The other
+five (`cosmos3_omni`, `eagle_2_5_vl`, `intern_s2_preview`, `moondream3`, `phi4-siglip`) have a real processor. The 1 extra embedder type is `modernbert`.
 
 Other differences from upstream:
 
