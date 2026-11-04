@@ -260,15 +260,12 @@ jobs:
         run: |
           cd SwiftLM
           # --no-parallel: GPU tests are not safe to overlap (the library lane does the same).
-          # --skip ClientDisconnectTests: tests in this SwiftLM suite abort the whole XCTest process in Release ("freed
-          # pointer was not the last allocation", signal 6; they pass in Debug), which hides every test after them. With
-          # the suite skipped, the other 127 SwiftLM tests pass in Release (checked locally). It is a SwiftLM Release-only
-          # bug unrelated to this repository (tracked as SL-71); remove the --skip once it is fixed in SwiftLM.
           # --disable-swift-testing: SwiftLM has only XCTest tests. With Swift 6.2 in Release, the Swift Testing phase that
           # follows the XCTest run starts SwiftLM's own entry point ("Missing expected argument '--model'") and the step
           # exits 1 although all XCTest tests passed.
-          swift test -c release --no-parallel --skip-build --disable-swift-testing \
-            --skip ClientDisconnectTests
+          # ClientDisconnectTests runs again: SwiftLM#256 replaced Task.sleep(for:), which aborts the XCTest process in
+          # Release on Swift 6.2.4, with Task.sleep(nanoseconds:) in its tests (tracked as SL-71).
+          swift test -c release --no-parallel --skip-build --disable-swift-testing
 
       # SwiftLM/.build is cached at job end, so keep SwiftLM unless space is short; the clean copy is always removed.
       - name: "[swiftlm] Free disk (only if short)"
