@@ -21,6 +21,7 @@ public enum SharpAIVLMModelOverlays {
     public static let textOnlyKeys: Set<String> = [
         "interns1_pro",
         "interns2_mobius",
+        "isaac",
         "kimi_k3",
         "opencua",
         "openpangu_vl",
@@ -46,6 +47,7 @@ public enum SharpAIVLMModelOverlays {
         "intern_s2_preview",
         "interns1_pro",
         "interns2_mobius",
+        "isaac",
         "kimi_k3",
         "moondream3",
         "opencua",
@@ -67,6 +69,7 @@ public enum SharpAIVLMModelOverlays {
         add(SharpAIInternS2PreviewOverlay.creators)
         add(SharpAIInterns1ProOverlay.creators)
         add(SharpAIInterns2MobiusOverlay.creators)
+        add(SharpAIIsaacOverlay.creators)
         add(SharpAIKimiK3Overlay.creators)
         add(SharpAIMoondream3Overlay.creators)
         add(SharpAIOpencuaOverlay.creators)
