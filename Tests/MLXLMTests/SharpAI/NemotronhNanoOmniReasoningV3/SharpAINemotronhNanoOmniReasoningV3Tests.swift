@@ -192,8 +192,55 @@ final class SharpAINemotronhNanoOmniReasoningV3Tests: XCTestCase {
             [
                 "language_model.backbone.embeddings.weight",
                 "vision_model.radio_model.model.blocks.0.mlp.fc2.weight",
-                "mlp1.3.weight",
+                "mlp1.fc2.weight",
             ])
+    }
+
+    /// Writes the checkpoint's own key names (`mlp1.0/1/3`) and loads them through the real loader.
+    /// Without the projector remap, `update` rejects the file with `incompatibleItems(path: ["mlp1"])`.
+    func testCheckpointProjectorKeysLoadThroughTheLoader() async throws {
+        let model = SharpAINemotronhNanoOmniReasoningV3Model(try decodeConfig(tinyConfigJSON))
+        let moduleToCheckpoint = [
+            "mlp1.norm.": "mlp1.0.",
+            "mlp1.fc1.": "mlp1.1.",
+            "mlp1.fc2.": "mlp1.3.",
+        ]
+
+        var checkpoint = [String: MLXArray]()
+        for (name, p) in model.parameters().flattened() {
+            var key = name
+            for (from, to) in moduleToCheckpoint where key.hasPrefix(from) {
+                key = to + String(key.dropFirst(from.count))
+            }
+            checkpoint[key] = MLXArray.ones(p.shape, dtype: p.dtype)
+        }
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sharpai-nemotron-omni-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try save(arrays: checkpoint, url: dir.appendingPathComponent("model.safetensors"))
+
+        try await loadWeights(modelDirectory: dir, model: model)
+
+        let loaded = model.parameters().flattened()
+        let fc2 = try XCTUnwrap(loaded.first { $0.0 == "mlp1.fc2.weight" }?.1)
+        XCTAssertTrue(allClose(fc2, MLXArray.ones(fc2.shape, dtype: fc2.dtype)).item(Bool.self))
+    }
+
+    func testSanitizeRenamesProjectorSequentialIndicesToModuleKeys() throws {
+        let model = SharpAINemotronhNanoOmniReasoningV3Model(try decodeConfig(tinyConfigJSON))
+
+        let weights: [String: MLXArray] = [
+            "mlp1.0.weight": MLXArray.ones([256]),
+            "mlp1.1.weight": MLXArray.ones([32, 256]),
+            "mlp1.3.weight": MLXArray.ones([100, 32]),
+        ]
+
+        let sanitized = model.sanitize(weights: weights)
+
+        XCTAssertEqual(
+            Set(sanitized.keys), ["mlp1.norm.weight", "mlp1.fc1.weight", "mlp1.fc2.weight"])
     }
 
     func testPrepareRejectsImageInput() throws {
@@ -336,10 +383,10 @@ final class SharpAINemotronhNanoOmniReasoningV3Tests: XCTestCase {
 
         XCTAssertTrue(parameterKeys.contains("vision_model.radio_model.model.blocks.0.mlp.fc2.weight"))
         XCTAssertTrue(parameterKeys.contains("vision_model.radio_model.model.patch_generator.pos_embed"))
-        // mlp1 is nn.Sequential(RMSNorm, Linear, SquaredReLU, Linear): indices 0, 1 and 3.
-        XCTAssertTrue(parameterKeys.contains("mlp1.0.weight"))
-        XCTAssertTrue(parameterKeys.contains("mlp1.1.weight"))
-        XCTAssertTrue(parameterKeys.contains("mlp1.3.weight"))
+        // mlp1: norm, fc1, fc2. Checkpoint indices 0, 1 and 3 are remapped in sanitize.
+        XCTAssertTrue(parameterKeys.contains("mlp1.norm.weight"))
+        XCTAssertTrue(parameterKeys.contains("mlp1.fc1.weight"))
+        XCTAssertTrue(parameterKeys.contains("mlp1.fc2.weight"))
         XCTAssertTrue(parameterKeys.contains("sound_projection.norm.weight"))
         XCTAssertTrue(parameterKeys.contains("sound_projection.linear1.weight"))
         XCTAssertTrue(parameterKeys.contains("sound_projection.linear2.weight"))

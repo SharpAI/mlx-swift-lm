@@ -112,6 +112,19 @@ public final class SharpAINemotronhNanoOmniReasoningV3Model: Module, LanguageMod
         return mlp1(sharpAINemotronhNanoVlV2PixelShuffle(grid))
     }
 
+    /// `mlp1.0/1/3` (nn.Sequential indices in the checkpoint) map to the projector's `norm`, `fc1`, `fc2`.
+    static func projectorName(_ key: String) -> String {
+        let renames = [
+            "mlp1.0.": "mlp1.norm.",
+            "mlp1.1.": "mlp1.fc1.",
+            "mlp1.3.": "mlp1.fc2.",
+        ]
+        for (from, to) in renames where key.hasPrefix(from) {
+            return to + String(key.dropFirst(from.count))
+        }
+        return key
+    }
+
     /// Keeps text weights under `language_model.`, keeps the built tower and projector weights as
     /// they are, and drops the rest (unbuilt towers, MTP, video embedder).
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
@@ -136,7 +149,7 @@ public final class SharpAINemotronhNanoOmniReasoningV3Model: Module, LanguageMod
                 {
                     continue
                 }
-                kept[key] = value
+                kept[Self.projectorName(key)] = value
             }
         }
 
