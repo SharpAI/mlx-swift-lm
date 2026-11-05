@@ -291,9 +291,11 @@ public final class SharpAINemotronhNanoVlV2VisionModel: Module {
 
 /// `mlp1`: RMSNorm, Linear (no bias), squared ReLU, Linear (no bias).
 public final class SharpAINemotronhNanoVlV2Projector: Module {
-    @ModuleInfo(key: "0") var norm: RMSNorm
-    @ModuleInfo(key: "1") var fc1: Linear
-    @ModuleInfo(key: "3") var fc2: Linear
+    // Checkpoint keys `mlp1.0`, `mlp1.1`, `mlp1.3` are renamed to these in sanitize: a numeric
+    // child key would turn the parameter tree into an array with holes that `update` cannot match.
+    @ModuleInfo var norm: RMSNorm
+    @ModuleInfo var fc1: Linear
+    @ModuleInfo var fc2: Linear
 
     public init(inputSize: Int, hiddenSize: Int, outputSize: Int) {
         self._norm.wrappedValue = RMSNorm(dimensions: inputSize, eps: 1e-5)

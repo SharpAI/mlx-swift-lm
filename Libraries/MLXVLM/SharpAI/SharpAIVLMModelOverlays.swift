@@ -23,6 +23,7 @@ public enum SharpAIVLMModelOverlays {
         "interns2_mobius",
         "isaac",
         "kimi_k3",
+        "NemotronH_Nano_Omni_Reasoning_V3",
         "opencua",
         "openpangu_vl",
         "qwen3_omni_moe",
@@ -50,6 +51,7 @@ public enum SharpAIVLMModelOverlays {
         "isaac",
         "kimi_k3",
         "moondream3",
+        "NemotronH_Nano_Omni_Reasoning_V3",
         "opencua",
         "openpangu_vl",
         "phi4-siglip",
@@ -72,6 +74,7 @@ public enum SharpAIVLMModelOverlays {
         add(SharpAIIsaacOverlay.creators)
         add(SharpAIKimiK3Overlay.creators)
         add(SharpAIMoondream3Overlay.creators)
+        add(SharpAINemotronhNanoOmniReasoningV3Overlay.creators)
         add(SharpAIOpencuaOverlay.creators)
         add(SharpAIOpenpanguVlOverlay.creators)
         add(SharpAIPhi4SiglipOverlay.creators)

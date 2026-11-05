@@ -17,6 +17,66 @@ import Testing
 @Suite("SharpAI wired VLM-registry overlays load air-gapped synthetic weights (SL-51)", .serialized)
 struct SharpAIVLMAirgapLoadTests {
 
+    /// Projector keys are the module's own (`mlp1.norm`, `mlp1.fc1`, `mlp1.fc2`). The checkpoint names
+    /// `mlp1.0/1/3` are covered by SharpAINemotronhNanoOmniReasoningV3Tests.
+    static let nemotronOmniJSON = #"""
+            {
+              "model_type": "NemotronH_Nano_Omni_Reasoning_V3",
+              "architectures": [
+                "NemotronH_Nano_Omni_Reasoning_V3"
+              ],
+              "llm_config": {
+                "model_type": "nemotron_h",
+                "vocab_size": 100,
+                "hidden_size": 64,
+                "num_attention_heads": 4,
+                "num_key_value_heads": 2,
+                "mamba_num_heads": 4,
+                "mamba_head_dim": 16,
+                "ssm_state_size": 16,
+                "conv_kernel": 4,
+                "n_groups": 2,
+                "intermediate_size": 128,
+                "moe_intermediate_size": 64,
+                "moe_shared_expert_intermediate_size": 64,
+                "n_routed_experts": 4,
+                "num_experts_per_tok": 2,
+                "hybrid_override_pattern": "M*-E",
+                "n_group": 2,
+                "topk_group": 1
+              },
+              "vit_hidden_size": 64,
+              "projector_hidden_size": 32,
+              "downsample_ratio": 0.5,
+              "ps_version": "v2",
+              "vision_config": {
+                "model_type": "radio",
+                "patch_size": 16,
+                "args": {
+                  "model": "vit_huge_patch16_224",
+                  "cpe_max_size": 64,
+                  "cls_token_per_teacher": true,
+                  "register_multiple": 10,
+                  "teachers": [
+                    {
+                      "name": "clip"
+                    },
+                    {
+                      "name": "siglip"
+                    },
+                    {
+                      "name": "dino_v2"
+                    },
+                    {
+                      "name": "sam"
+                    }
+                  ]
+                }
+              },
+              "sound_config": null
+            }
+        """#
+
     static let cases: [SharpAIAirgap.Case] = [
         .init(key: "cosmos3_omni", json: #"""
 {"model_type":"cosmos3_omni","architectures":["Cosmos3OmniForConditionalGeneration"],"tie_word_embeddings":false,"image_token_id":60,"video_token_id":61,"vision_start_token_id":62,"vision_end_token_id":63,"model":{"config":{"sound_gen":true,"action_gen":true,"latent_channel":2,"latent_patch_size":2,"max_action_dim":4,"sound_dim":4,"num_embodiment_domains":3}},"text_config":{"model_type":"qwen3_vl_text","hidden_size":32,"intermediate_size":32,"num_hidden_layers":2,"num_attention_heads":4,"num_key_value_heads":2,"head_dim":8,"max_position_embeddings":512,"rms_norm_eps":1e-06,"vocab_size":64,"rope_parameters":{"mrope_interleaved":true,"mrope_section":[2,1,1],"rope_theta":10000,"rope_type":"default"}},"vision_config":{"deepstack_visual_indexes":[0,1],"depth":2,"hidden_size":32,"in_channels":3,"intermediate_size":32,"model_type":"qwen3_vl_vision","num_heads":4,"num_position_embeddings":16,"out_hidden_size":32,"patch_size":16,"spatial_merge_size":1,"temporal_patch_size":2}}
@@ -46,6 +106,7 @@ struct SharpAIVLMAirgapLoadTests {
         // answer_id -1: the model sets the answer token's logit to -inf by design, which the finite check would reject.
         .init(key: "moondream3", json: SharpAIMoondream3TestFixtures.tinyJSON.replacingOccurrences(of: "\"answer_id\": 3", with: "\"answer_id\": -1")),
         .init(key: "phi4-siglip", json: SharpAIPhi4SiglipTestFixtures.tinyJSON),
+        .init(key: "NemotronH_Nano_Omni_Reasoning_V3", json: nemotronOmniJSON),
         .init(key: "isaac", json: #"""
 {
   "model_type": "isaac",
