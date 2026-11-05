@@ -1,4 +1,4 @@
-// SharpAI SL-51 PR1: air-gapped load check for the VLM-registry overlays. No download, no network.
+// SharpAI SL-51 PR1 (+ isaac text-only wiring): air-gapped load check for the VLM-registry overlays. No download, no network.
 //
 // Same method as `SharpAIAirgapLoadTests` (SL-50): build the model through the REAL registry
 // (`VLMTypeRegistry.shared`), give every parameter a deterministic non-zero value, write a local safetensors file,
@@ -46,6 +46,13 @@ struct SharpAIVLMAirgapLoadTests {
         // answer_id -1: the model sets the answer token's logit to -inf by design, which the finite check would reject.
         .init(key: "moondream3", json: SharpAIMoondream3TestFixtures.tinyJSON.replacingOccurrences(of: "\"answer_id\": 3", with: "\"answer_id\": -1")),
         .init(key: "phi4-siglip", json: SharpAIPhi4SiglipTestFixtures.tinyJSON),
+        .init(key: "isaac", json: #"""
+{
+  "model_type": "isaac",
+  "vision_config": {"hidden_size": 8, "intermediate_size": 16, "num_hidden_layers": 2, "num_attention_heads": 2, "patch_size": 2, "image_size": 4},
+  "text_config": {"hidden_size": 8, "num_hidden_layers": 2, "vocab_size": 32}
+}
+"""#),
     ]
 
     /// `vocab_size` at the top level or under `text_config`.
