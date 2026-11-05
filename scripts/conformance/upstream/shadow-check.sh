@@ -5,6 +5,7 @@
 #   --upstream DIR   a checkout of ml-explore/mlx-swift-lm (read only; never modified)
 #   --repo DIR       the fork checkout (default: the clone holding this script)
 #   --allowlist FILE files allowed to call registerModelType directly (default: shadow-allowlist.txt next to this script)
+#   --exemptions FILE reviewed name<TAB>file collisions that are reported as EXEMPT, not COLLISION (default: shadow-collision-exemptions.txt)
 #
 # Fails (exit 1) when
 #   1. COLLISION: a declaration of ours (a sharpai-prefixed name anywhere in Libraries/, case-insensitive, any
@@ -19,12 +20,13 @@ set -u
 die() { echo "shadow-check: $*" >&2; exit 2; }
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 2
-repo=$here/../../..; upstream=""; allow=$here/shadow-allowlist.txt
+repo=$here/../../..; upstream=""; allow=$here/shadow-allowlist.txt; exempt=$here/shadow-collision-exemptions.txt
 while [ $# -gt 0 ]; do
     case $1 in
         --upstream) upstream=${2:-}; shift 2 || die "--upstream needs a value" ;;
         --repo) repo=${2:-}; shift 2 || die "--repo needs a value" ;;
         --allowlist) allow=${2:-}; shift 2 || die "--allowlist needs a value" ;;
+        --exemptions) exempt=${2:-}; shift 2 || die "--exemptions needs a value" ;;
         *) die "unknown argument: $1" ;;
     esac
 done
@@ -73,11 +75,18 @@ awk -F'\t' '$1 ~ /^(description|errorDescription|debugDescription|hash|hashValue
     "$work/ours-all.tsv" | sort -u >"$work/ours.tsv"
 cut -f1 "$work/up-all.tsv" | sort -u >"$work/up-names.txt"
 
+# Exemptions: name<TAB>our-file, reviewed by hand. Both must match, so a new collision still fails.
+grep -v -E '^[[:space:]]*(#|$)' "$exempt" 2>/dev/null | sed 's/[[:space:]]*$//' >"$work/exempt.txt" || : >"$work/exempt.txt"
+
 status=0
 echo "== shadow-check: ours=$(cut -f1 "$work/ours.tsv" | sort -u | wc -l | tr -d ' ') overlay/sharpai names, upstream=$(wc -l <"$work/up-names.txt" | tr -d ' ') declared names"
 while IFS="$(printf '\t')" read -r name file; do
     if grep -qxF -- "$name" "$work/up-names.txt"; then
         up_file=$(awk -F'\t' -v n="$name" '$1 == n { print $2; exit }' "$work/up-all.tsv")
+        if grep -qxF -- "$name	$file" "$work/exempt.txt"; then
+            echo "EXEMPT $name  (ours: $file; upstream: $up_file; see shadow-collision-exemptions.txt)"
+            continue
+        fi
         echo "COLLISION $name  (ours: $file; upstream: $up_file)"
         status=1
     fi

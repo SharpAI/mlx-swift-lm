@@ -90,4 +90,17 @@ mkdir -p "$tmp/empty"
 out=$("$sc" --upstream "$tmp/empty" 2>&1); s=$?
 { [ "$s" -eq 0 ] && echo "$out" | grep -q "SHADOW_CHECK=PASS"; }; check "shadow-check: real repo + empty upstream passes with committed allow-list" $?
 
+# 9. a reviewed exemption (name + our file both match) turns the collision into EXEMPT and passes.
+# Plant the collision here: test 5 restores the tree, so no Widget is declared on either side now.
+printf 'public final class Widget {}\n' >>"$repo/Libraries/MLXLMCommon/SharpAIOverlay/Helper.swift"
+printf 'public final class Widget {}\n' >>"$up/Libraries/MLXLMCommon/Other.swift"
+rm -rf "$tmp/ex" && mkdir -p "$tmp/ex" && printf 'Widget\tMLXLMCommon/SharpAIOverlay/Helper.swift\n' >"$tmp/ex/exempt.txt"
+out=$("$sc" --repo "$repo" --upstream "$up" --allowlist "$tmp/allow.txt" --exemptions "$tmp/ex/exempt.txt" 2>&1); s=$?
+{ [ "$s" -eq 0 ] && echo "$out" | grep -q "EXEMPT Widget" && echo "$out" | grep -q "SHADOW_CHECK=PASS"; }; check "shadow-check: exemption with matching name and file passes" $?
+
+# 10. the same name from a different file is not exempt and still fails.
+printf 'Widget\tMLXLMCommon/SharpAIOverlay/Elsewhere.swift\n' >"$tmp/ex/exempt.txt"
+out=$("$sc" --repo "$repo" --upstream "$up" --allowlist "$tmp/allow.txt" --exemptions "$tmp/ex/exempt.txt" 2>&1); s=$?
+{ [ "$s" -eq 1 ] && echo "$out" | grep -q "COLLISION Widget"; }; check "shadow-check: exemption for another file does not hide the collision" $?
+
 exit "$fail"

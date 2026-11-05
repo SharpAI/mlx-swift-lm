@@ -1,0 +1,11 @@
+# Reviewed name collisions that the name-level check reports but that cannot break the build.
+# Format: <name><TAB><our file, relative to Libraries/>. A collision is exempt only when BOTH match,
+# so a new collision (other name, or same name from another file) still fails the check.
+# Each entry needs a reason; the reason must say why the two declarations do not share a scope.
+#
+# blockSize: ours is a stored property of a struct in MXFP4Checkpoint.swift; upstream's is a property of
+#            Lille130mConfiguration. Different types, no shared scope.
+blockSize	MLXLMCommon/SharpAIOverlay/MXFP4Checkpoint.swift
+# update: ours is a static func on a type in GatedDeltaKDA.swift; upstream's is an instance method of
+#         EmbedderModelContainer. Different types, no shared scope.
+update	MLXLMCommon/SharpAIOverlay/GatedDeltaKDA.swift

@@ -1,0 +1,32 @@
+name: Shadow check
+
+# SL-30 (SharpAI/SwiftLM#254): overlay-vs-upstream shadowing check. Runs the read-only
+# shadow-check.sh against a shallow clone of ml-explore/mlx-swift-lm main. No Swift toolchain
+# and no macOS runner: this is a bash + git check, so it costs one small Linux job.
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'Libraries/**'
+      - 'scripts/conformance/**'
+      - '.github/workflows/shadow-check.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: shadow-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shadow-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone upstream (read only)
+        run: git clone --depth 1 https://github.com/ml-explore/mlx-swift-lm.git "$RUNNER_TEMP/upstream"
+
+      - name: Run shadow-check
+        run: bash scripts/conformance/upstream/shadow-check.sh --upstream "$RUNNER_TEMP/upstream"
