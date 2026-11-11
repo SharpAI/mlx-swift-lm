@@ -11,6 +11,8 @@ public final class SharpAIJinaEmbeddingsV5Model: Module, LanguageModel, KVCacheD
     public let vocabularySize: Int
     public let kvHeads: [Int]
     let tieWordEmbeddings: Bool
+    /// The task whose adapter is merged into the base weights when the checkpoint ships one.
+    let jinaTask: String
 
     @ModuleInfo(key: "model") var model: Qwen3ModelInner
     @ModuleInfo(key: "lm_head") var lmHead: Linear?
@@ -20,6 +22,7 @@ public final class SharpAIJinaEmbeddingsV5Model: Module, LanguageModel, KVCacheD
         self.vocabularySize = base.vocabularySize
         self.kvHeads = (0 ..< base.hiddenLayers).map { _ in base.kvHeads }
         self.tieWordEmbeddings = base.tieWordEmbeddings
+        self.jinaTask = configuration.jinaTask
         _model.wrappedValue = Qwen3ModelInner(base)
         if !base.tieWordEmbeddings {
             _lmHead.wrappedValue = Linear(base.hiddenSize, base.vocabularySize, bias: false)
@@ -51,5 +54,30 @@ public final class SharpAIJinaEmbeddingsV5Model: Module, LanguageModel, KVCacheD
 
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
         SharpAIJinaEmbeddingsV5Sanitize.sanitize(weights, tiedWordEmbeddings: tieWordEmbeddings)
+    }
+
+    /// Merges the `jinaTask` adapter into the raw checkpoint when `adapters/` ships with it,
+    /// then runs the normal sanitize. The merge must run before sanitize, which drops the
+    /// LoRA tensors.
+    public func prepareCheckpoint(_ checkpoint: ModelCheckpoint) throws -> ModelCheckpoint {
+        var checkpoint = checkpoint
+        if let root = checkpoint.modelDirectory,
+            SharpAIJinaEmbeddingsV5Adapter.hasAdapters(root: root)
+        {
+            checkpoint.weights = try SharpAIJinaEmbeddingsV5Adapter.applyTaskAdapter(
+                root: root, task: jinaTask, to: checkpoint.weights)
+        }
+        checkpoint.weights = try sanitize(
+            weights: checkpoint.weights, metadata: checkpoint.metadata)
+        return checkpoint
+    }
+
+    /// The embedding of one sequence: the last token's hidden state, L2-normalized. `tokens`
+    /// is `[B, L]` with no padding, because the last position is taken as the sequence end.
+    public func embed(_ tokens: MLXArray) -> MLXArray {
+        let hidden = model(tokens, cache: nil)
+        let last = hidden[0..., -1, 0...]
+        let norm = MLX.sqrt(MLX.sum(last * last, axis: -1, keepDims: true))
+        return last / MLX.maximum(norm, MLXArray(Float(1e-12)))
     }
 }

@@ -14,7 +14,9 @@
 //   - models that build but cannot generate (inkling_mm_model, pangu_ultra_moe_mtp)
 //   - conditional or experimental ones (none at present; step5 is wired and refuses DSA/fp8 at creation)
 //   - encoder-style models that the generation path does not serve (modernbert, llama_bidirec,
-//     deepseek_v3_bidirec, openai_privacy_filter, jina_embeddings_v5)
+//     deepseek_v3_bidirec, openai_privacy_filter)
+//   - jina_embeddings_v5 nano variant (is_decoder: false): refused at creation; the small
+//     Qwen3 decoder variant is wired
 // Keys are listed one per line: scripts/conformance/gen_expectations.py and
 // scripts/conformance/missing-ops/gen_report.py read them from here.
 
@@ -51,6 +53,7 @@ public enum SharpAIModelOverlays {
         "iquestcoder",
         "iquestloopcoder",
         "jais2",
+        "jina_embeddings_v5",
         "k2_horizon",
         "kolibri1",
         "laguna",
@@ -98,6 +101,7 @@ public enum SharpAIModelOverlays {
             add(SharpAIIquestcoderOverlay.creators)
             add(SharpAIIquestloopcoderOverlay.creators)
             add(SharpAIJais2Overlay.creators)
+            add(SharpAIJinaEmbeddingsV5Overlay.creators)
             add(SharpAIK2HorizonOverlay.creators)
             add(SharpAIKolibri1Overlay.creators)
             add(SharpAILagunaOverlay.creators)

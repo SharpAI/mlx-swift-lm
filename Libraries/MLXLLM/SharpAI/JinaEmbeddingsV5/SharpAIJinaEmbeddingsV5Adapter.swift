@@ -8,6 +8,12 @@ import MLX
 
 public enum SharpAIJinaEmbeddingsV5Error: Error, Equatable {
     case unsupportedTask(String)
+    /// The adapter was found but none of its LoRA pairs matched a base weight, so merging
+    /// would silently leave the base model unchanged.
+    case noMatchingAdapterPairs(task: String)
+    /// The nano variant (`is_decoder: false`) is a bidirectional encoder whose pooling path is
+    /// not wired, so it is refused at load time instead of failing at first use.
+    case nanoVariantNotWired
 }
 
 public enum SharpAIJinaEmbeddingsV5Adapter {
@@ -25,7 +31,17 @@ public enum SharpAIJinaEmbeddingsV5Adapter {
         }
     }
 
+    /// Whether `root` ships task adapters at all (`adapters/` exists). A base checkpoint
+    /// without them is used as-is.
+    public static func hasAdapters(root: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        let path = root.appending(component: "adapters").path
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+    }
+
     /// Loads `adapters/<task>` from `root`, then returns `weights` with the adapter merged in.
+    /// Throws when the adapter matches no base weight.
     public static func applyTaskAdapter(
         root: URL, task: String, to weights: [String: MLXArray]
     ) throws -> [String: MLXArray] {
@@ -40,7 +56,11 @@ public enum SharpAIJinaEmbeddingsV5Adapter {
         let tensors = try MLX.loadArrays(
             url: directory.appending(component: "adapter_model.safetensors"))
 
-        return merge(weights, config: config, adapterTensors: tensors)
+        let (merged, matched) = mergeCounting(weights, config: config, adapterTensors: tensors)
+        guard matched > 0 else {
+            throw SharpAIJinaEmbeddingsV5Error.noMatchingAdapterPairs(task: task)
+        }
+        return merged
     }
 
     /// Applies `W += (B @ A) * (lora_alpha / r)` to each base weight that has a LoRA pair.
@@ -50,17 +70,27 @@ public enum SharpAIJinaEmbeddingsV5Adapter {
         config: AdapterConfig,
         adapterTensors: [String: MLXArray]
     ) -> [String: MLXArray] {
+        mergeCounting(weights, config: config, adapterTensors: adapterTensors).weights
+    }
+
+    private static func mergeCounting(
+        _ weights: [String: MLXArray],
+        config: AdapterConfig,
+        adapterTensors: [String: MLXArray]
+    ) -> (weights: [String: MLXArray], matched: Int) {
         let pairs = loraPairs(adapterTensors)
         let scaling = config.loraAlpha / Float(config.r)
 
         var merged = weights
+        var matched = 0
         for (key, value) in weights {
             let inner = key.hasPrefix("model.") ? String(key.dropFirst("model.".count)) : key
             guard let pair = pairs[inner], let a = pair.a, let b = pair.b else { continue }
             let delta = (MLX.matmul(b, a) * MLXArray(scaling)).asType(value.dtype)
             merged[key] = value + delta
+            matched += 1
         }
-        return merged
+        return (merged, matched)
     }
 
     private struct LoRAPair {

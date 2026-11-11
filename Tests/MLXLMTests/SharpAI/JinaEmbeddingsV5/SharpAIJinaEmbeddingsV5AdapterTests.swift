@@ -85,8 +85,14 @@ final class SharpAIJinaEmbeddingsV5AdapterTests: XCTestCase {
         XCTAssertEqual(config.ropeTheta, 1_000_000)
         XCTAssertFalse(config.isDecoder)
 
+        // The creator refuses nano at load time, so a nano checkpoint fails before first use.
         let creator = try XCTUnwrap(SharpAIJinaEmbeddingsV5Overlay.creators["jina_embeddings_v5"])
-        let model = try XCTUnwrap(try creator(Data(nanoJSON.utf8)) as? SharpAIJinaEmbeddingsV5NanoModel)
+        XCTAssertThrowsError(try creator(Data(nanoJSON.utf8))) { error in
+            XCTAssertEqual(error as? SharpAIJinaEmbeddingsV5Error, .nanoVariantNotWired)
+        }
+
+        // The nano class itself is still bidirectional; it is built directly here.
+        let model = SharpAIJinaEmbeddingsV5NanoModel(config)
 
         // Bidirectional: changing the last token must change the output at position 0.
         // A causal mask would leave position 0 unchanged.

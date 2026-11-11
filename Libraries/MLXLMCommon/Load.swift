@@ -481,6 +481,7 @@ public func loadWeights(
         ? try loadModelCheckpointLazily(urls: loadURLs)
         : try loadModelCheckpoint(urls: loadURLs, excludedNamespaces: excludedNamespaces)
     checkpoint.perLayerQuantization = perLayerQuantization
+    checkpoint.modelDirectory = modelDirectory
     // per-model cleanup (models can inspect metadata to customize behavior)
     checkpoint = try model.prepareCheckpoint(checkpoint)
 
