@@ -15,6 +15,10 @@ public struct ModelCheckpoint {
     /// The model directory the checkpoint was read from, when known. Set by ``loadWeights``
     /// so a model's ``BaseLanguageModel/prepareCheckpoint(_:)`` can read sidecar files (for
     /// example task adapters). Nil for checkpoints built in memory.
+    ///
+    /// upstream-watch: SharpAI addition to a shared file. If upstream adds a member of this
+    /// name to `ModelCheckpoint`, or changes `loadWeights` so it builds the checkpoint
+    /// elsewhere, re-check `SharpAIJinaEmbeddingsV5Model.prepareCheckpoint`.
     public var modelDirectory: URL?
 
     /// The first nonempty file metadata, for compatibility with existing sanitizers.

@@ -75,6 +75,7 @@ public final class SharpAIJinaEmbeddingsV5Model: Module, LanguageModel, KVCacheD
     /// The embedding of one sequence: the last token's hidden state, L2-normalized. `tokens`
     /// is `[B, L]` with no padding, because the last position is taken as the sequence end.
     public func embed(_ tokens: MLXArray) -> MLXArray {
+        precondition(tokens.ndim == 2 && tokens.dim(1) > 0, "embed expects non-empty [B, L] tokens")
         let hidden = model(tokens, cache: nil)
         let last = hidden[0..., -1, 0...]
         let norm = MLX.sqrt(MLX.sum(last * last, axis: -1, keepDims: true))

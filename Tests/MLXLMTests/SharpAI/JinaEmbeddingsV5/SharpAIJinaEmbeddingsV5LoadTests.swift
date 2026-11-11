@@ -125,4 +125,32 @@ final class SharpAIJinaEmbeddingsV5LoadTests: XCTestCase {
         let difference = MLX.abs(embedding - expected).max().item(Float.self)
         XCTAssertLessThan(difference, 1e-5)
     }
+
+    /// The real `loadWeights` path must hand the model directory to `prepareCheckpoint`:
+    /// without it the adapter is skipped and q_proj stays at the base value.
+    func testLoadWeightsMergesAdapterThroughRealLoader() throws {
+        let root = try makeModelDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let model = try tinyModel()
+        var arrays: [String: MLXArray] = [:]
+        for (key, value) in model.parameters().flattened() {
+            arrays[key] = key.hasSuffix("q_proj.weight") && key.contains("layers.0.")
+                ? MLXArray.zeros(value.shape) : value
+        }
+        try MLX.save(arrays: arrays, url: root.appending(component: "model.safetensors"))
+
+        try loadWeights(modelDirectory: root, model: model)
+
+        let q = model.parameters().flattened().first {
+            $0.0.hasSuffix("q_proj.weight") && $0.0.contains("layers.0.")
+        }!.1
+        XCTAssertEqual(q[0, 0].item(Float.self), 2)
+    }
+
+    func testEmbedAcceptsSingleToken() throws {
+        // Empty or non-2D input trips a precondition (a trap), so only valid input runs.
+        let embedding = try tinyModel().embed(MLXArray([1] as [Int32]).reshaped(1, 1))
+        XCTAssertEqual(embedding.shape, [1, 8])
+    }
 }
