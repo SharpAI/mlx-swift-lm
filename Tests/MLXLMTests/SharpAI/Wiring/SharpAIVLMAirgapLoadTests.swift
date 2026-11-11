@@ -106,6 +106,10 @@ struct SharpAIVLMAirgapLoadTests {
         // answer_id -1: the model sets the answer token's logit to -inf by design, which the finite check would reject.
         .init(key: "moondream3", json: SharpAIMoondream3TestFixtures.tinyJSON.replacingOccurrences(of: "\"answer_id\": 3", with: "\"answer_id\": -1")),
         .init(key: "phi4-siglip", json: SharpAIPhi4SiglipTestFixtures.tinyJSON),
+        // Encoder-decoder: `prepare` needs pixels, 64x64 gives the 4x4 patch grid the tiny encoder expects.
+        .init(key: "nemotron_parse", json: SharpAINemotronParseTestFixtures.tinyJSON, pixelShape: [1, 3, 64, 64],
+              // sanitize moves conv1 [out, in, k] -> [out, k, in] and conv2 [out, in, kH, kW] -> [out, kH, kW, in]; write the inverse.
+              rawLayoutPermutations: ["encoder.conv1.weight": [0, 2, 1], "encoder.conv2.weight": [0, 3, 1, 2]]),
         .init(key: "NemotronH_Nano_Omni_Reasoning_V3", json: nemotronOmniJSON),
         .init(key: "isaac", json: #"""
 {
@@ -125,10 +129,13 @@ struct SharpAIVLMAirgapLoadTests {
 
     /// Text-only forward through `prepare`, the path `generate` takes, so VLM-style models that do not implement
     /// `callAsFunction(_:cache:)` are exercised too. Fresh caches for every call.
-    static func logits(_ model: any LanguageModel, _ tokens: MLXArray) throws -> MLXArray {
+    static func logits(
+        _ model: any LanguageModel, _ tokens: MLXArray, image: LMInput.ProcessedImage? = nil
+    ) throws -> MLXArray {
         let cache = try model.newCache(parameters: nil)
         let result = try model.prepare(
-            LMInput(text: .init(tokens: tokens)), cache: cache, state: nil, prefill: PrefillParameters())
+            LMInput(text: .init(tokens: tokens), image: image), cache: cache, state: nil,
+            prefill: PrefillParameters())
         switch result {
         case .logits(let output): return output.logits
         case .tokens(let text): return try model(text, cache: cache, state: nil).logits
@@ -163,15 +170,22 @@ struct SharpAIVLMAirgapLoadTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         try data.write(to: dir.appendingPathComponent("config.json"))
-        try save(arrays: arrays, url: dir.appendingPathComponent("model.safetensors"))
+        var onDisk = arrays
+        for (name, axes) in c.rawLayoutPermutations {
+            if let value = onDisk[name] { onDisk[name] = value.transposed(axes: axes) }
+        }
+        try save(arrays: onDisk, url: dir.appendingPathComponent("model.safetensors"))
 
         let loaded = try await VLMTypeRegistry.shared.createModel(configuration: data, modelType: c.key)
         try await loadWeights(modelDirectory: dir, model: loaded)
         eval(loaded)
 
         let input = SharpAIAirgap.tokens(vocab: Self.vocabSize(c.json))
-        let a = try Self.logits(reference, input)
-        let b = try Self.logits(loaded, input)
+        let image = c.pixelShape.map {
+            LMInput.ProcessedImage(pixels: SharpAIAirgap.fill(name: "pixels", shape: $0, dtype: .float32))
+        }
+        let a = try Self.logits(reference, input, image: image)
+        let b = try Self.logits(loaded, input, image: image)
         eval(a, b)
         #expect(a.shape == b.shape)
         #expect(all(isFinite(a)).item(Bool.self), "\(c.key): reference logits not finite")
