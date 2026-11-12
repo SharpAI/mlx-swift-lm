@@ -52,6 +52,7 @@ public enum SharpAIVLMModelOverlays {
         "isaac",
         "kimi_k3",
         "moondream3",
+        "nemotron_parse",
         "NemotronH_Nano_Omni_Reasoning_V3",
         "opencua",
         "openpangu_vl",
@@ -76,6 +77,7 @@ public enum SharpAIVLMModelOverlays {
         add(SharpAIIsaacOverlay.creators)
         add(SharpAIKimiK3Overlay.creators)
         add(SharpAIMoondream3Overlay.creators)
+        add(SharpAINemotronParseOverlay.creators)
         add(SharpAINemotronhNanoOmniReasoningV3Overlay.creators)
         add(SharpAIOpencuaOverlay.creators)
         add(SharpAIOpenpanguVlOverlay.creators)
@@ -98,6 +100,9 @@ public enum SharpAIVLMModelOverlays {
             },
             SharpAIConfigBackedProcessors.phi4Siglip: { data, tokenizer in
                 try SharpAIPhi4SiglipOverlay.makeProcessor(configurationData: data, tokenizer: tokenizer)
+            },
+            SharpAINemotronParseProcessor.processorClass: { data, tokenizer in
+                try SharpAINemotronParseOverlay.makeProcessor(configurationData: data, tokenizer: tokenizer)
             },
             SharpAIConfigBackedProcessors.qianfanOcr: { data, tokenizer in
                 try SharpAIQianfanOcrOverlay.makeProcessor(configurationData: data, tokenizer: tokenizer)
