@@ -172,6 +172,9 @@ enum SharpAIAirgap {
         .init(key: "step5", json: #"""
 {"model_type":"step5","vocab_size":32,"hidden_size":16,"intermediate_size":32,"num_hidden_layers":2,"num_attention_heads":4,"num_attention_groups":2,"head_dim":4,"layer_types":["sliding_attention","sliding_attention"],"sliding_window":3,"use_head_wise_attn_gate":true,"moe_layer_list":[1],"moe_num_experts":4,"moe_top_k":2,"moe_intermediate_size":8,"share_expert_dim":8,"swiglu_limits":[7.0,7.0,7.0],"swiglu_limits_shared":[7.0,7.0,7.0]}
 """#),
+        .init(key: "jina_embeddings_v5", json: #"""
+{"model_type":"jina_embeddings_v5","hidden_size":8,"num_hidden_layers":1,"intermediate_size":16,"num_attention_heads":2,"num_key_value_heads":1,"head_dim":4,"rms_norm_eps":1e-06,"vocab_size":32,"tie_word_embeddings":true}
+"""#),
     ]
 }
 

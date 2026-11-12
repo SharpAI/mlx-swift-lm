@@ -481,6 +481,8 @@ public func loadWeights(
         ? try loadModelCheckpointLazily(urls: loadURLs)
         : try loadModelCheckpoint(urls: loadURLs, excludedNamespaces: excludedNamespaces)
     checkpoint.perLayerQuantization = perLayerQuantization
+    // upstream-watch: SharpAI addition, see ModelCheckpoint.modelDirectory.
+    checkpoint.modelDirectory = modelDirectory
     // per-model cleanup (models can inspect metadata to customize behavior)
     checkpoint = try model.prepareCheckpoint(checkpoint)
 

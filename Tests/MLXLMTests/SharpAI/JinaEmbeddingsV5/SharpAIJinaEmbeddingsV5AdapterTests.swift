@@ -10,13 +10,13 @@ import XCTest
 
 final class SharpAIJinaEmbeddingsV5AdapterTests: XCTestCase {
 
-    func testMergeAddsScaledLowRankProduct() {
+    func testMergeAddsScaledLowRankProduct() throws {
         // r = 1, alpha = 2, so scaling = 2. B @ A = [[1, 0, 0], [0, 0, 0]].
         let a = MLXArray([1.0, 0.0, 0.0] as [Float]).reshaped(1, 3)
         let b = MLXArray([1.0, 0.0] as [Float]).reshaped(2, 1)
         let config = SharpAIJinaEmbeddingsV5Adapter.AdapterConfig(r: 1, loraAlpha: 2)
 
-        let merged = SharpAIJinaEmbeddingsV5Adapter.merge(
+        let merged = try SharpAIJinaEmbeddingsV5Adapter.merge(
             [
                 "model.layers.0.self_attn.q_proj.weight": MLXArray.zeros([2, 3])
             ],
@@ -31,11 +31,11 @@ final class SharpAIJinaEmbeddingsV5AdapterTests: XCTestCase {
         XCTAssertEqual(result.asArray(Float.self), [2, 0, 0, 0, 0, 0])
     }
 
-    func testMergeLeavesUnpairedWeightsUnchanged() {
+    func testMergeLeavesUnpairedWeightsUnchanged() throws {
         let config = SharpAIJinaEmbeddingsV5Adapter.AdapterConfig(r: 1, loraAlpha: 2)
         let untouched = MLXArray([3.0, 4.0] as [Float])
 
-        let merged = SharpAIJinaEmbeddingsV5Adapter.merge(
+        let merged = try SharpAIJinaEmbeddingsV5Adapter.merge(
             [
                 "model.norm.weight": untouched
             ],
@@ -85,8 +85,14 @@ final class SharpAIJinaEmbeddingsV5AdapterTests: XCTestCase {
         XCTAssertEqual(config.ropeTheta, 1_000_000)
         XCTAssertFalse(config.isDecoder)
 
+        // The creator refuses nano at load time, so a nano checkpoint fails before first use.
         let creator = try XCTUnwrap(SharpAIJinaEmbeddingsV5Overlay.creators["jina_embeddings_v5"])
-        let model = try XCTUnwrap(try creator(Data(nanoJSON.utf8)) as? SharpAIJinaEmbeddingsV5NanoModel)
+        XCTAssertThrowsError(try creator(Data(nanoJSON.utf8))) { error in
+            XCTAssertEqual(error as? SharpAIJinaEmbeddingsV5Error, .nanoVariantNotWired)
+        }
+
+        // The nano class itself is still bidirectional; it is built directly here.
+        let model = SharpAIJinaEmbeddingsV5NanoModel(config)
 
         // Bidirectional: changing the last token must change the output at position 0.
         // A causal mask would leave position 0 unchanged.
@@ -114,5 +120,52 @@ final class SharpAIJinaEmbeddingsV5AdapterTests: XCTestCase {
                 "model.layers.0.self_attn.q_proj.weight",
                 "model.norm.weight",
             ])
+    }
+
+    private func pairTensors() -> [String: MLXArray] {
+        [
+            "base_model.model.layers.0.self_attn.q_proj.lora_A.weight": MLXArray.zeros([1, 3]),
+            "base_model.model.layers.0.self_attn.q_proj.lora_B.weight": MLXArray.zeros([2, 1]),
+        ]
+    }
+
+    func testMergeRejectsShapeMismatch() {
+        let config = SharpAIJinaEmbeddingsV5Adapter.AdapterConfig(r: 1, loraAlpha: 2)
+        XCTAssertThrowsError(
+            try SharpAIJinaEmbeddingsV5Adapter.merge(
+                ["model.layers.0.self_attn.q_proj.weight": MLXArray.zeros([4, 3])],
+                config: config, adapterTensors: pairTensors())
+        ) { error in
+            XCTAssertEqual(
+                error as? SharpAIJinaEmbeddingsV5Error,
+                .incompatibleBaseWeight(key: "model.layers.0.self_attn.q_proj.weight"))
+        }
+    }
+
+    func testMergeRejectsQuantizedBaseWeight() {
+        let config = SharpAIJinaEmbeddingsV5Adapter.AdapterConfig(r: 1, loraAlpha: 2)
+        let packed = MLXArray.zeros([2, 3], dtype: .uint32)
+        XCTAssertThrowsError(
+            try SharpAIJinaEmbeddingsV5Adapter.merge(
+                ["model.layers.0.self_attn.q_proj.weight": packed],
+                config: config, adapterTensors: pairTensors()))
+    }
+
+    func testMergeRejectsNonPositiveRank() {
+        let config = SharpAIJinaEmbeddingsV5Adapter.AdapterConfig(r: 0, loraAlpha: 2)
+        XCTAssertThrowsError(
+            try SharpAIJinaEmbeddingsV5Adapter.merge(
+                ["model.layers.0.self_attn.q_proj.weight": MLXArray.zeros([2, 3])],
+                config: config, adapterTensors: pairTensors())
+        ) { error in
+            XCTAssertEqual(error as? SharpAIJinaEmbeddingsV5Error, .invalidAdapterRank(0))
+        }
+    }
+
+    func testErrorsHaveReadableDescriptions() {
+        XCTAssertNotNil(SharpAIJinaEmbeddingsV5Error.nanoVariantNotWired.errorDescription)
+        XCTAssertTrue(
+            (SharpAIJinaEmbeddingsV5Error.noMatchingAdapterPairs(task: "x").errorDescription ?? "")
+                .contains("x"))
     }
 }
