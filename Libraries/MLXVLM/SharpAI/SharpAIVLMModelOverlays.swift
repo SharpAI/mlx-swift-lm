@@ -37,6 +37,7 @@ public enum SharpAIVLMModelOverlays {
         "eagle_2_5_vl": SharpAIConfigBackedProcessors.eagle25Vl,
         "moondream3": SharpAIConfigBackedProcessors.moondream3,
         "phi4-siglip": SharpAIConfigBackedProcessors.phi4Siglip,
+        "qianfan_ocr": SharpAIConfigBackedProcessors.qianfanOcr,
     ]
 
     /// `model_type`s registered in `VLMTypeRegistry.shared` through this aggregate.
@@ -56,6 +57,7 @@ public enum SharpAIVLMModelOverlays {
         "opencua",
         "openpangu_vl",
         "phi4-siglip",
+        "qianfan_ocr",
         "qwen3_omni_moe",
         "qwen4_exp",
         "step1",
@@ -80,6 +82,7 @@ public enum SharpAIVLMModelOverlays {
         add(SharpAIOpencuaOverlay.creators)
         add(SharpAIOpenpanguVlOverlay.creators)
         add(SharpAIPhi4SiglipOverlay.creators)
+        add(SharpAIQianfanOcrOverlay.creators)
         add(SharpAIQwen3OmniMoeOverlay.creators)
         add(SharpAIQwen4ExpOverlay.creators)
         add(SharpAIStep1Overlay.creators)
@@ -100,6 +103,9 @@ public enum SharpAIVLMModelOverlays {
             },
             SharpAINemotronParseProcessor.processorClass: { data, tokenizer in
                 try SharpAINemotronParseOverlay.makeProcessor(configurationData: data, tokenizer: tokenizer)
+            },
+            SharpAIConfigBackedProcessors.qianfanOcr: { data, tokenizer in
+                try SharpAIQianfanOcrOverlay.makeProcessor(configurationData: data, tokenizer: tokenizer)
             },
             SharpAITextOnlyProcessor.processorType: { data, tokenizer in
                 let configuration =

@@ -215,6 +215,11 @@ public struct SharpAIQianfanOcrConfiguration: Codable, Sendable {
     /// Pixel-shuffle ratio. 0.5 merges 2x2 patch tokens into one token.
     public let downsampleRatio: Float
     public let projectorHiddenAct: String
+    /// InternVL dynamic tiling, read by the processor. Hub values: 1, 12, true, true.
+    public let minDynamicPatch: Int
+    public let maxDynamicPatch: Int
+    public let dynamicImageSize: Bool
+    public let useThumbnail: Bool
 
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type"
@@ -223,6 +228,10 @@ public struct SharpAIQianfanOcrConfiguration: Codable, Sendable {
         case imageTokenId = "image_token_id"
         case downsampleRatio = "downsample_ratio"
         case projectorHiddenAct = "projector_hidden_act"
+        case minDynamicPatch = "min_dynamic_patch"
+        case maxDynamicPatch = "max_dynamic_patch"
+        case dynamicImageSize = "dynamic_image_size"
+        case useThumbnail = "use_thumbnail"
     }
 
     public init(
@@ -231,7 +240,11 @@ public struct SharpAIQianfanOcrConfiguration: Codable, Sendable {
         textConfiguration: SharpAIQianfanOcrTextConfiguration = .init(),
         imageTokenId: Int = 151_671,
         downsampleRatio: Float = 0.5,
-        projectorHiddenAct: String = "gelu"
+        projectorHiddenAct: String = "gelu",
+        minDynamicPatch: Int = 1,
+        maxDynamicPatch: Int = 12,
+        dynamicImageSize: Bool = true,
+        useThumbnail: Bool = true
     ) {
         self.modelType = modelType
         self.visionConfiguration = visionConfiguration
@@ -239,6 +252,10 @@ public struct SharpAIQianfanOcrConfiguration: Codable, Sendable {
         self.imageTokenId = imageTokenId
         self.downsampleRatio = downsampleRatio
         self.projectorHiddenAct = projectorHiddenAct
+        self.minDynamicPatch = minDynamicPatch
+        self.maxDynamicPatch = maxDynamicPatch
+        self.dynamicImageSize = dynamicImageSize
+        self.useThumbnail = useThumbnail
     }
 
     public init(from decoder: Decoder) throws {
@@ -258,13 +275,28 @@ public struct SharpAIQianfanOcrConfiguration: Codable, Sendable {
             downsampleRatio: try container.decodeIfPresent(Float.self, forKey: .downsampleRatio)
                 ?? defaults.downsampleRatio,
             projectorHiddenAct: try container.decodeIfPresent(
-                String.self, forKey: .projectorHiddenAct) ?? defaults.projectorHiddenAct
+                String.self, forKey: .projectorHiddenAct) ?? defaults.projectorHiddenAct,
+            minDynamicPatch: try container.decodeIfPresent(Int.self, forKey: .minDynamicPatch)
+                ?? defaults.minDynamicPatch,
+            maxDynamicPatch: try container.decodeIfPresent(Int.self, forKey: .maxDynamicPatch)
+                ?? defaults.maxDynamicPatch,
+            dynamicImageSize: try container.decodeIfPresent(Bool.self, forKey: .dynamicImageSize)
+                ?? defaults.dynamicImageSize,
+            useThumbnail: try container.decodeIfPresent(Bool.self, forKey: .useThumbnail)
+                ?? defaults.useThumbnail
         )
     }
 
     /// Integer factor per spatial axis, `1 / downsampleRatio` (2 for the Hub checkpoint).
     public var downsampleFactor: Int {
         Int((1 / downsampleRatio).rounded())
+    }
+
+    /// Image tokens one tile contributes: the patch grid after pixel shuffle, squared.
+    /// 256 for the Hub checkpoint (448 / 14 = 32, then 32 / 2 = 16).
+    public var tokensPerTile: Int {
+        let grid = visionConfiguration.imageSize / visionConfiguration.patchSize / downsampleFactor
+        return grid * grid
     }
 }
 
@@ -312,6 +344,11 @@ extension SharpAIQianfanOcrConfiguration: ModelConfigurationValidating {
         guard grid % downsampleFactor == 0 else {
             throw SharpAIQianfanOcrError.unsupported(
                 "patch grid \(grid) must divide by the downsample factor \(downsampleFactor)")
+        }
+
+        guard minDynamicPatch >= 1, maxDynamicPatch >= minDynamicPatch else {
+            throw SharpAIQianfanOcrError.unsupported(
+                "dynamic patch range \(minDynamicPatch)...\(maxDynamicPatch)")
         }
 
         guard text.modelType == "qwen3" else {

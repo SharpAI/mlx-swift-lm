@@ -110,6 +110,7 @@ struct SharpAIVLMAirgapLoadTests {
         .init(key: "nemotron_parse", json: SharpAINemotronParseTestFixtures.tinyJSON, pixelShape: [1, 3, 64, 64],
               // sanitize moves conv1 [out, in, k] -> [out, k, in] and conv2 [out, in, kH, kW] -> [out, kH, kW, in]; write the inverse.
               rawLayoutPermutations: ["encoder.conv1.weight": [0, 2, 1], "encoder.conv2.weight": [0, 3, 1, 2]]),
+        .init(key: "qianfan_ocr", json: SharpAIQianfanOcrTestConfig.tiny()),
         .init(key: "NemotronH_Nano_Omni_Reasoning_V3", json: nemotronOmniJSON),
         .init(key: "isaac", json: #"""
 {
