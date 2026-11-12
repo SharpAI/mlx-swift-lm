@@ -50,6 +50,8 @@ struct SharpAIVLMConfigProcessorTests {
               json: SharpAIMoondream3TestFixtures.tinyJSON),
         .init(modelType: "phi4-siglip", processorType: "SharpAIPhi4SiglipProcessor",
               json: SharpAIPhi4SiglipTestFixtures.tinyJSON),
+        .init(modelType: "qianfan_ocr", processorType: "SharpAIQianfanOcrProcessor",
+              json: SharpAIQianfanOcrTestConfig.tiny()),
     ]
 
     private static func tempDirectory(files: [String: String]) throws -> URL {
@@ -142,6 +144,70 @@ struct SharpAIVLMConfigProcessorTests {
         let processor = try await VLMProcessorTypeRegistry.shared.createModel(
             configuration: Data(SharpAIEagle25VlTestFixtures.tinyJSON.utf8),
             processorType: "SharpAIEagle25VlProcessor", tokenizer: ByteTokenizer())
+        let lm = try await processor.prepare(input: UserInput(prompt: "hi"))
+        #expect(lm.image == nil)
+        #expect(lm.text.tokens.shape == [1, 2])
+    }
+
+    @Test("qianfan_ocr: one 28x28 image is one channel-last tile, ImageNet-normalised, one context run")
+    func qianfanSingleTile() async throws {
+        let processor = try await VLMProcessorTypeRegistry.shared.createModel(
+            configuration: Data(SharpAIQianfanOcrTestConfig.tiny().utf8),
+            processorType: "SharpAIQianfanOcrProcessor", tokenizer: ByteTokenizer())
+        var input = UserInput(prompt: "hi")
+        input.images = [Self.solidImage(.white, width: 28, height: 28)]
+        let lm = try await processor.prepare(input: input)
+        let pixels = try #require(lm.image?.pixels)
+        // Channel last, as SharpAIQianfanOcr.encodeImages requires. A square image gets one tile, no thumbnail.
+        #expect(pixels.shape == [1, 28, 28, 3])
+        let expected: [Float] = [(1 - 0.485) / 0.229, (1 - 0.456) / 0.224, (1 - 0.406) / 0.225]
+        for channel in 0 ..< 3 {
+            let value = pixels[0, 14, 14, channel].item(Float.self)
+            #expect(abs(value - expected[channel]) < 0.02, "channel \(channel): \(value) vs \(expected[channel])")
+        }
+        // Tiny config: 28 / 14 = 2, shuffled by 2 gives one token per tile, so one context marker in all.
+        let text = ByteTokenizer().decode(tokenIds: lm.text.tokens.asArray(Int.self), skipSpecialTokens: false)
+        #expect(text.components(separatedBy: "<IMG_CONTEXT>").count - 1 == 1)
+        #expect(text == "<img><IMG_CONTEXT></img>\nhi")
+    }
+
+    @Test("qianfan_ocr: a 2:1 image is two grid tiles plus a thumbnail, and each tile adds its tokens")
+    func qianfanTwoTilesAndThumbnail() async throws {
+        let processor = try await VLMProcessorTypeRegistry.shared.createModel(
+            configuration: Data(SharpAIQianfanOcrTestConfig.tiny().utf8),
+            processorType: "SharpAIQianfanOcrProcessor", tokenizer: ByteTokenizer())
+        var input = UserInput(prompt: "hi")
+        input.images = [Self.solidImage(.white, width: 56, height: 28)]
+        let lm = try await processor.prepare(input: input)
+        let pixels = try #require(lm.image?.pixels)
+        #expect(pixels.shape == [3, 28, 28, 3])
+        let text = ByteTokenizer().decode(tokenIds: lm.text.tokens.asArray(Int.self), skipSpecialTokens: false)
+        #expect(text.components(separatedBy: "<IMG_CONTEXT>").count - 1 == 3)
+    }
+
+    @Test("qianfan_ocr: several images are labelled Image-N and stacked in order")
+    func qianfanMultipleImages() async throws {
+        let processor = try await VLMProcessorTypeRegistry.shared.createModel(
+            configuration: Data(SharpAIQianfanOcrTestConfig.tiny().utf8),
+            processorType: "SharpAIQianfanOcrProcessor", tokenizer: ByteTokenizer())
+        var input = UserInput(prompt: "hi")
+        input.images = [
+            Self.solidImage(.white, width: 28, height: 28), Self.solidImage(.black, width: 28, height: 28),
+        ]
+        let lm = try await processor.prepare(input: input)
+        let pixels = try #require(lm.image?.pixels)
+        #expect(pixels.shape == [2, 28, 28, 3])
+        // White is above black at the centre pixel, so the order of the inputs is kept.
+        #expect(pixels[0, 14, 14, 0].item(Float.self) > pixels[1, 14, 14, 0].item(Float.self))
+        let text = ByteTokenizer().decode(tokenIds: lm.text.tokens.asArray(Int.self), skipSpecialTokens: false)
+        #expect(text.hasPrefix("Image-1: <img>") && text.contains("Image-2: <img>"))
+    }
+
+    @Test("qianfan_ocr: a text-only prompt carries no image")
+    func qianfanTextOnly() async throws {
+        let processor = try await VLMProcessorTypeRegistry.shared.createModel(
+            configuration: Data(SharpAIQianfanOcrTestConfig.tiny().utf8),
+            processorType: "SharpAIQianfanOcrProcessor", tokenizer: ByteTokenizer())
         let lm = try await processor.prepare(input: UserInput(prompt: "hi"))
         #expect(lm.image == nil)
         #expect(lm.text.tokens.shape == [1, 2])

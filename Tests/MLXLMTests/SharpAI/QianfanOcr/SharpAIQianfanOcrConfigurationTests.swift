@@ -182,4 +182,38 @@ final class SharpAIQianfanOcrConfigurationTests: XCTestCase {
         XCTAssertNoThrow(try config.validateModelConfiguration())
         XCTAssertEqual(config.downsampleFactor, 2)
     }
+
+    func testTilingKeysDefaultToTheHubValues() throws {
+        let config = try SharpAIQianfanOcrTestConfig.decode(SharpAIQianfanOcrTestConfig.tiny())
+        XCTAssertEqual(config.minDynamicPatch, 1)
+        XCTAssertEqual(config.maxDynamicPatch, 12)
+        XCTAssertTrue(config.dynamicImageSize)
+        XCTAssertTrue(config.useThumbnail)
+    }
+
+    func testTilingKeysAreDecoded() throws {
+        let json = #"""
+            {"model_type": "qianfan_ocr", "min_dynamic_patch": 2, "max_dynamic_patch": 6,
+             "dynamic_image_size": false, "use_thumbnail": false}
+            """#
+        let config = try SharpAIQianfanOcrTestConfig.decode(json)
+        XCTAssertEqual(config.minDynamicPatch, 2)
+        XCTAssertEqual(config.maxDynamicPatch, 6)
+        XCTAssertFalse(config.dynamicImageSize)
+        XCTAssertFalse(config.useThumbnail)
+    }
+
+    func testRejectsAnEmptyTilingRange() throws {
+        let json = #"{"model_type": "qianfan_ocr", "min_dynamic_patch": 4, "max_dynamic_patch": 2}"#
+        let config = try SharpAIQianfanOcrTestConfig.decode(json)
+        XCTAssertThrowsError(try config.validateModelConfiguration())
+    }
+
+    /// 448 / 14 = 32 patches a side, shuffled by 2 gives 16, so 256 tokens a tile for the Hub shape.
+    func testTokensPerTileMatchesTheHubShape() throws {
+        let hub = try SharpAIQianfanOcrTestConfig.decode(SharpAIQianfanOcrTestConfig.hubShape)
+        XCTAssertEqual(hub.tokensPerTile, 256)
+        let tiny = try SharpAIQianfanOcrTestConfig.decode(SharpAIQianfanOcrTestConfig.tiny())
+        XCTAssertEqual(tiny.tokensPerTile, 1)
+    }
 }

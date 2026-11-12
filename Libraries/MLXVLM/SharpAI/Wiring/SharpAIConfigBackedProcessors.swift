@@ -13,6 +13,7 @@ public enum SharpAIConfigBackedProcessors {
     public static let eagle25Vl = "SharpAIEagle25VlProcessor"
     public static let moondream3 = "SharpAIMoondream3Processor"
     public static let phi4Siglip = "SharpAIPhi4SiglipProcessor"
+    public static let qianfanOcr = "SharpAIQianfanOcrProcessor"
 }
 
 public struct SharpAIConfigBackedProcessorLoadingResolver: VLMProcessorLoadingResolver {
