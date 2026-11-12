@@ -106,6 +106,7 @@ struct SharpAIVLMAirgapLoadTests {
         // answer_id -1: the model sets the answer token's logit to -inf by design, which the finite check would reject.
         .init(key: "moondream3", json: SharpAIMoondream3TestFixtures.tinyJSON.replacingOccurrences(of: "\"answer_id\": 3", with: "\"answer_id\": -1")),
         .init(key: "phi4-siglip", json: SharpAIPhi4SiglipTestFixtures.tinyJSON),
+        .init(key: "qianfan_ocr", json: SharpAIQianfanOcrTestConfig.tiny()),
         .init(key: "NemotronH_Nano_Omni_Reasoning_V3", json: nemotronOmniJSON),
         .init(key: "isaac", json: #"""
 {
