@@ -18,6 +18,12 @@ enum SharpAIAirgap {
     struct Case: Sendable, CustomStringConvertible {
         let key: String
         let json: String
+        /// Pixel shape for models whose `prepare` needs an image (encoder-decoder). Nil means text only.
+        var pixelShape: [Int]? = nil
+        /// Axis permutations that undo a sanitizer's layout change, keyed by parameter name, so the
+        /// synthetic file is written in the raw checkpoint layout and the loader's sanitize is the
+        /// only thing that converts it. Empty for models whose sanitize keeps layouts.
+        var rawLayoutPermutations: [String: [Int]] = [:]
         var description: String { key }
     }
 

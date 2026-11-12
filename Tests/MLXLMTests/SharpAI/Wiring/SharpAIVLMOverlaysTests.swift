@@ -66,9 +66,9 @@ struct SharpAIVLMOverlaysTests {
 
     @Test("every wired key resolves in VLMTypeRegistry.shared")
     func wiredKeysAreRegistered() async {
-        #expect(SharpAIVLMModelOverlays.vlmWiredKeys.count == 16)
+        #expect(SharpAIVLMModelOverlays.vlmWiredKeys.count == 17)
         #expect(SharpAIVLMModelOverlays.textOnlyKeys.isSubset(of: SharpAIVLMModelOverlays.vlmWiredKeys))
-        #expect(SharpAIVLMModelOverlays.vlmWiredKeys.subtracting(SharpAIVLMModelOverlays.textOnlyKeys) == ["cosmos3_omni", "eagle_2_5_vl", "intern_s2_preview", "moondream3", "phi4-siglip", "qianfan_ocr"])
+        #expect(SharpAIVLMModelOverlays.vlmWiredKeys.subtracting(SharpAIVLMModelOverlays.textOnlyKeys) == ["cosmos3_omni", "eagle_2_5_vl", "intern_s2_preview", "moondream3", "nemotron_parse", "phi4-siglip", "qianfan_ocr"])
         for key in SharpAIVLMModelOverlays.vlmWiredKeys.sorted() {
             #expect(await VLMTypeRegistry.shared.contains(key), "\(key) is wired but not registered")
         }
