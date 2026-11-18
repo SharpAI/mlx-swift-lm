@@ -77,6 +77,11 @@ git -C "$repo" fetch --quiet upstream main || die "fetch of upstream main failed
 # merge could not build, so stop here (EXIT=4) instead of reporting a misleading build failure.
 up_tree="$work/upstream-tree"; mkdir -p "$up_tree"
 git -C "$repo" archive FETCH_HEAD Libraries | tar -x -C "$up_tree" || die "cannot export upstream Libraries/ from FETCH_HEAD"
+# SL-42: alert (never fail) when upstream gains DeepseekV4 code; SL-41 policy is keep ours, so this is a decision for the owner.
+v4_status=0
+"$here/v4-watch.sh" "$up_tree/Libraries" >"$work/sentinel-v4.log" 2>&1 || v4_status=$?
+sed 's/^/  /' "$work/sentinel-v4.log"
+[ "$v4_status" -eq 0 ] || [ "$v4_status" -eq 5 ] || echo "  v4-watch: exit $v4_status (see log above)"
 echo "== sentinel: shadow-check (ours vs upstream @ $(git -C "$repo" rev-parse --short FETCH_HEAD))"
 shadow_status=0
 "$here/shadow-check.sh" --repo "$repo" --upstream "$up_tree" >"$work/sentinel-shadow.log" 2>&1 || shadow_status=$?
