@@ -166,8 +166,13 @@ struct EmbeddingGemma2Tests {
             at: poolingDirectory, withIntermediateDirectories: true)
         try Data(#"{"word_embedding_dimension":12,"pooling_mode_mean_tokens":true}"#.utf8)
             .write(to: poolingDirectory.appendingPathComponent("config.json"))
+        let recorder = ModelLoadProgressTests.Recorder()
         let context = try await EmbedderModelFactory.shared.load(
-            from: directory, using: TestTokenizerLoader())
+            from: directory, using: TestTokenizerLoader(),
+            progress: .weights { recorder.record($0) })
+        #expect(recorder.fractions.contains { $0 < 1 })
+        #expect(recorder.fractions.last == 1)
+        #expect(recorder.fractions == recorder.fractions.sorted())
         #expect((context.model as? MLXLMCommon.EmbeddingGemma2) != nil)
         #expect(context.model.maxPositionEmbeddings == 8192)
         #expect(context.pooling.strategy == .none)
@@ -234,6 +239,29 @@ struct EmbeddingGemma2Tests {
             modelDirectory: directory, tokenizerLoader: TestTokenizerLoader(), loadVision: false)
         #expect(await textOnly.supportedModalities == [.text])
         #expect(try await textOnly.embed(.init(text: "Swift"), task: .none).count == 12)
+    }
+
+    @Test
+    func publicActorMemoryCountsAMediaEncoderOnceItLoads() async throws {
+        let checkpoint = try Self.mediaCheckpoint()
+        defer { try? FileManager.default.removeItem(at: checkpoint.directory) }
+        try Data(
+            #"{"processor_class":"Gemma4Processor","do_normalize":false,"patch_size":4,"pooling_kernel_size":2,"max_soft_tokens":9}"#
+                .utf8
+        ).write(to: checkpoint.directory.appendingPathComponent("processor_config.json"))
+        let actor = try await EmbeddingGemma2Embedding(
+            modelDirectory: checkpoint.directory, tokenizerLoader: TestTokenizerLoader())
+        let image = CIImage(color: .red).cropped(to: CGRect(x: 0, y: 0, width: 32, height: 32))
+
+        let before = try await actor.memory()
+        _ = try await actor.embed(.init(images: [.ciImage(image)]), task: .none)
+        let after = try await actor.memory()
+
+        #expect(before.model > 0)
+        #expect(before.components.isEmpty)
+        #expect(after.model == before.model)
+        #expect(after.components.map(\.kind) == [.vision])
+        #expect(after.components.allSatisfy { $0.bytes > 0 })
     }
 
     @Test

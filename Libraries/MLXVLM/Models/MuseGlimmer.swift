@@ -1130,11 +1130,7 @@ public class MuseGlimmer: Module, VLMModel, KVCacheDimensionProvider {
     public var vocabularySize: Int { config.vocabularySize }
     public var kvHeads: [Int] { languageModel.kvHeads }
     public var toolCallFormat: ToolCallFormat? { .atem }
-    public var reasoningConfig: ReasoningConfig? {
-        ReasoningConfig(
-            startDelimiter: "to=self<|message|>", endDelimiter: "<|eom|>",
-            promptStrategy: .none, isSpecialToken: true)
-    }
+    public var reasoningConfig: ReasoningConfig? { OnyxReasoningProtocol.glimmer }
 
     public init(_ config: MuseGlimmerConfiguration) {
         self.config = config
@@ -1286,12 +1282,7 @@ extension MuseGlimmer: ModelComponentsProviding {
     // The bf16 vision stack is ~3.7 GB. With it, the 4-bit model exceeds the wired limit of a
     // 24 GB Mac.
     public var modelComponents: [ModelComponent: [CheckpointComponent]] {
-        let modules = ["vision_tower", "vision_adapter", "vision_projection"]
-        return [
-            .vision: modules.map {
-                CheckpointComponent(name: $0, namespaces: [$0, "model.\($0)"], destination: $0)
-            }
-        ]
+        [.vision: .modules("vision_tower", "vision_adapter", "vision_projection")]
     }
 
     public var onDemandComponents: [AnyOnDemandComponent] { [onDemandVision] }

@@ -123,6 +123,14 @@ package func weightedExpertUnsort(
     )[0]
 }
 
+/// Quantized expert projections benefit from grouping repeated expert routes at smaller batch
+/// sizes because each unsorted route can require another quantized weight read. Dense projections
+/// retain the higher crossover point, where sorting overhead is more readily amortized.
+@inline(__always)
+func shouldSortExpertRoutes(routeCount: Int, quantized: Bool) -> Bool {
+    routeCount >= (quantized ? 16 : 64)
+}
+
 // MARK: - SwitchGLU
 
 open class SwitchGLU: Module, @unchecked Sendable {
@@ -710,9 +718,9 @@ open class SwitchGLU: Module, @unchecked Sendable {
         // We must force sorting/flattening when SSD streaming is active to properly batch
         // expert kernel dispatches dynamically over contiguous arrays.
         let isSSDStreaming = ExpertStreamingConfig.shared.isEnabled
-        // NOTE: indices eval deferred to inside the cross-projection path below,
-        // where it's merged with buffer allocation into fewer eval calls.
-        let doSort = (indices.size >= 64) || isSSDStreaming
+        let doSort = shouldSortExpertRoutes(
+            routeCount: indices.size,
+            quantized: upProj is QuantizedSwitchLinear) || isSSDStreaming
 
         var idx = indices
         var inverseOrder = MLXArray()
@@ -1248,7 +1256,9 @@ open class FusedGateUpSwitchGLU: Module {
     open func callAsFunction(_ x: MLXArray, _ indices: MLXArray) -> MLXArray {
         var x = MLX.expandedDimensions(x, axes: [-2, -3])
 
-        let doSort = indices.size >= 64
+        let doSort = shouldSortExpertRoutes(
+            routeCount: indices.size,
+            quantized: gateUpProj is QuantizedSwitchLinear)
 
         var idx = indices
         var inverseOrder = MLXArray()

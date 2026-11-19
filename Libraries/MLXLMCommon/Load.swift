@@ -213,6 +213,7 @@ func loadModelCheckpoint(urls: [URL], isRead: @escaping @Sendable (String) -> Bo
     }()
 
     let state = ConcurrentLoadState(fileCount: urls.count)
+    let progress = ModelLoadProgressScope.reporter
     DispatchQueue.concurrentPerform(iterations: items.count) { index in
         let item = items[index]
         do {
@@ -221,7 +222,16 @@ func loadModelCheckpoint(urls: [URL], isRead: @escaping @Sendable (String) -> Bo
                 // Explicitly the CPU stream: `Load` has no GPU implementation and the arrays
                 // land in unified memory either way. The concurrency comes from evaluating
                 // disjoint groups from many threads, not from the stream itself.
-                let (all, metadata) = try loadArraysAndMetadata(url: item.url, stream: .cpu)
+                let all: [String: MLXArray]
+                let metadata: [String: String]
+                if let progress {
+                    let worker = UUID()
+                    (all, metadata) = try loadArraysAndMetadata(url: item.url, stream: .cpu) {
+                        progress.update($0, worker: worker)
+                    }
+                } else {
+                    (all, metadata) = try loadArraysAndMetadata(url: item.url, stream: .cpu)
+                }
 
                 var selected = [String: MLXArray]()
                 if let names = item.names {
@@ -415,7 +425,7 @@ private func loadModelCheckpointLazily(urls: [URL]) throws -> ModelCheckpoint {
 
 /// Load model weights.
 ///
-/// This is typically called via ``GenericModelFactory/load(from:using:configuration:useLatest:progressHandler:)``.
+/// This is typically called via ``GenericModelFactory/load(from:using:configuration:useLatest:progress:)``.
 /// This function loads model weight `safetensor` files in the given `modelDirectory`,
 /// calls ``BaseLanguageModel/prepareCheckpoint(_:)`` to allow per-model preprocessing,
 /// applies optional quantization, and
@@ -462,182 +472,186 @@ public func loadWeights(
             of: model, urls: weightURLs, excluded: excludedComponents,
             loading: componentLoading, perLayerQuantization: perLayerQuantization)
         + model.excludedCheckpointNamespaces
-    // MTP add-ons (e.g. Qwen3.5/3.6-OptiQ's `optiq/mtp.safetensors`) live in a
-    // subdirectory `safetensorWeightURLs` deliberately excludes by default (see its
-    // doc comment above, which cites this exact checkpoint) — unconditionally loading
-    // such a stray file previously produced silent norm-shift corruption (SwiftLM
-    // issue #118: every RMSNorm weight shifted by 1, producing noise with no error) and
-    // broke the VLM path outright with `Unhandled keys ["mtp"]`. Retained only when the
-    // user explicitly asks for the MTP heads via SWIFTLM_MTP_ENABLE. They go last so
-    // their tensors override same-named ones in the selected files, as before.
-    let loadURLs =
-        weightURLs
-        + (MTPConfig.retainMTPWeights
-            ? mtpAddOnWeightURLs(in: modelDirectory, excluding: weightURLs) : [])
-    var checkpoint =
-        streamsThisModel
-        // Load lazily: the concurrent loader reads every tensor, including the experts
-        // that SSD streaming pages in on demand, which fills RAM and pushes into swap.
-        ? try loadModelCheckpointLazily(urls: loadURLs)
-        : try loadModelCheckpoint(urls: loadURLs, excludedNamespaces: excludedNamespaces)
-    checkpoint.perLayerQuantization = perLayerQuantization
-    // upstream-watch: SharpAI addition, see ModelCheckpoint.modelDirectory.
-    checkpoint.modelDirectory = modelDirectory
-    // per-model cleanup (models can inspect metadata to customize behavior)
-    checkpoint = try model.prepareCheckpoint(checkpoint)
+    // Scope the checkpoint so tensors that quantization and the update replace are freed
+    // before materialization (upstream 4c21c84). The streaming tail below reads no checkpoint.
+    do {
+        // MTP add-ons (e.g. Qwen3.5/3.6-OptiQ's `optiq/mtp.safetensors`) live in a
+        // subdirectory `safetensorWeightURLs` deliberately excludes by default (see its
+        // doc comment above, which cites this exact checkpoint) — unconditionally loading
+        // such a stray file previously produced silent norm-shift corruption (SwiftLM
+        // issue #118: every RMSNorm weight shifted by 1, producing noise with no error) and
+        // broke the VLM path outright with `Unhandled keys ["mtp"]`. Retained only when the
+        // user explicitly asks for the MTP heads via SWIFTLM_MTP_ENABLE. They go last so
+        // their tensors override same-named ones in the selected files, as before.
+        let loadURLs =
+            weightURLs
+            + (MTPConfig.retainMTPWeights
+                ? mtpAddOnWeightURLs(in: modelDirectory, excluding: weightURLs) : [])
+        var checkpoint =
+            streamsThisModel
+            // Load lazily: the concurrent loader reads every tensor, including the experts
+            // that SSD streaming pages in on demand, which fills RAM and pushes into swap.
+            ? try loadModelCheckpointLazily(urls: loadURLs)
+            : try loadModelCheckpoint(urls: loadURLs, excludedNamespaces: excludedNamespaces)
+        checkpoint.perLayerQuantization = perLayerQuantization
+        // upstream-watch: SharpAI addition, see ModelCheckpoint.modelDirectory.
+        checkpoint.modelDirectory = modelDirectory
+        // per-model cleanup (models can inspect metadata to customize behavior)
+        checkpoint = try model.prepareCheckpoint(checkpoint)
 
-    var weights = checkpoint.weights
+        var weights = checkpoint.weights
 
-    // ExpertStreamingConfig: Initialize the ExpertStreamerManager when streaming is active.
-    // On macOS: pread() from NVMe at ~5 GB/s.
-    // On iOS:   mmap page-cache from APFS at ~2-3 GB/s — same struct, different bandwidth.
-    if streamsThisModel {
-        ExpertStreamerManager.shared = ExpertStreamerManager(modelDirectory: modelDirectory)
-    }
+        // ExpertStreamingConfig: Initialize the ExpertStreamerManager when streaming is active.
+        // On macOS: pread() from NVMe at ~5 GB/s.
+        // On iOS:   mmap page-cache from APFS at ~2-3 GB/s — same struct, different bandwidth.
+        if streamsThisModel {
+            ExpertStreamerManager.shared = ExpertStreamerManager(modelDirectory: modelDirectory)
+        }
 
-    // quantize if needed
-    if let perLayerQuantization = checkpoint.perLayerQuantization {
-        quantize(model: model) { path, module in
-            if weights["\(path).scales"] != nil {
-                // Normalize MTP module paths: the Swift module tree indexes MTP
-                // prediction layers as "mtp.<depth>.layers...." (e.g. "mtp.0.layers...."
-                // for the first/only next-token-prediction depth), but checkpoints
-                // declare their per-layer quantization overrides keyed as
-                // "mtp.layers...." (no depth index) — mirroring the equivalent
-                // ".mtp.0." -> ".mtp." normalization already applied to weight-key
-                // remapping earlier in this file. Without this, MTP-head modules
-                // (which are commonly quantized at a different bit-width than the
-                // main model, e.g. a uniform 8-bit MTP head layered on a mixed
-                // 4/5/6-bit main model) silently fall through to the top-level
-                // default and crash quantized_matmul on a genuine shape mismatch.
-                let dict = perLayerQuantization.perLayerQuantization
-                let mtpNormalizedPath = path.replacingOccurrences(
-                    of: #"\.mtp\.\d+\."#, with: ".mtp.", options: .regularExpression)
-                let routerNormalizedPath = path.replacingOccurrences(
-                    of: ".experts.router.", with: ".router.")
-                if let opt = dict[path]
-                    ?? dict["language_model.\(path)"]
-                    ?? dict[mtpNormalizedPath]
-                    ?? dict["language_model.\(mtpNormalizedPath)"]
-                    ?? dict[routerNormalizedPath]
-                    ?? dict["language_model.\(routerNormalizedPath)"]
-                {
-                    switch opt {
-                    case .skip: return nil
-                    case .quantize(let q): return q.asTuple
+        // quantize if needed
+        if let perLayerQuantization = checkpoint.perLayerQuantization {
+            quantize(model: model) { path, module in
+                if weights["\(path).scales"] != nil {
+                    // Normalize MTP module paths: the Swift module tree indexes MTP
+                    // prediction layers as "mtp.<depth>.layers...." (e.g. "mtp.0.layers...."
+                    // for the first/only next-token-prediction depth), but checkpoints
+                    // declare their per-layer quantization overrides keyed as
+                    // "mtp.layers...." (no depth index) — mirroring the equivalent
+                    // ".mtp.0." -> ".mtp." normalization already applied to weight-key
+                    // remapping earlier in this file. Without this, MTP-head modules
+                    // (which are commonly quantized at a different bit-width than the
+                    // main model, e.g. a uniform 8-bit MTP head layered on a mixed
+                    // 4/5/6-bit main model) silently fall through to the top-level
+                    // default and crash quantized_matmul on a genuine shape mismatch.
+                    let dict = perLayerQuantization.perLayerQuantization
+                    let mtpNormalizedPath = path.replacingOccurrences(
+                        of: #"\.mtp\.\d+\."#, with: ".mtp.", options: .regularExpression)
+                    let routerNormalizedPath = path.replacingOccurrences(
+                        of: ".experts.router.", with: ".router.")
+                    if let opt = dict[path]
+                        ?? dict["language_model.\(path)"]
+                        ?? dict[mtpNormalizedPath]
+                        ?? dict["language_model.\(mtpNormalizedPath)"]
+                        ?? dict[routerNormalizedPath]
+                        ?? dict["language_model.\(routerNormalizedPath)"]
+                    {
+                        switch opt {
+                        case .skip: return nil
+                        case .quantize(let q): return q.asTuple
+                        }
                     }
+                    return perLayerQuantization.quantization?.asTuple
+                } else {
+                    return nil
                 }
-                return perLayerQuantization.quantization?.asTuple
-            } else {
-                return nil
             }
         }
-    }
 
-    // Extract weight_scale_inv for switch_mlp layers BEFORE update to avoid Unhandled Keys
-    var stackedScales = [String: MLXArray]()
-    for key in weights.keys {
-        if key.contains(".switch_mlp.") && key.hasSuffix(".weight_scale_inv") {
-            if let val = weights[key] {
-                stackedScales[key] = val
-                weights.removeValue(forKey: key)
+        // Extract weight_scale_inv for switch_mlp layers BEFORE update to avoid Unhandled Keys
+        var stackedScales = [String: MLXArray]()
+        for key in weights.keys {
+            if key.contains(".switch_mlp.") && key.hasSuffix(".weight_scale_inv") {
+                if let val = weights[key] {
+                    stackedScales[key] = val
+                    weights.removeValue(forKey: key)
+                }
             }
         }
-    }
 
-    // apply the loaded weights
-    // When SSD streaming is active, expert weights are intentionally absent from `weights`
-    // (they are paged from NVMe on demand). Using .all would reject the load.
-    // .noUnusedKeys still catches genuinely stray/misspelled keys without requiring
-    // every @ModuleInfo slot to be populated up-front.
-    let parameters = ModuleParameters.unflattened(weights)
-    if streamsThisModel {
-        // Expert weights are intentionally absent — paged from SSD on demand.
-        // .noUnusedKeys still rejects stray/misspelled keys without requiring
-        // every @ModuleInfo slot to be pre-populated.
-        try model.update(parameters: parameters, verify: .noUnusedKeys)
-    } else {
-        try model.update(parameters: parameters, verify: .all)
-    }
+        // apply the loaded weights
+        // When SSD streaming is active, expert weights are intentionally absent from `weights`
+        // (they are paged from NVMe on demand). Using .all would reject the load.
+        // .noUnusedKeys still catches genuinely stray/misspelled keys without requiring
+        // every @ModuleInfo slot to be populated up-front.
+        let parameters = ModuleParameters.unflattened(weights)
+        if streamsThisModel {
+            // Expert weights are intentionally absent — paged from SSD on demand.
+            // .noUnusedKeys still rejects stray/misspelled keys without requiring
+            // every @ModuleInfo slot to be pre-populated.
+            try model.update(parameters: parameters, verify: .noUnusedKeys)
+        } else {
+            try model.update(parameters: parameters, verify: .all)
+        }
 
-    if streamsThisModel {
-        // Assign tensorName to each QuantizedSwitchLinear.
-        //
-        // CRITICAL: tensorName must be the ORIGINAL key in the safetensors shard
-        // (before sanitize() strips VLM wrapper prefixes like "language_model."),
-        // because BOTH ExpertStreamerManager.getFile() and the C++ streamedGatherMM
-        // pread() use this key to locate the tensor bytes within the shard file.
-        //
-        // Example for Mistral4:
-        //   post-sanitize path → "model.layers.0.mlp.switch_mlp.gate_proj"
-        //   original shard key → "language_model.model.layers.0.mlp.switch_mlp.gate_proj.weight"
-        //
-        // We probe the ExpertStreamerManager weight map with common VLM prefixes
-        // and fall back to the bare path if none match.
-        let knownPrefixes = ["language_model.", "model.language_model.", ""]
-        for (path, module) in model.leafModules().flattened() {
-            if let sl = module as? SwitchLinear {
-                let bareName = "\(path).weight"
+        if streamsThisModel {
+            // Assign tensorName to each QuantizedSwitchLinear.
+            //
+            // CRITICAL: tensorName must be the ORIGINAL key in the safetensors shard
+            // (before sanitize() strips VLM wrapper prefixes like "language_model."),
+            // because BOTH ExpertStreamerManager.getFile() and the C++ streamedGatherMM
+            // pread() use this key to locate the tensor bytes within the shard file.
+            //
+            // Example for Mistral4:
+            //   post-sanitize path → "model.layers.0.mlp.switch_mlp.gate_proj"
+            //   original shard key → "language_model.model.layers.0.mlp.switch_mlp.gate_proj.weight"
+            //
+            // We probe the ExpertStreamerManager weight map with common VLM prefixes
+            // and fall back to the bare path if none match.
+            let knownPrefixes = ["language_model.", "model.language_model.", ""]
+            for (path, module) in model.leafModules().flattened() {
+                if let sl = module as? SwitchLinear {
+                    let bareName = "\(path).weight"
                 
-                // First, check for unstacked format (e.g. Qwen FP8: "experts.N.gate_proj")
-                if bareName.contains(".switch_mlp.") {
-                    let unstackedBaseName = bareName.replacingOccurrences(of: ".switch_mlp.", with: ".experts.")
-                    let expert0Name = unstackedBaseName.replacingOccurrences(of: ".experts.", with: ".experts.0.")
-                    var stripped0Name = expert0Name.replacingOccurrences(of: "language_model.model.", with: "")
-                    stripped0Name = stripped0Name.replacingOccurrences(of: "language_model.", with: "")
-                    stripped0Name = stripped0Name.replacingOccurrences(of: "model.", with: "")
-                    let strippedMtpName = stripped0Name.replacingOccurrences(of: ".mtp.0.", with: ".mtp.")
+                    // First, check for unstacked format (e.g. Qwen FP8: "experts.N.gate_proj")
+                    if bareName.contains(".switch_mlp.") {
+                        let unstackedBaseName = bareName.replacingOccurrences(of: ".switch_mlp.", with: ".experts.")
+                        let expert0Name = unstackedBaseName.replacingOccurrences(of: ".experts.", with: ".experts.0.")
+                        var stripped0Name = expert0Name.replacingOccurrences(of: "language_model.model.", with: "")
+                        stripped0Name = stripped0Name.replacingOccurrences(of: "language_model.", with: "")
+                        stripped0Name = stripped0Name.replacingOccurrences(of: "model.", with: "")
+                        let strippedMtpName = stripped0Name.replacingOccurrences(of: ".mtp.0.", with: ".mtp.")
                     
-                    let allPrefixes = ["", "model.", "language_model.", "model.language_model."]
-                    let candidates = [expert0Name, stripped0Name, strippedMtpName] + allPrefixes.map { $0 + stripped0Name } + allPrefixes.map { $0 + strippedMtpName }
-                    var foundUnstacked = false
-                    var matchedCandidate = ""
+                        let allPrefixes = ["", "model.", "language_model.", "model.language_model."]
+                        let candidates = [expert0Name, stripped0Name, strippedMtpName] + allPrefixes.map { $0 + stripped0Name } + allPrefixes.map { $0 + strippedMtpName }
+                        var foundUnstacked = false
+                        var matchedCandidate = ""
                     
-                    for candidate in candidates {
-                        if ExpertStreamerManager.shared?.getFile(for: candidate) != nil {
-                            foundUnstacked = true
-                            matchedCandidate = candidate
-                            var map = [Int: (path: String, tensorName: String)]()
-                            for i in 0 ..< sl.numExperts {
-                                let c = candidate.replacingOccurrences(of: ".experts.0.", with: ".experts.\(i).")
-                                if let file = ExpertStreamerManager.shared?.getFile(for: c),
-                                   let dir = ExpertStreamingConfig.shared.modelDirectory {
-                                    map[i] = (dir.appendingPathComponent(file).path, c)
+                        for candidate in candidates {
+                            if ExpertStreamerManager.shared?.getFile(for: candidate) != nil {
+                                foundUnstacked = true
+                                matchedCandidate = candidate
+                                var map = [Int: (path: String, tensorName: String)]()
+                                for i in 0 ..< sl.numExperts {
+                                    let c = candidate.replacingOccurrences(of: ".experts.0.", with: ".experts.\(i).")
+                                    if let file = ExpertStreamerManager.shared?.getFile(for: c),
+                                       let dir = ExpertStreamingConfig.shared.modelDirectory {
+                                        map[i] = (dir.appendingPathComponent(file).path, c)
+                                    }
                                 }
-                            }
-                            sl.unstackedSSDMap = map
+                                sl.unstackedSSDMap = map
                             
-                            break
+                                break
+                            }
                         }
-                    }
                     
-                    // ALWAYS check if we have a stacked scale tensor for switch_mlp
-                    let scaleKey = path + ".weight_scale_inv"
+                        // ALWAYS check if we have a stacked scale tensor for switch_mlp
+                        let scaleKey = path + ".weight_scale_inv"
 
-                    if let scaleTensor = stackedScales[scaleKey] {
+                        if let scaleTensor = stackedScales[scaleKey] {
 
-                        if !foundUnstacked {
-                            print("[Load] WARNING: foundUnstacked is FALSE for \(scaleKey)!!! Forcing weightScaleInv.")
+                            if !foundUnstacked {
+                                print("[Load] WARNING: foundUnstacked is FALSE for \(scaleKey)!!! Forcing weightScaleInv.")
+                            }
+                            sl.weightScaleInv = scaleTensor
                         }
-                        sl.weightScaleInv = scaleTensor
-                    }
                     
-                    if foundUnstacked { continue }
+                        if foundUnstacked { continue }
+                    }
+
+                    // Normal stacked format
+                    var strippedBareName = bareName.replacingOccurrences(of: "language_model.model.", with: "")
+                    strippedBareName = strippedBareName.replacingOccurrences(of: "language_model.", with: "")
+                    strippedBareName = strippedBareName.replacingOccurrences(of: "model.", with: "")
+                    let strippedMtpBareName = strippedBareName.replacingOccurrences(of: ".mtp.0.", with: ".mtp.")
+                
+                    let allPrefixes = ["", "model.", "language_model.", "model.language_model."]
+                    let normalCandidates = [bareName, strippedBareName, strippedMtpBareName] + allPrefixes.map { $0 + strippedBareName } + allPrefixes.map { $0 + strippedMtpBareName }
+                
+                    let originalKey = normalCandidates
+                        .first { ExpertStreamerManager.shared?.getFile(for: $0) != nil }
+                        ?? bareName  // fallback: use bare name
+                    sl.tensorName = originalKey
                 }
-
-                // Normal stacked format
-                var strippedBareName = bareName.replacingOccurrences(of: "language_model.model.", with: "")
-                strippedBareName = strippedBareName.replacingOccurrences(of: "language_model.", with: "")
-                strippedBareName = strippedBareName.replacingOccurrences(of: "model.", with: "")
-                let strippedMtpBareName = strippedBareName.replacingOccurrences(of: ".mtp.0.", with: ".mtp.")
-                
-                let allPrefixes = ["", "model.", "language_model.", "model.language_model."]
-                let normalCandidates = [bareName, strippedBareName, strippedMtpBareName] + allPrefixes.map { $0 + strippedBareName } + allPrefixes.map { $0 + strippedMtpBareName }
-                
-                let originalKey = normalCandidates
-                    .first { ExpertStreamerManager.shared?.getFile(for: $0) != nil }
-                    ?? bareName  // fallback: use bare name
-                sl.tensorName = originalKey
             }
         }
     }
@@ -703,21 +717,24 @@ public func loadWeights(
     componentLoading: ComponentLoading = .onFirstUse
 ) async throws {
     let model = SendableBox(model)
+    let progress = ModelLoadProgressScope.reporter
     try await withCheckedThrowingContinuation {
         (continuation: CheckedContinuation<Void, any Error>) in
         DispatchQueue.global(qos: .userInitiated).async {
             // The caller's withError does not reach this thread.
             continuation.resume(
                 with: Result {
-                    try withLoaderThreadError {
-                        try loadWeights(
-                            modelDirectory: modelDirectory, model: model.consume(),
-                            quantization: quantization,
-                            perLayerQuantization: perLayerQuantization,
-                            lazyLoad: lazyLoad,
-                            weightFileSelection: weightFileSelection,
-                            excludedComponents: excludedComponents,
-                            componentLoading: componentLoading)
+                    try ModelLoadProgressScope.$reporter.withValue(progress) {
+                        try withLoaderThreadError {
+                            try loadWeights(
+                                modelDirectory: modelDirectory, model: model.consume(),
+                                quantization: quantization,
+                                perLayerQuantization: perLayerQuantization,
+                                lazyLoad: lazyLoad,
+                                weightFileSelection: weightFileSelection,
+                                excludedComponents: excludedComponents,
+                                componentLoading: componentLoading)
+                        }
                     }
                 })
         }

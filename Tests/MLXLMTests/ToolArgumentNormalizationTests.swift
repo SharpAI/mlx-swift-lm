@@ -167,4 +167,53 @@ struct ToolArgumentNormalizationTests {
         #expect(tryParsePythonLiteral("['SF',") == nil)
         #expect(tryParsePythonLiteral("[f()]") == nil)
     }
+
+    @Test("Python string escapes decode as Python does")
+    func pythonStringEscapes() {
+        for (literal, value) in [
+            (#"'\x41\101\0'"#, "AA\0"),
+            (#"'\a\v'"#, "\u{7}\u{b}"),
+            ("'line\\\nnext'", "linenext"),
+            (#"'\ud83d\ude00'"#, "\u{1F600}"),
+            (#"'\d'"#, #"\d"#),
+        ] {
+            #expect(tryParsePythonLiteral(literal) as? String == value)
+        }
+        #expect(tryParsePythonLiteral(#"'\ud83d'"#) == nil)
+        #expect(tryParsePythonLiteral(#"'\x4'"#) == nil)
+    }
+
+    @Test("Python triple-quoted strings span lines and end at three quotes")
+    func pythonTripleQuotedStrings() {
+        for (literal, value) in [
+            ("'''line 1\nline 2'''", "line 1\nline 2"),
+            ("\"\"\"It's \"quoted\" text\"\"\"", "It's \"quoted\" text"),
+            ("''''a'''", "'a"),
+            ("''''''", ""),
+        ] {
+            #expect(tryParsePythonLiteral(literal) as? String == value)
+        }
+        #expect(tryParsePythonLiteral("'''a''''") == nil)
+        #expect(tryParsePythonLiteral("'''a''") == nil)
+    }
+
+    @Test("Python string prefixes and adjacent strings read as Python does")
+    func pythonStringPrefixesAndAdjacentStrings() throws {
+        for (literal, value) in [
+            (#"r'\d+\.\d'"#, #"\d+\.\d"#),
+            (#"R"C:\new\table""#, #"C:\new\table"#),
+            (#"r'it\'s'"#, #"it\'s"#),
+            (#"u'caf\xe9'"#, "café"),
+            ("'Hello, ' 'world'", "Hello, world"),
+            (#"'tab\t' r'\t'"#, "tab\t\\t"),
+            ("(\"first line \"\n \"second line\")", "first line second line"),
+        ] {
+            #expect(tryParsePythonLiteral(literal) as? String == value)
+        }
+        let object = try #require(tryParsePythonLiteral(#"{'path': r'C:\tmp', 'a' 'b': 1}"#))
+        #expect(JSONValue.from(object) == .object(["path": .string(#"C:\tmp"#), "ab": .int(1)]))
+        for literal in [#"r'a\'"#, "b'bytes'", "f'{x}'", "r 'x'", "'a' b"] {
+            #expect(tryParsePythonLiteral(literal) == nil)
+        }
+    }
 }

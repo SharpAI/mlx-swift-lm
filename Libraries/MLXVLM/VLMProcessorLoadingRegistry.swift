@@ -82,6 +82,7 @@ public final class VLMProcessorLoadingRegistry: @unchecked Sendable {
         ModelTypeProcessorResolver(processorTypes: [
             "mistral3": "Mistral3Processor",
             "gemma4_unified": "Gemma4UnifiedProcessor",
+            "diffusion_gemma": "DiffusionGemma4Processor",
         ]),
         // SharpAI: SL-51 cosmos3_omni reuses the upstream Qwen3-VL processor.
         // UNVERIFIED: the processor_class of the real nvidia/Cosmos3-Nano checkpoint is unconfirmed.

@@ -15,6 +15,24 @@ enum MTPInitializationError: Error, LocalizedError {
     }
 }
 
+func batchedGreedyMTPVerification(
+    logits: MLXArray, draftTokens: MLXArray
+) -> (tokens: [Int], accepted: Int, finalToken: MLXArray) {
+    let targetTokens = argMax(logits, axis: -1)
+    // Materialize drafts and target samples together with one GPU readback.
+    let tokens = concatenated([draftTokens.asType(targetTokens.dtype), targetTokens])
+        .asArray(Int.self)
+    let numDraft = draftTokens.size
+    var accepted = 0
+    while accepted < numDraft, tokens[accepted] == tokens[numDraft + accepted] {
+        accepted += 1
+    }
+    return (
+        Array(tokens[numDraft ..< (numDraft + accepted + 1)]), accepted,
+        targetTokens[accepted].reshaped([1])
+    )
+}
+
 /// Generator of tokens using MTP (Multi-Token Prediction) speculative
 /// decoding.
 ///
@@ -26,7 +44,7 @@ enum MTPInitializationError: Error, LocalizedError {
 /// method argument, with the target's last hidden state and per-`layer_type`
 /// shared K/V extracted from the ``LMOutput/State`` emitted by the target on
 /// the previous main-model call.
-/// If the drafter needs its own KV cache (Qwen MTP), that cache is owned by
+/// If the drafter needs its own KV cache (Qwen MTP or DSpark), that cache is owned by
 /// this iterator, prefilled over the shifted prompt, and reconciled against
 /// accepted target tokens after every verify pass; it is never stored on the
 /// shared drafter model.
@@ -71,6 +89,10 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
 
     var processor: LogitProcessor?
     let sampler: LogitSampler
+    let logProbabilityTopK: Int?
+
+    /// Log probabilities for the token returned by the most recent ``next()`` call.
+    public private(set) var lastLogProbabilities: DeferredTokenLogProbabilities?
 
     /// Sampler handed to ``MTPDrafterModel/draftBlock``: the base sampler,
     /// wrapped to mask suppressed token IDs when the target has any.
@@ -87,6 +109,8 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
     public let blockSize: Int
 
     private var pendingTokens = [Int]()
+    /// The verifier's log probabilities for `pendingTokens`, when requested.
+    private var pendingLogProbabilities = [DeferredTokenLogProbabilities]()
     private var pendingIndex = 0
     /// Number of pending tokens already represented by `mainCache`. The last
     /// verifier sample is not committed until a later forward pass.
@@ -187,6 +211,11 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
     ) throws {
         try drafter.validateCompatibility(with: mainModel)
 
+        guard !mainModel.capabilities.contains(.blockDiffusion) else {
+            throw GenerateError.unsupportedSpeculativeDecoding(
+                String(describing: type(of: mainModel)))
+        }
+
         guard blockSize >= 2 else {
             throw KVCacheError(
                 message:
@@ -209,6 +238,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
             .makeState(parameters: parameters)
 
         self.sampler = parameters.sampler()
+        self.logProbabilityTopK = parameters.logProbabilities.map { Swift.max($0, 0) }
         try components.validate(parameters: parameters)
         self.processor = components.logitProcessor(parameters: parameters, model: mainModel)
         // Draft proposals bypass the iterator's processor chain, so suppressed
@@ -234,15 +264,17 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
 
         // Probe by opening a round at the width rounds will actually use and discarding it,
         // rather than duplicating the leaf classification as a predicate that could drift from
-        // it. Qwen's hybrid cache is the one typed exception: its target advertises a bounded
-        // recurrent checkpoint and performs the round in place.
+        // it. Hybrid targets with bounded recurrent rollback are the typed
+        // exception and perform the round in place.
         let nativeRewindDepth =
             (mainModel as? any SpeculativeCacheRewindModel)?
             .maximumNativeTargetCacheRewind ?? 0
         let usesNativeHybridRewind =
             nativeRewindDepth >= effectiveBlockSize - 1
             && mainCache.contains { $0 is MambaCache }
-            && mainCache.allSatisfy { $0.isTrimmable || $0 is MambaCache }
+            && mainCache.allSatisfy {
+                $0 is MambaCache || $0.isTrimmable(after: effectiveBlockSize)
+            }
         if !usesNativeHybridRewind {
             guard
                 let probe = self.mainCacheStorage.beginRound(
@@ -269,7 +301,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
         if drafter.requiresGreedySampling, parameters.temperature != 0 {
             switchToPassthrough(
                 reason:
-                    "Qwen MTP currently requires temperature == 0; generating without speculation"
+                    "the selected block drafter requires temperature == 0; generating without speculation"
             )
         }
     }
@@ -308,6 +340,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
         let persistentState = persistentTargetState(from: mainState)
         var prefillState = persistentState ?? LMOutput.State()
         prefillState[mtpEmitFlagKey] = true
+        prefillState[mtpTargetLayerIdsKey] = drafter.targetLayerIds
         // Stateful drafters and warm continuations need one hidden row per
         // prompt token, so their `prepare` call receives the emit flag. Other
         // drafters are primed by the explicit one-token follow-up below.
@@ -350,6 +383,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
             // equivalent autoregressive run, violating speculative
             // decoding's bit-exact-equivalence-to-greedy guarantee.
             pendingTokens.append(token.item(Int.self))
+            recordLogProbabilities(of: [token], sampledFrom: [logits])
 
             // the model reported per-chunk progress; the bonus forward above
             // consumed the remainder of the prompt
@@ -412,11 +446,14 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
                 // to the first speculateRound.
                 pendingTokens.append(token.item(Int.self))
                 pendingTokens.append(newToken.item(Int.self))
+                recordLogProbabilities(
+                    of: [token, newToken], sampledFrom: [logits, newLogits])
                 committedPendingTokenCount = 1
             } else {
                 // Prefill state already carried drafter keys; the single
                 // bonus is the input to the first speculateRound.
                 pendingTokens.append(token.item(Int.self))
+                recordLogProbabilities(of: [token], sampledFrom: [logits])
             }
         }
 
@@ -509,8 +546,11 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
 
             let draftBudget = Swift.min(remaining - 1, blockSize - 1)
             guard draftBudget > 0 else {
-                if let token = passthroughStep(maintainingDrafterState: true) {
-                    pendingTokens.append(token)
+                if let step = passthroughStep(maintainingDrafterState: true) {
+                    pendingTokens.append(step.token)
+                    if let logProbabilities = step.logProbabilities {
+                        pendingLogProbabilities.append(logProbabilities)
+                    }
                 }
                 return
             }
@@ -531,16 +571,17 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
             return
         }
 
-        // Attention-only targets verify through a staged round. Qwen's hybrid target instead
-        // checkpoints its recurrent entries and rewinds them in place; the typed capability and
-        // cache topology keep that exception fail-closed.
+        // Attention-only targets verify through a staged round. Hybrid targets
+        // with bounded recurrent rollback rewind in place; the typed capability
+        // and cache topology keep that exception fail-closed.
         let nativeRewindDepth =
             (mainModel as? any SpeculativeCacheRewindModel)?
             .maximumNativeTargetCacheRewind ?? 0
+        // The full verify write must remain rewindable, including the committed bonus.
         let nativeHybridRewind =
             nativeRewindDepth >= numDraft
             && mainCache.contains { $0 is MambaCache }
-            && mainCache.allSatisfy { $0.isTrimmable || $0 is MambaCache }
+            && mainCache.allSatisfy { $0 is MambaCache || $0.isTrimmable(after: numDraft + 1) }
         let round =
             nativeHybridRewind
             ? nil : mainCacheStorage.beginRound(maximumPositions: numDraft + 1)
@@ -621,6 +662,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
         // in one forward call, emitting state for next round.
         var verifyState = state
         verifyState[mtpEmitFlagKey] = true
+        verifyState[mtpTargetLayerIdsKey] = drafter.targetLayerIds
         let verifyTokens = concatenated([bonusToken, flatDraftTokens])
         let verifyInput = LMInput.Text(tokens: verifyTokens)
         let verifyStart = verifyInput.tokens.dim(0) - (numDraft + 1)
@@ -631,38 +673,59 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
         let mainLogits = mainResult.logits
         mainState = mainResult.state
 
-        eval(flatDraftTokens)
-        let draftTokensList = flatDraftTokens.asArray(Int.self)
-
         var accepted = 0
-        var finalToken: MLXArray?
-        for i in 0 ..< numDraft {
-            var logits = mainLogits[0..., verifyStart + i, 0...]
+        let emittedFinalToken: MLXArray
+        // Other processors can depend on didSample updates between rows.
+        if sampler is ArgMaxSampler, processor == nil || processor is SuppressTokensProcessor {
+            var logits = mainLogits[0, verifyStart ..< (verifyStart + numDraft + 1), 0...]
             logits = processor?.process(logits: logits) ?? logits
-            let targetToken = sampler.sample(logits: logits)
-            eval(targetToken)
-            let targetTokenValue = targetToken.item(Int.self)
-            processor?.didSample(token: targetToken)
-            pendingTokens.append(targetTokenValue)
-            guard targetTokenValue == draftTokensList[i] else {
-                finalToken = targetToken
-                break
-            }
-            accepted += 1
-        }
+            let result = batchedGreedyMTPVerification(
+                logits: logits, draftTokens: flatDraftTokens)
+            pendingTokens.append(contentsOf: result.tokens)
+            accepted = result.accepted
+            recordLogProbabilities(
+                of: [MLXArray(result.tokens)], sampledFrom: [logits[0 ..< (accepted + 1)]])
+            emittedFinalToken = result.finalToken
+        } else {
+            eval(flatDraftTokens)
+            let draftTokensList = flatDraftTokens.asArray(Int.self)
 
-        // Only the all-accepted path samples the bonus row. On rejection the
-        // mismatching target sample above is already the emitted correction.
-        if finalToken == nil {
-            var logits = mainLogits[0..., verifyStart + accepted, 0...]
-            logits = processor?.process(logits: logits) ?? logits
-            let bonus = sampler.sample(logits: logits)
-            eval(bonus)
-            processor?.didSample(token: bonus)
-            pendingTokens.append(bonus.item(Int.self))
-            finalToken = bonus
+            var finalToken: MLXArray?
+            var emittedTokens = [MLXArray]()
+            var emittedLogits = [MLXArray]()
+            for i in 0 ..< numDraft {
+                var logits = mainLogits[0..., verifyStart + i, 0...]
+                logits = processor?.process(logits: logits) ?? logits
+                let targetToken = sampler.sample(logits: logits)
+                eval(targetToken)
+                let targetTokenValue = targetToken.item(Int.self)
+                processor?.didSample(token: targetToken)
+                pendingTokens.append(targetTokenValue)
+                emittedTokens.append(targetToken)
+                emittedLogits.append(logits)
+                guard targetTokenValue == draftTokensList[i] else {
+                    finalToken = targetToken
+                    break
+                }
+                accepted += 1
+            }
+
+            // Only the all-accepted path samples the bonus row. On rejection the
+            // mismatching target sample above is already the emitted correction.
+            if finalToken == nil {
+                var logits = mainLogits[0..., verifyStart + accepted, 0...]
+                logits = processor?.process(logits: logits) ?? logits
+                let bonus = sampler.sample(logits: logits)
+                eval(bonus)
+                processor?.didSample(token: bonus)
+                pendingTokens.append(bonus.item(Int.self))
+                emittedTokens.append(bonus)
+                emittedLogits.append(logits)
+                finalToken = bonus
+            }
+            recordLogProbabilities(of: emittedTokens, sampledFrom: emittedLogits)
+            emittedFinalToken = finalToken!
         }
-        let emittedFinalToken = finalToken!
         committedPendingTokenCount = accepted
 
         proposedCount += numDraft
@@ -709,9 +772,9 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
                     rewound == rejected,
                     "Target advertised native speculative rewind depth \(nativeRewindDepth), but rewound \(rewound) of \(rejected) positions"
                 )
-                // Qwen MTP-1: attention KV trims one token while every GDN
-                // cache restores the state captured after the committed bonus.
-                // The target's 9B weights are not replayed on rejection.
+                // Rewind attention and recurrent state together. Checkpointed
+                // recurrent caches restore an atomic step; bounded trimmable
+                // recurrent caches can discard a wider rejected suffix.
                 mainCacheStorage.commitProcessedTokens(accepted + 1)
             }
             snapshotPlaced = reconcileSharedKVState(
@@ -754,6 +817,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
         passthrough = true
         discardSpeculativePromptCacheCheckpoints(mainCache)
         mainState?[mtpEmitFlagKey] = false
+        mainState?[mtpTargetLayerIdsKey] = nil
         mainState?[mtpCacheCheckpointIndexKey] = nil
         mainState?[mtpLastHiddenStatesKey] = nil
         mainState?[mtpSharedKVStatesKey] = nil
@@ -769,7 +833,7 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
     /// preserving an exact continuation at the final target boundary.
     private mutating func passthroughStep(
         maintainingDrafterState: Bool = false
-    ) -> Int? {
+    ) -> (token: Int, logProbabilities: DeferredTokenLogProbabilities?)? {
         if let maxTokens, tokenCount >= maxTokens { return nil }
 
         var stepState = mainState
@@ -815,7 +879,38 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
 
         y = .init(tokens: token)
         kvCachePlan.apply(to: mainCacheStorage)
-        return tokenInt
+        return (
+            tokenInt,
+            DeferredTokenLogProbabilities.recording(
+                [token], sampledFrom: [logits], topK: logProbabilityTopK
+            ).first
+        )
+    }
+
+    /// Records the verifier's log probabilities for tokens just queued in `pendingTokens`.
+    private mutating func recordLogProbabilities(
+        of tokens: [MLXArray], sampledFrom logits: [MLXArray]
+    ) {
+        pendingLogProbabilities += DeferredTokenLogProbabilities.recording(
+            tokens, sampledFrom: logits, topK: logProbabilityTopK)
+    }
+
+    /// Returns the next queued token and makes its log probabilities current.
+    private mutating func dequeuePendingToken() -> Int {
+        lastLogProbabilities =
+            logProbabilityTopK == nil ? nil : pendingLogProbabilities[pendingIndex]
+        let token = pendingTokens[pendingIndex]
+        pendingIndex += 1
+        telemetry.recordGeneratedToken()
+        return token
+    }
+
+    /// Generates the next token with the main model alone and makes its log probabilities current.
+    private mutating func emitPassthroughStep() -> Int? {
+        guard let step = passthroughStep() else { return nil }
+        lastLogProbabilities = step.logProbabilities
+        telemetry.recordGeneratedToken()
+        return step.token
     }
 
     public mutating func next() -> Int? {
@@ -831,41 +926,26 @@ public struct MTPSpeculativeTokenIterator: TokenIteratorProtocol {
         // run. Rounds that flip passthrough mid-stream always clear the buffer
         // first, so this reordering is a no-op for them.
         if pendingIndex < pendingTokens.count {
-            let token = pendingTokens[pendingIndex]
-            pendingIndex += 1
-            telemetry.recordGeneratedToken()
-            return token
+            return dequeuePendingToken()
         }
 
         if passthrough {
-            if let token = passthroughStep() {
-                telemetry.recordGeneratedToken()
-                return token
-            }
-            return nil
+            return emitPassthroughStep()
         }
 
         // Run a new speculation round (may transition to passthrough).
         pendingTokens.removeAll(keepingCapacity: true)
+        pendingLogProbabilities.removeAll(keepingCapacity: true)
         pendingIndex = 0
         committedPendingTokenCount = 0
         autoreleasepool { speculateRound() }
 
         if pendingTokens.isEmpty {
             // speculateRound chose passthrough -- fall through.
-            if passthrough {
-                if let token = passthroughStep() {
-                    telemetry.recordGeneratedToken()
-                    return token
-                }
-            }
-            return nil
+            return passthrough ? emitPassthroughStep() : nil
         }
 
-        let token = pendingTokens[pendingIndex]
-        pendingIndex += 1
-        telemetry.recordGeneratedToken()
-        return token
+        return dequeuePendingToken()
     }
 
 }

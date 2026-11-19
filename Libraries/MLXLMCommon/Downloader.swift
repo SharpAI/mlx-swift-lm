@@ -78,6 +78,7 @@ public struct ResolvedModelConfiguration: Sendable {
     public var lazyLoad: Bool
     public var reasoningConfig: ReasoningConfig?
     public var messageGenerator: (any MessageGenerator)?
+    public var generationConfig: GenerationConfigFile?
 
     /// How to choose the safetensors files holding the model's weights.
     ///
@@ -103,6 +104,7 @@ public struct ResolvedModelConfiguration: Sendable {
         lazyLoad: Bool = false,
         reasoningConfig: ReasoningConfig? = nil,
         messageGenerator: (any MessageGenerator)? = nil,
+        generationConfig: GenerationConfigFile? = nil,
         weightFileSelection: WeightFileSelection = .automatic,
         excludedComponents: Set<ModelComponent> = []
     ) {
@@ -117,6 +119,7 @@ public struct ResolvedModelConfiguration: Sendable {
         self.lazyLoad = lazyLoad
         self.reasoningConfig = reasoningConfig
         self.messageGenerator = messageGenerator
+        self.generationConfig = generationConfig
         self.weightFileSelection = weightFileSelection
         self.excludedComponents = excludedComponents
     }
@@ -136,6 +139,7 @@ extension ResolvedModelConfiguration {
             eosTokenIds: [],
             toolCallFormat: nil,
             reasoningConfig: nil,
-            messageGenerator: nil)
+            messageGenerator: nil,
+            generationConfig: nil)
     }
 }
