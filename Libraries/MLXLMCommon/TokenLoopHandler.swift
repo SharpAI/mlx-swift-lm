@@ -33,6 +33,10 @@ public protocol TokenLoopHandler: SendableMetatype {
     /// are not included in the public output or generation token count.
     var receivesStopTokens: Bool { get }
 
+    /// Whether decoding can end here to apply pending steering input.
+    /// The default, `false`, lets the current model step finish.
+    var canEndForSteering: Bool { get }
+
     /// Return `.stop` for semantic generation stops, or `.cancelled` for consumer termination.
     ///
     /// `logProbabilities` stays on the GPU until you call
@@ -60,6 +64,7 @@ public protocol TokenLoopHandler: SendableMetatype {
 }
 
 extension TokenLoopHandler {
+    public var canEndForSteering: Bool { false }
     public var additionalStopTokenIDs: Set<Int> { [] }
     public var receivesStopTokens: Bool { false }
 }
@@ -76,6 +81,13 @@ public struct TextToolTokenLoopHandler: TokenLoopHandler {
     private var lastToken: Int = 0
     var cachedPromptTokenCount = 0
     var speculativeDecodingFallbackReason: SpeculativeDecodingFallbackReason?
+    /// Whether the step wrote text the transcript can record, answer or reasoning.
+    private var hasOutput = false
+    private var hasNonTextOutput = false
+
+    public var canEndForSteering: Bool {
+        hasOutput && !hasNonTextOutput && decoder.canEndForSteering
+    }
 
     public init(
         tokenizer: Tokenizer, stopStrings: Set<String> = [], format: ToolCallFormat,
@@ -157,28 +169,33 @@ public struct TextToolTokenLoopHandler: TokenLoopHandler {
     ) -> TokenLoopDisposition {
         switch event {
         case .reasoning(let reasoning):
+            hasOutput = hasOutput || !reasoning.isEmpty
             if !emit(.reasoning(reasoning)) {
                 return .cancelled
             }
             return .more
 
         case .response(let response):
+            hasOutput = hasOutput || !response.isEmpty
             if !emit(.chunk(response, tokenId: tokenId)) {
                 return .cancelled
             }
             return .more
 
         case .toolCall(let toolCall):
+            hasNonTextOutput = true
             if !emit(.toolCall(toolCall)) {
                 return .cancelled
             }
             return .more
 
         case .protocolError(let message):
+            hasNonTextOutput = true
             Self.logger.error("\(message)")
             return .more
 
         case .rejectedToolCall(let rejection):
+            hasNonTextOutput = true
             if !emit(.rejectedToolCall(rejection)) {
                 return .cancelled
             }

@@ -359,7 +359,7 @@ public func benchmarkLLMLoading(
 
     _ = try await LLMModelFactory.shared.load(
         from: downloader, using: tokenizerLoader, configuration: config
-    ) { _ in }
+    )
     Memory.clearCache()
 
     var times: [Double] = []
@@ -367,7 +367,7 @@ public func benchmarkLLMLoading(
         let start = CFAbsoluteTimeGetCurrent()
         _ = try await LLMModelFactory.shared.load(
             from: downloader, using: tokenizerLoader, configuration: config
-        ) { _ in }
+        )
         let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
         times.append(elapsed)
         print("LLM load run \(i): \(String(format: "%.1f", elapsed))ms")
@@ -388,7 +388,7 @@ public func benchmarkVLMLoading(
 
     _ = try await VLMModelFactory.shared.load(
         from: downloader, using: tokenizerLoader, configuration: config
-    ) { _ in }
+    )
     Memory.clearCache()
 
     var times: [Double] = []
@@ -396,7 +396,7 @@ public func benchmarkVLMLoading(
         let start = CFAbsoluteTimeGetCurrent()
         _ = try await VLMModelFactory.shared.load(
             from: downloader, using: tokenizerLoader, configuration: config
-        ) { _ in }
+        )
         let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
         times.append(elapsed)
         print("VLM load run \(i): \(String(format: "%.1f", elapsed))ms")
@@ -416,7 +416,7 @@ public func benchmarkEmbeddingLoading(
 ) async throws -> BenchmarkStats {
     _ = try await EmbedderModelFactory.shared.loadContainer(
         from: downloader, using: tokenizerLoader, configuration: configuration
-    ) { _ in }
+    )
     Memory.clearCache()
 
     var times: [Double] = []
@@ -424,7 +424,7 @@ public func benchmarkEmbeddingLoading(
         let start = CFAbsoluteTimeGetCurrent()
         _ = try await EmbedderModelFactory.shared.loadContainer(
             from: downloader, using: tokenizerLoader, configuration: configuration
-        ) { _ in }
+        )
         let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
         times.append(elapsed)
         print("Embedding load run \(i): \(String(format: "%.1f", elapsed))ms")
@@ -546,7 +546,7 @@ public func benchmarkLLMGeneration(
     let configuration = MLXLMCommon.ModelConfiguration(id: modelId)
     let container = try await LLMModelFactory.shared.loadContainer(
         from: downloader, using: tokenizerLoader, configuration: configuration
-    ) { _ in }
+    )
 
     let benchmarkPrompt: String
     if let prompt = prompt {

@@ -1377,6 +1377,10 @@ public class Qwen35TextModel: Module, LLMModel, KVCacheDimensionProvider {
         }
     }
 
+    public var excludedCheckpointNamespaces: [String] {
+        Qwen35CheckpointPolicy.excludedTargetNamespaces
+    }
+
     public func prepareCheckpoint(_ checkpoint: ModelCheckpoint) throws -> ModelCheckpoint {
         var checkpoint = try Qwen35CheckpointPolicy.prepareTarget(
             checkpoint, layout: .text, tiedWordEmbeddings: configuration.tieWordEmbeddings,
@@ -1489,6 +1493,12 @@ extension Qwen35TextModel: LoRAModel {
     }
 }
 
+extension Qwen35TextModel: ModelComponentsProviding {
+    public var modelComponents: [ModelComponent: [CheckpointComponent]] {
+        Qwen35CheckpointPolicy.components
+    }
+}
+
 extension Qwen35TextModel: SpeculativeCacheRewindModel {
     public var maximumNativeTargetCacheRewind: Int { 1 }
 }
@@ -1533,6 +1543,10 @@ public class Qwen35Model: Module, LLMModel, KVCacheDimensionProvider {
 
     public func prepare() throws {
         try languageModel.prepare()
+    }
+
+    public var excludedCheckpointNamespaces: [String] {
+        Qwen35CheckpointPolicy.excludedTargetNamespaces
     }
 
     public func prepareCheckpoint(_ checkpoint: ModelCheckpoint) throws -> ModelCheckpoint {
@@ -1703,6 +1717,12 @@ extension Qwen35TextModel: MTPLanguageModel {
     }
 }
 
+extension Qwen35Model: ModelComponentsProviding {
+    public var modelComponents: [ModelComponent: [CheckpointComponent]] {
+        Qwen35CheckpointPolicy.components
+    }
+}
+
 extension Qwen35Model: SpeculativeCacheRewindModel {
     public var maximumNativeTargetCacheRewind: Int { 1 }
 }
@@ -1712,10 +1732,10 @@ extension Qwen35Model: SpeculativeCacheRewindModel {
 // `Qwen35MoEModel` subclasses `Qwen35Model` and inherits both declarations.
 extension Qwen35Model {
     public var toolCallFormat: ToolCallFormat? { .qwen35 }
-    public var reasoningConfig: ReasoningConfig? { QwenReasoningProtocol.tagged }
+    public var reasoningConfig: ReasoningConfig? { QwenReasoningProtocol.qwen35 }
 }
 
 extension Qwen35TextModel {
     public var toolCallFormat: ToolCallFormat? { .qwen35 }
-    public var reasoningConfig: ReasoningConfig? { QwenReasoningProtocol.tagged }
+    public var reasoningConfig: ReasoningConfig? { QwenReasoningProtocol.qwen35 }
 }

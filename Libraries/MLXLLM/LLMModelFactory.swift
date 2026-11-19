@@ -44,7 +44,7 @@ private func createQwen3CompatibleModel(configuration data: Data) throws -> any 
 
 /// Registry of model type, e.g 'llama', to functions that can instantiate the model from configuration.
 ///
-/// Typically called via ``LLMModelFactory/loadContainer(from:using:configuration:useLatest:progressHandler:)``.
+/// Typically called via ``LLMModelFactory/loadContainer(from:using:configuration:useLatest:progress:)``.
 public enum LLMTypeRegistry {
 
     /// Shared instance with default model types.
@@ -81,6 +81,7 @@ public enum LLMTypeRegistry {
         "qwen3_8": create(Qwen35Configuration.self, Qwen35Model.init),
         "qwen3_8_moe": create(Qwen35Configuration.self, Qwen35MoEModel.init),
         "qwen3_8_text": create(Qwen35TextConfiguration.self, Qwen35TextModel.init),
+        "prism_hadamard_qwen35": createPrismHadamardQwen35Model,
         "nanbeige": create(NanbeigeConfiguration.self, NanbeigeModel.init),
         "minicpm": create(MiniCPMConfiguration.self, MiniCPMModel.init),
         "starcoder2": create(Starcoder2Configuration.self, Starcoder2Model.init),
@@ -110,6 +111,7 @@ public enum LLMTypeRegistry {
         "smollm3": create(SmolLM3Configuration.self, SmolLM3Model.init),
         "ernie4_5": create(Ernie45Configuration.self, Ernie45Model.init),
         "lfm2": create(LFM2Configuration.self, LFM2Model.init),
+        "lfm3": create(LFM3Configuration.self, LFM3Model.init),
         "baichuan_m1": create(BaichuanM1Configuration.self, BaichuanM1Model.init),
         "exaone4": create(Exaone4Configuration.self, Exaone4Model.init),
         "gpt_oss": create(GPTOSSConfiguration.self, GPTOSSModel.init),
@@ -234,6 +236,12 @@ public class LLMRegistry: AbstractModelRegistry, @unchecked Sendable {
         id: "mlx-community/gemma-2-2b-it-4bit",
         // https://www.promptingguide.ai/models/gemma
         defaultPrompt: "What is the difference between lettuce and cabbage?"
+    )
+
+    static public let bonsai2_27B_ternary_2bit = ModelConfiguration(
+        id: "prism-ml/Ternary-Bonsai-2-27B-mlx-2bit",
+        defaultPrompt: "What is the difference between a fruit and a vegetable?",
+        extraEOSTokens: ["<|im_end|>"]
     )
 
     static public let gemma3_1B_qat_4bit = ModelConfiguration(
@@ -528,6 +536,53 @@ public class LLMRegistry: AbstractModelRegistry, @unchecked Sendable {
         toolCallFormat: .lfm2
     )
 
+    /// Official LiquidAI LFM2.5 reasoning model. LiquidAI publishes all
+    /// precision variants in one repository, so this scopes resolution to the
+    /// recommended 4-bit MLX checkpoint instead of downloading every variant.
+    static public let lfm25_2_6b_4bit = ModelConfiguration(
+        id: "LiquidAI/LFM2.5-2.6B-MLX",
+        modelSubdirectory: "4bit",
+        defaultPrompt: "Explain why the sky is blue.",
+        toolCallFormat: .lfm2,
+        reasoningConfig: .alwaysOnThinking
+    )
+
+    /// Full-precision official variant, primarily for correctness baselines.
+    static public let lfm25_2_6b_bf16 = ModelConfiguration(
+        id: "LiquidAI/LFM2.5-2.6B-MLX",
+        modelSubdirectory: "bf16",
+        defaultPrompt: "Explain why the sky is blue.",
+        toolCallFormat: .lfm2,
+        reasoningConfig: .alwaysOnThinking
+    )
+
+    /// Official sparse LFM2.5 checkpoint with 1.5B active parameters. Its
+    /// conversion is mixed precision: most modules are 4-bit while routing
+    /// gates remain 8-bit, as declared by the checkpoint configuration.
+    static public let lfm25_8b_a1b_4bit = ModelConfiguration(
+        id: "LiquidAI/LFM2.5-8B-A1B-MLX-4bit",
+        defaultPrompt: "Explain why the sky is blue.",
+        toolCallFormat: .lfm2,
+        reasoningConfig: .alwaysOnThinking,
+        generationConfig: .init(
+            temperature: 0.2, topK: 80, repetitionPenalty: 1.05)
+    )
+
+    /// Higher-fidelity 8-bit variant of the sparse 8B-A1B architecture.
+    static public let lfm25_8b_a1b_8bit = ModelConfiguration(
+        id: "LiquidAI/LFM2.5-8B-A1B-MLX-8bit",
+        defaultPrompt: "Explain why the sky is blue.",
+        toolCallFormat: .lfm2,
+        reasoningConfig: .alwaysOnThinking,
+        generationConfig: .init(
+            temperature: 0.2, topK: 80, repetitionPenalty: 1.05)
+    )
+
+    static public let lfm3_1_7b_4bit = ModelConfiguration(
+        id: "LiquidAI/LFM3-1.7B-MLX-4bit",
+        defaultPrompt: "Why is the sky blue?"
+    )
+
     static public let exaone_4_0_1_2b_4bit = ModelConfiguration(
         id: "mlx-community/exaone-4.0-1.2b-4bit",
         defaultPrompt: "Why is the sky blue?"
@@ -586,6 +641,7 @@ public class LLMRegistry: AbstractModelRegistry, @unchecked Sendable {
 
     private static func all() -> [ModelConfiguration] {
         [
+            bonsai2_27B_ternary_2bit,
             codeLlama13b4bit,
             deepSeekR1_7B_4bit,
             falconH1R7B,
@@ -647,6 +703,10 @@ public class LLMRegistry: AbstractModelRegistry, @unchecked Sendable {
             smollm3_3b_4bit,
             ernie_45_0_3BPT_bf16_ft,
             lfm2_1_2b_4bit,
+            lfm25_2_6b_4bit,
+            lfm25_8b_a1b_4bit,
+            lfm25_8b_a1b_8bit,
+            lfm3_1_7b_4bit,
             baichuan_m1_14b_instruct_4bit,
             exaone_4_0_1_2b_4bit,
             lille_130m_bf16,
@@ -799,6 +859,9 @@ public final class LLMModelFactory: GenericModelFactory {
         eosTokenIds.formUnion(configuration.eosTokenIds)
         mutableConfiguration.eosTokenIds = eosTokenIds
         mutableConfiguration.stopStrings.formUnion(generationConfig?.stopStrings ?? [])
+        if mutableConfiguration.generationConfig == nil {
+            mutableConfiguration.generationConfig = generationConfig
+        }
         // Chat conventions. An explicit value on the configuration wins, followed
         // by a registered resolver that sees the repo id. Checkpoint metadata then
         // resolves the model declaration against the selected tool template.
@@ -831,6 +894,8 @@ public final class LLMModelFactory: GenericModelFactory {
 
         let tokenizer = try await tokenizerTask
 
+        try model.validate(tokenizer: tokenizer)
+
         let messageGenerator: any MessageGenerator
         if let configuredMessageGenerator = mutableConfiguration.messageGenerator {
             messageGenerator = configuredMessageGenerator
@@ -853,7 +918,8 @@ public final class LLMModelFactory: GenericModelFactory {
             eosTokenIds: mutableConfiguration.eosTokenIds,
             toolCallFormat: mutableConfiguration.toolCallFormat,
             reasoningConfig: mutableConfiguration.reasoningConfig,
-            messageGenerator: mutableConfiguration.messageGenerator)
+            messageGenerator: mutableConfiguration.messageGenerator,
+            generationConfig: mutableConfiguration.generationConfig)
 
         let processor = LLMUserInputProcessor(
             tokenizer: tokenizer, configuration: modelConfig,

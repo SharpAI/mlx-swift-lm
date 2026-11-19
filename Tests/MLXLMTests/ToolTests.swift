@@ -794,6 +794,34 @@ struct ToolTests {
         #expect(toolCall.function.arguments["code"] == .string("print('hello')"))
     }
 
+    @Test("Test Pythonic Tool Call Parser - Raw and Adjacent String Arguments")
+    func testPythonicParserRawAndAdjacentStrings() throws {
+        let parser = PythonicToolCallParser(
+            startTag: "<|tool_call_start|>", endTag: "<|tool_call_end|>")
+        let content =
+            #"<|tool_call_start|>[grep(pattern=r"\d{3}-\d{4}", path=('notes/'"#
+            + "\n" + #" 'calls.txt'))]<|tool_call_end|>"#
+        let tools: [[String: any Sendable]] = [
+            [
+                "function": [
+                    "name": "grep",
+                    "parameters": [
+                        "properties": [
+                            "pattern": ["type": "string"],
+                            "path": ["type": "string"],
+                        ]
+                    ],
+                ] as [String: any Sendable]
+            ]
+        ]
+
+        for schemas in [nil, tools] {
+            let toolCall = try #require(parser.parse(content: content, tools: schemas))
+            #expect(toolCall.function.arguments["pattern"] == .string(#"\d{3}-\d{4}"#))
+            #expect(toolCall.function.arguments["path"] == .string("notes/calls.txt"))
+        }
+    }
+
     @Test("Test Pythonic Tool Call Parser - No Arguments")
     func testPythonicParserNoArguments() throws {
         let parser = PythonicToolCallParser(
@@ -884,6 +912,36 @@ struct ToolTests {
                     "fallback": .null,
                     "thresholds": .array([.int(0), .double(1.5)]),
                 ]))
+    }
+
+    @Test("Pythonic string values decode surrogate pairs and Python escapes")
+    func testPythonicParserStringEscapes() throws {
+        let parser = PythonicToolCallParser(
+            startTag: "<|tool_call_start|>", endTag: "<|tool_call_end|>")
+        let content = #"""
+            <|tool_call_start|>[send(text='Hi \ud83d\ude00', options={'separator': '\x2c'})]<|tool_call_end|>
+            """#
+
+        let toolCall = try #require(parser.parse(content: content, tools: nil))
+
+        #expect(toolCall.function.arguments["text"] == .string("Hi \u{1F600}"))
+        #expect(toolCall.function.arguments["options"] == .object(["separator": .string(",")]))
+    }
+
+    @Test("Pythonic string values can be triple-quoted")
+    func testPythonicParserTripleQuotedStrings() throws {
+        let parser = PythonicToolCallParser(
+            startTag: "<|tool_call_start|>", endTag: "<|tool_call_end|>")
+        let content = ##"""
+            <|tool_call_start|>[write_file(path='notes.txt', content="""Line 1, "quoted"
+            Line 2""")]<|tool_call_end|>
+            """##
+
+        let toolCall = try #require(parser.parse(content: content, tools: nil))
+
+        #expect(toolCall.function.arguments["path"] == .string("notes.txt"))
+        #expect(
+            toolCall.function.arguments["content"] == .string("Line 1, \"quoted\"\nLine 2"))
     }
 
     @Test("Pythonic scalars are inferred without a schema")
@@ -1216,6 +1274,35 @@ struct ToolTests {
         let content = #"<tool_call>{"name":"erase_everything","arguments":{}}</tool_call>"#
 
         #expect(parser.parse(content: content, tools: Self.qwen35Tools) == nil)
+    }
+
+    @Test(
+        "A well-formed call to an undeclared tool is rejected as undeclared, with its name",
+        arguments: [
+            (
+                ToolCallFormat.qwen35,
+                "<tool_call>\n<function=erase_everything>\n<parameter=path>\n/\n</parameter>\n</function>\n</tool_call>"
+            ),
+            (
+                .qwen35,
+                #"<tool_call>{"name":"erase_everything","arguments":{"path":"/"}}</tool_call>"#
+            ),
+            (
+                .glm4,
+                "<tool_call>erase_everything<arg_key>path</arg_key><arg_value>/</arg_value></tool_call>"
+            ),
+        ])
+    func undeclaredToolIsReportedByName(format: ToolCallFormat, content: String) throws {
+        let processor = ToolCallProcessor(format: format, tools: Self.qwen35Tools)
+
+        _ = processor.processChunk(content)
+        processor.processEOS()
+
+        #expect(processor.toolCalls.isEmpty)
+        let rejection = try #require(processor.rejectedToolCalls.first)
+        #expect(processor.rejectedToolCalls.count == 1)
+        #expect(rejection.reason == .undeclaredTool)
+        #expect(rejection.toolName == "erase_everything")
     }
 
     @Test("Qwen3.5 fallback rejects malformed and mixed-dialect payloads")

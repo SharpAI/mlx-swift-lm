@@ -108,7 +108,7 @@ final class ChatConventionsModelTests: XCTestCase {
         let model = Qwen35TextModel(config)
 
         XCTAssertEqual(model.toolCallFormat, .qwen35)
-        XCTAssertEqual(model.reasoningConfig, QwenReasoningProtocol.tagged)
+        XCTAssertEqual(model.reasoningConfig, QwenReasoningProtocol.qwen35)
     }
 
     // MARK: Registry injection
@@ -159,6 +159,31 @@ struct ChatConventionsTests {
         let config = QwenReasoningProtocol.qwen3
         #expect(config.budgetTransition != nil)
         #expect(config.implicitEndDelimiters == ["<tool_call>"])
+    }
+
+    @Test func qwen35BudgetProtocol() {
+        let config = QwenReasoningProtocol.qwen35
+        // Qwen3.5 answers from a span that was only closed, so the declared
+        // transition adds no text of its own.
+        #expect(config.budgetTransition == .immediate)
+        #expect(config.implicitEndDelimiters == ["<tool_call>"])
+    }
+
+    /// A validated transition must be the only thing a family adds to the
+    /// protocol it derives from, so the wire syntax cannot drift per family.
+    @Test func budgetTransitionsAreTheOnlyFamilyDelta() {
+        for derived in [QwenReasoningProtocol.qwen3, QwenReasoningProtocol.qwen35] {
+            var withoutTransition = derived
+            withoutTransition.budgetTransition = nil
+            #expect(withoutTransition == QwenReasoningProtocol.tagged)
+            #expect(derived.budgetTransition != nil)
+        }
+
+        var glimmerWithoutTransition = OnyxReasoningProtocol.glimmer
+        glimmerWithoutTransition.budgetTransition = nil
+        #expect(glimmerWithoutTransition == OnyxReasoningProtocol.frames)
+        #expect(OnyxReasoningProtocol.glimmer.budgetTransition == .immediate)
+        #expect(OnyxReasoningProtocol.frames.budgetTransition == nil)
     }
 
     @Test func alwaysOnPreset() {
@@ -215,6 +240,49 @@ struct ChatConventionsTests {
         let resolved = ChatConventionsRegistry.shared.reasoningConfig(
             modelId: "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit", modelType: "qwen2")
         #expect(resolved == .alwaysOnThinking)
+    }
+
+    @Test func lfm25ResolverIsCheckpointSpecific() throws {
+        let resolver = LFM25ConventionsResolver()
+        let resolved = try #require(
+            resolver.reasoningConfig(
+                modelId: "mlx-community/LFM2.5-2.6B-bf16", modelType: "lfm2"))
+
+        #expect(resolved.promptStrategy == .alwaysOn)
+        #expect(resolved.startDelimiter == "<think>")
+        #expect(resolved.endDelimiter == "</think>")
+        #expect(!resolved.isSpecialToken)
+        #expect(
+            resolver.reasoningConfig(
+                modelId: "mlx-community/LFM2-1.2B-4bit", modelType: "lfm2") == nil)
+        #expect(
+            resolver.reasoningConfig(
+                modelId: "mlx-community/LFM2.5-8B-A1B-MLX-4bit",
+                modelType: "lfm2_moe")?.promptStrategy == .alwaysOn)
+        #expect(
+            resolver.reasoningConfig(
+                modelId: "mlx-community/LFM2-8B-A1B-4bit", modelType: "lfm2_moe") == nil)
+        #expect(
+            resolver.reasoningConfig(
+                modelId: "someone/LFM2.5-lookalike", modelType: "llama") == nil)
+    }
+
+    @Test func lfm25ResolverDoesNotTreatEveryCheckpointAsReasoning() {
+        let resolver = LFM25ConventionsResolver()
+        for model in ["LFM2.5-1.2B-Instruct", "LFM2.5-1.2B-Base", "LFM2.5-1.2B-JP"] {
+            #expect(
+                resolver.reasoningConfig(modelId: "LiquidAI/\(model)", modelType: "lfm2") == nil)
+        }
+        #expect(
+            resolver.reasoningConfig(
+                modelId: "LiquidAI/LFM2.5-1.2B-Thinking-MLX", modelType: "lfm2")
+                == .alwaysOnThinking)
+    }
+
+    @Test func sharedRegistryResolvesLFM25OutOfTheBox() {
+        let resolved = ChatConventionsRegistry.shared.reasoningConfig(
+            modelId: "LiquidAI/LFM2.5-2.6B-MLX", modelType: "lfm2")
+        #expect(resolved?.promptStrategy == .alwaysOn)
     }
 
     @Test func emptyRegistryResolvesNothing() {

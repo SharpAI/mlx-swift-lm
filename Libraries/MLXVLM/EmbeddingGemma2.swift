@@ -662,9 +662,11 @@ public actor EmbeddingGemma2Embedding: MultimodalEmbedding {
             excludedComponents: configuration.excludedComponents, componentLoading: componentLoading
         )
         try _Concurrency.Task.checkCancellation()
+        let tokenizer = try await tokenizerLoader.load(from: configuration.tokenizerDirectory)
+        try model.validate(tokenizer: tokenizer)
         self.model = model
         self.modelDirectory = modelDirectory
-        self.tokenizer = try await tokenizerLoader.load(from: configuration.tokenizerDirectory)
+        self.tokenizer = tokenizer
         var modalities: Set<Modality> = [.text]
         if model.supportedComponents.contains(.vision) {
             modalities.insert(.image)
@@ -900,6 +902,13 @@ public actor EmbeddingGemma2Embedding: MultimodalEmbedding {
             }
             return "title: none | text: \(text)"
         }
+    }
+}
+
+extension EmbeddingGemma2Embedding: ModelMemoryReporting {
+    /// Measure the model's tensor buffers, including the media encoders that have loaded.
+    public func memory() throws -> ModelMemory {
+        try model.memory()
     }
 }
 
