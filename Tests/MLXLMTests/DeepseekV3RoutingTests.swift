@@ -135,9 +135,12 @@ final class DeepseekV3RoutingTests: XCTestCase {
             let flatInds = inds.reshaped(-1).asArray(Int32.self).map(Int.init)
             let flatWeights = weights.reshaped(-1).asArray(Float.self)
             for (token, want) in expected.enumerated() {
-                let got = (0 ..< k)
-                    .map { (flatInds[token * k + $0], flatWeights[token * k + $0]) }
-                    .sorted { $0.0 < $1.0 }
+                // Typed closure: the inferred tuple map is too slow to type-check in Release.
+                let pairs: [(Int, Float)] = (0 ..< k).map { (i: Int) -> (Int, Float) in
+                    let index = token * k + i
+                    return (flatInds[index], flatWeights[index])
+                }
+                let got = pairs.sorted { $0.0 < $1.0 }
                 XCTAssertEqual(
                     got.map(\.0), want.map(\.0), "token \(token) experts", file: file,
                     line: line)
@@ -496,9 +499,12 @@ final class DeepseekV3RoutingTests: XCTestCase {
             var differentSets = 0
             var largestDifference: Float = 0
             for (token, want) in expected.enumerated() {
-                let got = (0 ..< k)
-                    .map { (flatInds[token * k + $0], flatWeights[token * k + $0]) }
-                    .sorted { $0.0 < $1.0 }
+                // Typed closure: the inferred tuple map is too slow to type-check in Release.
+                let pairs: [(Int, Float)] = (0 ..< k).map { (i: Int) -> (Int, Float) in
+                    let index = token * k + i
+                    return (flatInds[index], flatWeights[index])
+                }
+                let got = pairs.sorted { $0.0 < $1.0 }
                 guard got.map(\.0) == want.map(\.0) else {
                     differentSets += 1
                     continue
