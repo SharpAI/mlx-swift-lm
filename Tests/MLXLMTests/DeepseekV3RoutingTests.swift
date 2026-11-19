@@ -115,16 +115,18 @@ final class DeepseekV3RoutingTests: XCTestCase {
     ) throws {
         try Device.withDefaultDevice(.cpu) {
             let gate = MoEGate(config: try config(nGroup: nGroup, normTopkProb: normTopkProb))
+            // Flatten with explicit types: the nested flatMap in the literal is too slow to type-check in Release.
+            let gateFlat: [Float] = Self.gateWeight.flatMap { $0 }
+            let gateTensor = MLXArray(gateFlat).reshaped(Self.routedExperts, Self.hiddenSize)
             try gate.update(
                 parameters: ModuleParameters.unflattened([
-                    "weight": MLXArray(Self.gateWeight.flatMap { $0 })
-                        .reshaped(Self.routedExperts, Self.hiddenSize),
+                    "weight": gateTensor,
                     "e_score_correction_bias": MLXArray(Self.correctionBias),
                 ]),
                 verify: [.noUnusedKeys])
 
-            let x = MLXArray(Self.inputs.flatMap { $0 })
-                .reshaped(1, Self.inputs.count, Self.hiddenSize)
+            let inputFlat: [Float] = Self.inputs.flatMap { $0 }
+            let x = MLXArray(inputFlat).reshaped(1, Self.inputs.count, Self.hiddenSize)
             let (inds, weights) = gate(x)
             eval(inds, weights)
             XCTAssertEqual(weights.dtype, .float32, file: file, line: line)

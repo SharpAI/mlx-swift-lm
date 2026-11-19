@@ -757,8 +757,10 @@ final class LFM3Tests: XCTestCase {
             LFM3Configuration.self, from: JSONSerialization.data(withJSONObject: json))
         let model = try tinyModel(config)
         for length in [256, 257, 512, 1024] {
-            let tokens = MLXArray((0 ..< 2 * length).map { Int32(($0 * 7 + 3) % 64) }).reshaped(
-                2, length)
+            let tokenValues: [Int32] = (0 ..< 2 * length).map { (i: Int) -> Int32 in
+                Int32((i * 7 + 3) % 64)
+            }
+            let tokens = MLXArray(tokenValues).reshaped(2, length)
             let expected = model(tokens, cache: nil)
             eval(expected)
             for chunkSize in [127, 257] {
