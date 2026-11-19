@@ -3,6 +3,7 @@
 # Keep in step with OverlayRegistrationTests.allowList (exact call counts live there).
 Libraries/MLXVLM/Qwen35VLMMTPRegistration.swift
 Libraries/MLXLLM/Qwen35TextMTPRegistration.swift
+Libraries/MLXLLM/LFM2DSparkRegistration.swift
 Libraries/MLXVLM/Gemma4AssistantRegistration.swift
 # Defines registerModelType itself.
 Libraries/MLXLMCommon/Registries/ModelTypeRegistry.swift

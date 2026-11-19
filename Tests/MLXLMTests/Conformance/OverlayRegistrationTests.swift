@@ -92,6 +92,9 @@ struct SharpAIOverlayTests {
         "Libraries/MLXLLM/Qwen35TextMTPRegistration.swift": (
             3, "Qwen3.5 text MTP drafters; fork-only, into MTPDrafterTypeRegistry.shared"
         ),
+        "Libraries/MLXLLM/LFM2DSparkRegistration.swift": (
+            1, "LFM2 DSpark block-drafter registration; upstream-owned, into MTPDrafterTypeRegistry.shared"
+        ),
         "Libraries/MLXVLM/Gemma4AssistantRegistration.swift": (
             1, "Gemma4 assistant MTP drafters; fork-only, into MTPDrafterTypeRegistry.shared"
         ),
